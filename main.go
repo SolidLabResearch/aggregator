@@ -1,48 +1,72 @@
 package main
 
 import (
-	"fmt"
+	"aggregator/auth"
+	"aggregator/proxy"
+	"golang.org/x/net/context"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
 )
 
 var protocol = "http"
 var host = "localhost"
-var port = "5000"
-var accessToken = ""
+var serverPort = "5000"
+
+var Clientset *kubernetes.Clientset
 
 func main() {
-	initSigning()
+	config, err := clientcmd.BuildConfigFromFlags("", filepath.Join(homedir.HomeDir(), ".kube", "config"))
+	if err != nil {
+		log.Fatalf("Failed to load Kubernetes config: %v", err)
+	}
+	Clientset, err = kubernetes.NewForConfig(config)
+	if err != nil {
+		log.Fatalf("Failed to create Kubernetes client: %v", err)
+	}
+	proxy.SetupProxy(Clientset)
+
+	startResourceSubscriptionEndpoint()
+
+	serverMux := http.NewServeMux()
+	auth.InitSigning(serverMux)
+	InitializeKubernetes(serverMux)
+	startConfigurationEndpoint("config", serverMux)
+
+	//Setup proxy
+	//http.HandleFunc("/query", queryEndpoint)
 	go func() {
-		//http.HandleFunc("/input", inputEndpoint)
-		//http.HandleFunc("/query", queryEndpoint)
-		//http.HandleFunc("/.well-known/jwks.json", jwksHandler)
-		//println("listening on port " + port)
-		//err := http.ListenAndServe(":"+port, nil)
-		//if err != nil {
-		//fmt.Println("Error starting server:", err)
-		//}
+		log.Println("Server listening on port: " + serverPort)
+		log.Fatal(http.ListenAndServe(":"+serverPort, serverMux))
 	}()
 
-	//config, err := fetchUmaConfig("http://localhost:4000/uma")
-	permissions := map[string][]string{
-		"http://localhost:5000/test": {"modify"},
-	}
-	println("fetchTicket")
-	ticket, err := fetchTicket(permissions, "http://localhost:4000/uma")
-	if err != nil {
-		println(fmt.Errorf("error while retrieving ticket: %v", err).Error())
-	}
-	println(ticket)
-	var token string
-	fmt.Print("Enter token: ")
-	fmt.Scanln(&token)
-	fmt.Println("You entered:", token)
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
-	err = verifyTicket(token, []string{"http://localhost:4000/uma"})
+	<-stop // wait for signal
+	log.Println("Shutting down gracefully...")
+	// remove all pods (including proxy?)
+	pods, err := Clientset.CoreV1().Pods("default").List(context.Background(), metav1.ListOptions{})
 	if err != nil {
-		fmt.Printf("error while verifying ticket: %v\n", err)
-	} else {
-		fmt.Printf("ticket verified and valid.\n")
+		log.Fatal(err)
 	}
 
-	//createResource("http://localhost:5000/query/sdvdcvweqeg", "http://localhost:4000/uma")
+	for _, pod := range pods.Items {
+		err := Clientset.CoreV1().Pods(pod.Namespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{})
+		if err != nil {
+			log.Printf("Failed to delete pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		} else {
+			log.Printf("Deleted pod: %s/%s", pod.Namespace, pod.Name)
+		}
+	}
+
+	// let AS know that all resources need to be deleted
+	auth.DeleteAllResources()
 }

@@ -1,4 +1,4 @@
-package main
+package auth
 
 import (
 	"bytes"
@@ -15,6 +15,79 @@ import (
 	"net/http"
 	"strings"
 )
+
+const AS_ISSUER = "http://localhost:4000/uma"
+
+func AuthorizeRequest(response http.ResponseWriter, request *http.Request, extraPermissions []Permission) bool {
+	// check if Authorization header is present, if not create ticket
+	if request.Header.Get("Authorization") == "" {
+		// create ticket
+		// Get the scheme
+		scheme := "http"
+		if request.TLS != nil {
+			scheme = "https"
+		}
+		// Get the complete URL
+		completeURL := fmt.Sprintf("%s://%s%s", scheme, request.Host, request.Pattern)
+
+		ticketPermissions := make(map[string][]string)
+		if request.Method == "POST" || request.Method == "PUT" || request.Method == "DELETE" {
+			ticketPermissions[completeURL] = []string{"modify"}
+		} else if request.Method == "GET" || request.Method == "HEAD" {
+			ticketPermissions[completeURL] = []string{"read"}
+		} else {
+			fmt.Println(fmt.Errorf("method not supported by authorization: %v", request.Method).Error())
+			http.Error(response, "method not supported by authorization", http.StatusMethodNotAllowed)
+			return false
+		}
+		if extraPermissions != nil {
+			for _, permission := range extraPermissions {
+				ticketPermissions[permission.ResourceID] = permission.ResourceScopes
+			}
+		}
+		ticket, err := fetchTicket(ticketPermissions, AS_ISSUER)
+		if err != nil {
+			fmt.Println(fmt.Errorf("error while retrieving ticket: %v", err).Error())
+			http.Error(response, "error while retrieving ticket", http.StatusUnauthorized)
+			return false
+		}
+		if ticket == "" {
+			return true
+		}
+		response.Header().Set(
+			"WWW-Authenticate",
+			fmt.Sprintf(`UMA as_uri="%s", ticket="%s"`, AS_ISSUER, ticket),
+		)
+		response.WriteHeader(http.StatusUnauthorized)
+		return false
+	}
+
+	permission, err := verifyTicket(request.Header.Get("Authorization"), []string{"http://localhost:4000/uma"})
+	if err != nil {
+		fmt.Println("Error while verifying ticket: ", err)
+		return false
+	}
+	for _, perm := range permission {
+		if idIndex[perm.ResourceID] == request.URL.Path {
+			if request.Method == "POST" || request.Method == "PUT" || request.Method == "DELETE" {
+				if contains(perm.ResourceScopes, "urn:example:css:modes:read") {
+					return true
+				}
+				return false
+			} else if request.Method == "GET" || request.Method == "HEAD" {
+				if contains(perm.ResourceScopes, "urn:example:css:modes:modify") {
+					return true
+				}
+				return false
+			} else {
+				fmt.Println(fmt.Errorf("authorize request method not supported: %v", request.Method).Error())
+				return false
+			}
+		}
+	}
+	return false
+
+}
 
 type UmaConfig struct {
 	jwksUri                      string
@@ -88,7 +161,12 @@ func fetchTicket(permissions map[string][]string, issuer string) (string, error)
 			return "", err
 		}
 		bodyString := string(bodyBytes)
-		return "", fmt.Errorf("error while retrieving UMA Ticket: Received status %d with message \"%s\" from '%s'", resp.StatusCode, bodyString, config.permissionEndpoint)
+		return "", fmt.Errorf(
+			"error while retrieving UMA Ticket: Received status %d with message \"%s\" from '%s'",
+			resp.StatusCode,
+			bodyString,
+			config.permissionEndpoint,
+		)
 	}
 
 	var jsonResponse map[string]interface{}
@@ -104,7 +182,6 @@ func fetchTicket(permissions map[string][]string, issuer string) (string, error)
 	return ticket, nil
 }
 
-// JWK represents a single JSON Web Key from a JWKS. Here we just focus on RSA.
 type JWK struct {
 	Kty string      `json:"kty"`
 	Kid string      `json:"kid"`
@@ -117,20 +194,19 @@ type JWK struct {
 	Crv interface{} `json:"crv,omitempty"`
 }
 
-// JWKS represents a JSON Web Key Set.
 type JWKS struct {
 	Keys []JWK `json:"keys"`
 }
 
-func verifyTicket(token string, validIssuers []string) error {
+func verifyTicket(token string, validIssuers []string) ([]Permission, error) {
 	payloadMap, err := decodeJwtPayload(token)
 	if err != nil {
-		return fmt.Errorf("error decoding JWT: %w", err)
+		return nil, fmt.Errorf("error decoding JWT: %w", err)
 	}
 
 	issVal, ok := payloadMap["iss"].(string)
 	if !ok || issVal == "" {
-		return errors.New(`the JWT does not contain an "iss" parameter`)
+		return nil, errors.New(`the JWT does not contain an "iss" parameter`)
 	}
 
 	hasValidIssuer := false
@@ -140,12 +216,12 @@ func verifyTicket(token string, validIssuers []string) error {
 		}
 	}
 	if !hasValidIssuer {
-		return errors.New(`the JWT wasn't issued by one of the target owners' issuers`)
+		return nil, errors.New(`the JWT wasn't issued by one of the target owners' issuers`)
 	}
 
 	config, err := fetchUmaConfig(issVal)
 	if err != nil {
-		return fmt.Errorf("error fetching UMA config: %w", err)
+		return nil, fmt.Errorf("error fetching UMA config: %w", err)
 	}
 
 	// Parse and validate with our chosen public key.
@@ -177,19 +253,19 @@ func verifyTicket(token string, validIssuers []string) error {
 	})
 
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if !parsedToken.Valid {
-		return errors.New("invalid token signature or claims")
+		return nil, errors.New("invalid token signature or claims")
 	}
 
 	if claims.Issuer != issVal {
-		return fmt.Errorf(`token "iss" (%s) does not match expected issuer (%s)`, claims.Issuer, issVal)
+		return nil, fmt.Errorf(`token "iss" (%s) does not match expected issuer (%s)`, claims.Issuer, issVal)
 	}
 
 	if claims.VerifyAudience("[solid]", true) {
-		return fmt.Errorf(`token "aud" (%s) does not match expected audience ("solid")`, claims.Audience)
+		return nil, fmt.Errorf(`token "aud" (%s) does not match expected audience ("solid")`, claims.Audience)
 	}
 
 	// Check the permissions in the token
@@ -197,18 +273,18 @@ func verifyTicket(token string, validIssuers []string) error {
 		for _, perm := range claims.Permissions {
 			// resource_id must be a non-empty string
 			if perm.ResourceID == "" {
-				return errors.New("Invalid RPT: 'permissions[].resource_id' missing or not a string")
+				return nil, errors.New("Invalid RPT: 'permissions[].resource_id' missing or not a string")
 			}
 			// resource_scopes must be an array of strings
 			if len(perm.ResourceScopes) == 0 {
-				return errors.New("Invalid RPT: 'permissions[].resource_scopes' missing or empty")
+				return nil, errors.New("Invalid RPT: 'permissions[].resource_scopes' missing or empty")
 			}
 			// Optionally check each scope is non-empty if needed
 		}
 	}
 
 	// If we get here, the token is valid, and (if present) 'permissions' is well-formed.
-	return nil
+	return claims.Permissions, nil
 }
 
 func fetchAndSelectKey(jwksUri, kid string) (interface{}, error) {
@@ -321,7 +397,6 @@ func parseECPublicKeyFromJWK(jwk JWK) (*ecdsa.PublicKey, error) {
 	return pubKey, nil
 }
 
-// bytesToBigInt converts a byte array to a big.Int.
 func bytesToBigInt(b []byte) *big.Int {
 	bi := new(big.Int)
 	bi.SetBytes(b)
@@ -365,7 +440,11 @@ func fetchUmaConfig(issuer string) (UmaConfig, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return UmaConfig{}, fmt.Errorf("unable to retrieve UMA Configuration for Authorization Server '%s' from '%s'", issuer, issuer+"/.well-known/uma2-configuration")
+		return UmaConfig{}, fmt.Errorf(
+			"unable to retrieve UMA Configuration for Authorization Server '%s' from '%s'",
+			issuer,
+			issuer+"/.well-known/uma2-configuration",
+		)
 	}
 
 	var configuration map[string]interface{}
@@ -377,11 +456,19 @@ func fetchUmaConfig(issuer string) (UmaConfig, error) {
 	for _, value := range REQUIRED_METADATA {
 		val, ok := configuration[value]
 		if !ok {
-			return UmaConfig{}, fmt.Errorf("the Authorization Server Metadata of '%s' is missing attributes %s", issuer, value)
+			return UmaConfig{}, fmt.Errorf(
+				"the Authorization Server Metadata of '%s' is missing attributes %s",
+				issuer,
+				value,
+			)
 		}
 		strVal, ok := val.(string)
 		if !ok {
-			return UmaConfig{}, fmt.Errorf("the Authorization Server Metadata of '%s' should have string attributes %s", issuer, value)
+			return UmaConfig{}, fmt.Errorf(
+				"the Authorization Server Metadata of '%s' should have string attributes %s",
+				issuer,
+				value,
+			)
 		} else {
 			switch value {
 			case "issuer":
@@ -401,12 +488,12 @@ func fetchUmaConfig(issuer string) (UmaConfig, error) {
 	return umaConfig, nil
 }
 
-const resourceDescription = "{\"resource_scopes\": [\"urn:example:css:modes:read\",\"urn:example:css:modes:append\",\"urn:example:css:modes:create\",\"urn:example:css:modes:delete\",\"urn:example:css:modes:write\"]}"
+//const resourceDescription = "{\"resource_scopes\": [\"urn:example:css:modes:read\",\"urn:example:css:modes:append\",\"urn:example:css:modes:create\",\"urn:example:css:modes:delete\",\"urn:example:css:modes:write\"]}"
 
 var idIndex = make(map[string]string)
 
-func createResource(resourceId string, issuer string) {
-	config, err := fetchUmaConfig(issuer)
+func CreateResource(resourceId string, resourceDescription string) {
+	config, err := fetchUmaConfig(AS_ISSUER)
 	if err != nil {
 		fmt.Println("Error while retrieving UMA configuration: ", err)
 		return
@@ -444,8 +531,8 @@ func createResource(resourceId string, issuer string) {
 	idIndex[resourceId] = string(body)
 }
 
-func deleteResource(resourceId string, issuer string) {
-	config, err := fetchUmaConfig(issuer)
+func DeleteResource(resourceId string) {
+	config, err := fetchUmaConfig(AS_ISSUER)
 	if err != nil {
 		fmt.Println("Error while retrieving UMA configuration: ", err)
 		return
@@ -488,4 +575,49 @@ func deleteResource(resourceId string, issuer string) {
 	fmt.Println("Resource deleted successfully")
 	fmt.Printf("Resource ID: %s, umaId: %s\n", resourceId, string(body))
 	delete(idIndex, resourceId)
+}
+
+func DeleteAllResources() {
+	config, err := fetchUmaConfig(AS_ISSUER)
+	if err != nil {
+		fmt.Println("Error while retrieving UMA configuration: ", err)
+		return
+	}
+	for resourceId, authId := range idIndex {
+		if authId == "" {
+			fmt.Println("Resource not found in local index")
+			return
+		}
+
+		req, err := http.NewRequest(
+			"DELETE",
+			config.resourceRegistrationEndpoint+"/"+authId,
+			nil,
+		)
+		if err != nil {
+			fmt.Println("Error while making a request: ", err)
+			return
+		}
+
+		res, err := doSignedRequest(req)
+		if err != nil {
+			fmt.Println("Error while making a request: ", err)
+			return
+		}
+		defer res.Body.Close()
+
+		if res.StatusCode != http.StatusOK {
+			fmt.Println("Error while creating resource: ", res.Status)
+			return
+		}
+
+		body, err := io.ReadAll(res.Body)
+		if err != nil {
+			fmt.Println("Error while reading response body: ", err)
+			return
+		}
+
+		fmt.Println("Resource deleted successfully")
+		fmt.Printf("Resource ID: %s, umaId: %s\n", resourceId, string(body))
+	}
 }

@@ -2,7 +2,7 @@ let tokenEndpoint = "http://localhost:4000/uma/token";
 let ticket = process.argv[2];
 let claim_token  = "https://pod.playground.solidlab.be/user1/profile/card#me"
 
-let privateResource = "http://localhost:5000/test"
+let privateResource = "http://localhost:5000/config"
 
 function parseJwt(token) {
     return JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());

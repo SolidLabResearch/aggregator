@@ -1,4 +1,4 @@
-package main
+package auth
 
 import (
 	"crypto"
@@ -45,7 +45,7 @@ type Jwks struct {
 	Keys []Jwk `json:"keys"`
 }
 
-func initSigning() {
+func InitSigning(mux *http.ServeMux) {
 	// 1) Load our RSA private key from file (PEM).
 	setPrivateKey("private_key.pem")
 
@@ -58,16 +58,11 @@ func initSigning() {
 	myJWKS = Jwks{Keys: []Jwk{pubJwk}}
 
 	// 3) Start a small HTTP server that hosts our JWKS.
-	http.HandleFunc("/.well-known/jwks.json", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/.well-known/jwks.json", func(w http.ResponseWriter, r *http.Request) {
 		println("Serving JWKS")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(myJWKS)
 	})
-	go func() {
-		fmt.Println("Hosting JWKS on http://localhost:5000/.well-known/jwks.json")
-		log.Fatal(http.ListenAndServe(":5000", nil))
-	}()
-	time.Sleep(1000)
 }
 
 func setPrivateKey(keyFilePath string) {
@@ -174,7 +169,11 @@ func doSignedRequest(req *http.Request) (*http.Response, error) {
 
 	canonical := fmt.Sprintf(
 		"\"content-digest\": %s\n\"date\": %s\n\"@signature-params\": (\"content-digest\" \"date\");keyid=%q;alg=%q;created=%d",
-		digestVal, dateVal, keyID, "RS256", created,
+		digestVal,
+		dateVal,
+		keyID,
+		"RS256",
+		created,
 	)
 
 	hash := sha256.Sum256([]byte(canonical))
