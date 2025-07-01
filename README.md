@@ -14,18 +14,23 @@ sudo install minikube-linux-amd64 /usr/local/bin/minikube
 
 when minikube is installed, initialize it:
 ```bash
-make init-minikube
+make minikube-init
 ```
 This will start the minikube cluster, build all the containers, and load them into the minikube cluster.
 To only build or load the containers without starting the cluster, you can run:
 ```bash
-make build-containers
-make load-containers
+make containers-build # Build the containers
+make containers-load # Load the containers into the minikube cluster
+make containers-all # Build and load the containers
+```
+It is also possible to specify a certain container to build, load, or both by using the `name` parameter. For example, to build and load only the aggregator container, you can run:
+```bash
+make containers-all name=uma-proxy
 ```
 And to start or stop the minikube cluster, you can run:
 ```bash
-make start-minikube
-make clean-minikube
+make minikube-start
+make minikube-clean
 ```
 
 ### uma Server
