@@ -21,16 +21,15 @@ func InitializeKubernetes(mux *http.ServeMux) {
 }
 
 type Actor struct {
-	Id             string   `json:"id"`
-	Sources        []string `json:"sources"`
-	Transformation string   `json:"transformation"`
-	pod            *v1.Pod
+	Id                  string `json:"id"`
+	PipelineDescription string `json:"pipelineDescription"`
+	pod                 *v1.Pod
 }
 
-func createActor(transformation Transformation) (Actor, error) {
+// TODO This needs to be more generic and extensible
+func createActor(pipelineDescription string) (Actor, error) {
 	id := uuid.New().String()
 
-	// start an RDF-connect docker process with the transformation
 	podScafolding := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: id,
@@ -47,9 +46,9 @@ func createActor(transformation Transformation) (Actor, error) {
 					//Command: transformation.Transformation,
 					ImagePullPolicy: v1.PullNever,
 					Env: []v1.EnvVar{
-						{Name: "FILE_URLS", Value: fmt.Sprintf("%v", transformation.Sources)},
+						{Name: "FILE_URLS", Value: fmt.Sprintf("%v", pipelineDescription)},
 						{Name: "http_proxy", Value: "http://uma-proxy-service.default.svc.cluster.local:5050"},
-						{Name: "https_proxy", Value: "http://uma-proxy-service.default.svc.cluster.local:5050"},
+						//{Name: "https_proxy", Value: "http://uma-proxy-service.default.svc.cluster.local:5050"},
 						//{Name: "no_proxy", Value: "localhost,127.0.0.1,.svc,.cluster.local"}, // Optional
 					},
 					Ports: []v1.ContainerPort{
@@ -156,21 +155,32 @@ func createActor(transformation Transformation) (Actor, error) {
 	})
 
 	actor := Actor{
-		Id:             id,
-		Sources:        transformation.Sources,
-		Transformation: transformation.Transformation,
-		pod:            pod,
+		Id:                  id,
+		PipelineDescription: pipelineDescription,
+		pod:                 pod,
 	}
 
 	return actor, nil
 }
 
+func (actor Actor) Stop() {
+	if actor.pod != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := Clientset.CoreV1().Pods("default").Delete(ctx, actor.pod.Name, metav1.DeleteOptions{})
+		if err != nil {
+			fmt.Println("Error stopping actor:", err.Error())
+		} else {
+			fmt.Println("Actor stopped successfully:", actor.Id)
+		}
+	}
+}
+
 func (actor Actor) marshalActor() string {
 	actorJson := fmt.Sprintf(
-		"{id:%s,transformation:%s,sources:%v}",
+		"{id:%s,transformation:%s}",
 		actor.Id,
-		actor.Transformation,
-		actor.Sources,
+		actor.PipelineDescription,
 	)
 	return actorJson
 }

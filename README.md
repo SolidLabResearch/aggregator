@@ -55,3 +55,7 @@ To run the aggregator, you can use the following command:
 make run
 ```
 
+### Demo
+An easy way to test the aggregator is by running `node client-test create-actor.js` to create an actor.
+Do make sure the uma server is running before you do this, and that it has the correct policies so you can access the correct endpoints.
+After that, you can run `node client-test get-actor.js` to retrieve the info on the actor you just created and its results.
