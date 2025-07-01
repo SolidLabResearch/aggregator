@@ -13,6 +13,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"runtime/debug"
 	"strings"
 )
 
@@ -495,13 +496,13 @@ var idIndex = make(map[string]string)
 func CreateResource(resourceId string, resourceDescription string) {
 	config, err := fetchUmaConfig(AS_ISSUER)
 	if err != nil {
-		fmt.Println("Error while retrieving UMA configuration: ", err)
+		fmt.Println("Error while retrieving UMA configuration:", err)
 		return
 	}
 
 	req, err := http.NewRequest("POST", config.resourceRegistrationEndpoint, bytes.NewBufferString(resourceDescription))
 	if err != nil {
-		fmt.Println("Error while making a request: ", err)
+		fmt.Println("Error while creating a request:", err)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -513,22 +514,31 @@ func CreateResource(resourceId string, resourceDescription string) {
 		return
 	}
 	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
 
+	if err != nil {
+		fmt.Println("Error while reading response body:", err, " got response status:", res.Status)
+		return
+	}
 	if res.StatusCode != http.StatusCreated {
-		fmt.Println("Error while creating resource: ", res.Status)
+		fmt.Println("Error while creating resource:", res.Status, string(body))
+		fmt.Println("Stack trace:")
+		fmt.Println(string(debug.Stack()))
 		return
 	}
 
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		fmt.Println("Error while reading response body: ", err)
+	var responseData struct {
+		ID string `json:"_id"`
+	}
+	if err := json.Unmarshal(body, &responseData); err != nil {
+		fmt.Println("Error while parsing response JSON:", err)
 		return
 	}
 
 	fmt.Println("Resource created successfully")
-	fmt.Printf("Resource ID: %s, umaId: %s\n", resourceId, string(body))
+	fmt.Printf("Resource ID: %s, umaId: %s\n", resourceId, responseData.ID)
 
-	idIndex[resourceId] = string(body)
+	idIndex[resourceId] = responseData.ID
 }
 
 func DeleteResource(resourceId string) {
@@ -560,20 +570,21 @@ func DeleteResource(resourceId string) {
 		return
 	}
 	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
 
-	if res.StatusCode != http.StatusOK {
-		fmt.Println("Error while creating resource: ", res.Status)
+	if err != nil {
+		fmt.Println("Error while reading response body:", err, " got response status:", res.Status)
 		return
 	}
-
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		fmt.Println("Error while reading response body: ", err)
+	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNoContent {
+		fmt.Println("Error while creating resource:", res.Status, string(body))
+		fmt.Println("Stack trace:")
+		fmt.Println(string(debug.Stack()))
 		return
 	}
 
 	fmt.Println("Resource deleted successfully")
-	fmt.Printf("Resource ID: %s, umaId: %s\n", resourceId, string(body))
+	fmt.Printf("Resource ID: %s, umaId: %s\n", resourceId, authId)
 	delete(idIndex, resourceId)
 }
 
@@ -592,32 +603,34 @@ func DeleteAllResources() {
 		req, err := http.NewRequest(
 			"DELETE",
 			config.resourceRegistrationEndpoint+"/"+authId,
-			nil,
+			&bytes.Buffer{},
 		)
 		if err != nil {
-			fmt.Println("Error while making a request: ", err)
+			fmt.Println("Error while creating request:", err)
 			return
 		}
 
 		res, err := doSignedRequest(req)
 		if err != nil {
-			fmt.Println("Error while making a request: ", err)
+			fmt.Println("Error while making a request:", err)
 			return
 		}
 		defer res.Body.Close()
+		body, err := io.ReadAll(res.Body)
 
-		if res.StatusCode != http.StatusOK {
-			fmt.Println("Error while creating resource: ", res.Status)
+		if err != nil {
+			fmt.Println("Error while reading response body:", err, " got response status:", res.Status)
 			return
 		}
-
-		body, err := io.ReadAll(res.Body)
-		if err != nil {
-			fmt.Println("Error while reading response body: ", err)
+		if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNoContent {
+			fmt.Println("Error while deleting resource", resourceId, authId, ":", res.Status, string(body))
+			fmt.Println("Stack trace:")
+			fmt.Println(string(debug.Stack()))
 			return
 		}
 
 		fmt.Println("Resource deleted successfully")
-		fmt.Printf("Resource ID: %s, umaId: %s\n", resourceId, string(body))
+		fmt.Printf("Resource ID: %s, umaId: %s\n", resourceId, authId)
 	}
+	idIndex = make(map[string]string)
 }
