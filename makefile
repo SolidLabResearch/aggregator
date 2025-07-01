@@ -1,26 +1,41 @@
 # Declare phony targets so make always runs these commands
-.PHONY: init start build load run clean
+.PHONY: minikube-init minikube-start minikube-clean containers-build containers-load run
 
-# 'init' target: start minikube, build image, then load it into minikube
-init: start build load
+# 'init-minikube' target: start minikube, build images, then load them into minikube
+minikube-init: minikube-start containers-build containers-load
 
 # Start minikube with Docker driver
-start:
-	minikube start --driver=docker
+minikube-start:
+	@echo "🚀 Starting Minikube with Docker driver..."
+	@minikube start --driver=docker
 
-# Build the Docker image from the specified directory and tag it 'uma-proxy'
-build:
-	docker build containers/uma-proxy -t uma-proxy
+# Stop and delete the minikube cluster (clean up)
+minikube-clean:
+	@echo "🧹 Stopping and deleting Minikube cluster..."
+	@minikube stop
+	@minikube delete
 
-# Load the locally built image into minikube's Docker environment
-load:
-	minikube image load uma-proxy
+# Build Docker images for all containers in the folder
+containers-build:
+	@echo "🔨 Building Docker images for all containers..."
+	@for dir in containers/*; do \
+		if [ -d "$$dir" ]; then \
+			echo "📦 Building image for container: $$(basename $$dir)"; \
+			docker build $$dir -t $$(basename $$dir); \
+		fi; \
+	done
+
+# Load all built images into minikube's Docker environment
+containers-load:
+	@echo "📤 Loading Docker images into Minikube..."
+	@for dir in containers/*; do \
+		if [ -d "$$dir" ]; then \
+			echo "📥 Loading image: $$(basename $$dir) into Minikube"; \
+			minikube image load $$(basename $$dir); \
+		fi; \
+	done
 
 # Run the Go application
 run:
-	go run .
-
-# Stop and delete the minikube cluster (clean up)
-clean:
-	minikube stop
-	minikube delete
+	@echo "🏃 Running the Go application..."
+	@go run .
