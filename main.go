@@ -33,19 +33,16 @@ func main() {
 	}
 	proxy.SetupProxy(Clientset)
 
-	startResourceSubscriptionEndpoint()
+	//startResourceSubscriptionEndpoint()
 
 	serverMux := http.NewServeMux()
-	auth.InitSigning(serverMux)
-	InitializeKubernetes(serverMux)
-	startConfigurationEndpoint("config", serverMux)
-
-	//Setup proxy
-	//http.HandleFunc("/query", queryEndpoint)
 	go func() {
 		log.Println("Server listening on port: " + serverPort)
 		log.Fatal(http.ListenAndServe(":"+serverPort, serverMux))
 	}()
+	auth.InitSigning(serverMux)
+	InitializeKubernetes(serverMux)
+	startConfigurationEndpoint(serverMux)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
