@@ -1,8 +1,23 @@
 # Declare phony targets so make always runs these commands
-.PHONY: minikube-init minikube-start minikube-clean containers-all containers-build containers-load run
+.PHONY: minikube-init minikube-start minikube-clean minikube-dashboard-start minikube-tls-secret containers-all containers-build containers-load run
 
 # 'init-minikube' target: start minikube, build images, then load them into minikube
-minikube-init: minikube-start containers-build containers-load
+minikube-init: minikube-start containers-build containers-load minikube-tls-secret minikube-dashboard-start
+
+# deploy minikube dashboard
+minikube-dashboard-start:
+	@echo "🚀 Starting kubectl proxy for Minikube dashboard..."
+	@minikube dashboard
+
+# Generate TLS certs and create K8s secret for proxy
+minikube-tls-secret:
+	@echo "🔐 Generating TLS cert and creating K8s secret for uma-proxy..."
+	openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -days 365 -nodes -subj "/CN=uma-proxy.default.svc.cluster.local"
+	@echo "🔐 Creating/updating Kubernetes TLS secret..."
+	kubectl delete secret uma-proxy-tls --ignore-not-found -n default
+	kubectl create secret tls uma-proxy-tls --cert=server.crt --key=server.key -n default
+	@rm server.crt server.key
+	@echo "✅ TLS secret 'uma-proxy-tls' created in 'default' namespace."
 
 # Start minikube with Docker driver
 minikube-start:
