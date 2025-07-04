@@ -40,19 +40,34 @@ func createActor(pipelineDescription string) (Actor, error) {
 		Spec: v1.PodSpec{
 			Containers: []v1.Container{
 				{
-					Name:  "transformation",
-					Image: "file-server",
-					//Image:   "rdfconnect/rdf-connect:latest",
-					//Command: transformation.Transformation,
+					Name:            "transformation",
+					Image:           "file-server",
 					ImagePullPolicy: v1.PullNever,
 					Env: []v1.EnvVar{
 						{Name: "FILE_URLS", Value: fmt.Sprintf("%v", pipelineDescription)},
-						{Name: "http_proxy", Value: "http://uma-proxy-service.default.svc.cluster.local:5050"},
-						//{Name: "https_proxy", Value: "http://uma-proxy-service.default.svc.cluster.local:5050"},
-						//{Name: "no_proxy", Value: "localhost,127.0.0.1,.svc,.cluster.local"}, // Optional
+						{Name: "http_proxy", Value: "http://uma-proxy-service.default.svc.cluster.local:8080"},
+						{Name: "https_proxy", Value: "http://uma-proxy-service.default.svc.cluster.local:8443"},
+						{Name: "SSL_CERT_FILE", Value: "/key-pair/uma-proxy.crt"},
 					},
 					Ports: []v1.ContainerPort{
-						{ContainerPort: 8080}, // Match with service
+						{ContainerPort: 8080},
+					},
+					VolumeMounts: []v1.VolumeMount{
+						{
+							Name:      "key-pair",
+							MountPath: "/key-pair",
+							ReadOnly:  true,
+						},
+					},
+				},
+			},
+			Volumes: []v1.Volume{
+				{
+					Name: "key-pair",
+					VolumeSource: v1.VolumeSource{
+						Secret: &v1.SecretVolumeSource{
+							SecretName: "uma-proxy-key-pair",
+						},
 					},
 				},
 			},
@@ -165,6 +180,7 @@ func createActor(pipelineDescription string) (Actor, error) {
 
 func (actor Actor) Stop() {
 	if actor.pod != nil {
+		// TODO stop service as well
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		err := Clientset.CoreV1().Pods("default").Delete(ctx, actor.pod.Name, metav1.DeleteOptions{})

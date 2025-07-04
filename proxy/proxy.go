@@ -40,10 +40,38 @@ func createPod(clientset *kubernetes.Clientset) error {
 			Containers: []v1.Container{
 				{
 					Name:            "uma-proxy",
-					Image:           "uma-proxy", // Your local image
+					Image:           "uma-proxy",
 					ImagePullPolicy: v1.PullNever,
 					Ports: []v1.ContainerPort{
-						{ContainerPort: 5050}, // Port inside the container
+						{ContainerPort: 8080},
+						{ContainerPort: 8443},
+					},
+					VolumeMounts: []v1.VolumeMount{
+						{
+							Name:      "key-pair",
+							MountPath: "/key-pair",
+							ReadOnly:  true,
+						},
+					},
+					Env: []v1.EnvVar{
+						{
+							Name:  "CERT_PATH",
+							Value: "/key-pair/uma-proxy.crt",
+						},
+						{
+							Name:  "KEY_PATH",
+							Value: "/key-pair/uma-proxy.key",
+						},
+					},
+				},
+			},
+			Volumes: []v1.Volume{
+				{
+					Name: "key-pair",
+					VolumeSource: v1.VolumeSource{
+						Secret: &v1.SecretVolumeSource{
+							SecretName: "uma-proxy-key-pair",
+						},
 					},
 				},
 			},
@@ -79,8 +107,14 @@ func createService(clientset *kubernetes.Clientset) error {
 			},
 			Ports: []v1.ServicePort{
 				{
-					Port:       5050,
-					TargetPort: intstr.FromInt(5050),
+					Name:       "http",
+					Port:       8080,
+					TargetPort: intstr.FromInt(8080),
+				},
+				{
+					Name:       "https",
+					Port:       8443,
+					TargetPort: intstr.FromInt(8443),
 				},
 			},
 		},

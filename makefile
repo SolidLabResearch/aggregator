@@ -1,23 +1,25 @@
 # Declare phony targets so make always runs these commands
-.PHONY: minikube-init minikube-start minikube-clean minikube-dashboard-start minikube-tls-secret containers-all containers-build containers-load run
+.PHONY: minikube-init minikube-start minikube-clean minikube-dashboard-start containers-all containers-build containers-load run minikube-generate-key-pair
 
 # 'init-minikube' target: start minikube, build images, then load them into minikube
-minikube-init: minikube-start containers-build containers-load minikube-tls-secret minikube-dashboard-start
+minikube-init: minikube-start containers-build containers-load minikube-generate-key-pair minikube-dashboard-start
 
 # deploy minikube dashboard
 minikube-dashboard-start:
 	@echo "🚀 Starting kubectl proxy for Minikube dashboard..."
 	@minikube dashboard
 
-# Generate TLS certs and create K8s secret for proxy
-minikube-tls-secret:
-	@echo "🔐 Generating TLS cert and creating K8s secret for uma-proxy..."
-	openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -days 365 -nodes -subj "/CN=uma-proxy.default.svc.cluster.local"
-	@echo "🔐 Creating/updating Kubernetes TLS secret..."
-	kubectl delete secret uma-proxy-tls --ignore-not-found -n default
-	kubectl create secret tls uma-proxy-tls --cert=server.crt --key=server.key -n default
-	@rm server.crt server.key
-	@echo "✅ TLS secret 'uma-proxy-tls' created in 'default' namespace."
+# Set up key pair for uma-proxy
+minikube-generate-key-pair:
+	@echo "🔑 Generating key pair for uma-proxy..."
+	@openssl genrsa -out uma-proxy.key 4096
+	@openssl req -x509 -new -nodes -key uma-proxy.key -sha256 -days 3650 -out uma-proxy.crt -subj "/CN=Aggregator MITM CA"
+	@echo "🗑️ Deleting existing Kubernetes secret for uma-proxy key pair if it exists..."
+	@kubectl delete secret uma-proxy-key-pair -n default --ignore-not-found
+	@echo "🔐 Creating Kubernetes secret for uma-proxy key pair..."
+	@kubectl create secret generic uma-proxy-key-pair --from-file=uma-proxy.crt=uma-proxy.crt --from-file=uma-proxy.key=uma-proxy.key -n default
+	@echo "🗑️ Cleaning up generated key pair files..."
+	@rm uma-proxy.crt uma-proxy.key
 
 # Start minikube with Docker driver
 minikube-start:

@@ -24,7 +24,8 @@ WORKDIR /app
 COPY --from=builder /app/uma-proxy .
 
 # Expose the port the proxy listens on
-EXPOSE 5050
+EXPOSE 8080
+EXPOSE 8443
 
 # Command to run the proxy
 CMD ["./uma-proxy"]
