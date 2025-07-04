@@ -64,6 +64,26 @@ func main() {
 		}
 	}
 
+	services, err := Clientset.CoreV1().Services("default").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, svc := range services.Items {
+		// Skip the critical Kubernetes API service
+		if svc.Name == "kubernetes" {
+			continue
+		}
+		err := Clientset.CoreV1().Services(svc.Namespace).Delete(context.Background(), svc.Name, metav1.DeleteOptions{})
+		if err != nil {
+			log.Printf("Failed to delete service %s/%s: %v", svc.Namespace, svc.Name, err)
+		} else {
+			log.Printf("Deleted service: %s/%s", svc.Namespace, svc.Name)
+		}
+	}
+
+	log.Println("Cleanup complete. Exiting.")
+
 	// let AS know that all resources need to be deleted
 	auth.DeleteAllResources()
 }
