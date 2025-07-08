@@ -32,8 +32,10 @@ async function main() {
         console.error(`Error: ${actorResponse.status}, response: ${await actorResponse.text()}`);
         return;
     }
-    const actorConfig = await actorResponse.text();
-    console.log(`= Actor config:\n${actorConfig}\n`);
+
+    const actorConfig = await actorResponse.json();
+    console.log(`= Actor config id:\n${actorConfig.id}\n`);
+    console.log(`= Actor config transformation:\n${actorConfig.transformation}\n`);
 
     const actorUrl = "http://localhost:5000" + `/${id}`;
     console.log(`=== Requesting actor results at ${actorUrl}`);

@@ -194,7 +194,7 @@ func (data ConfigurationData) headActor(response http.ResponseWriter, request *h
 	fmt.Printf("Request head for actor: %v\n", actor.Id)
 
 	header := response.Header()
-	header.Set("Content-Type", "text/plain")
+	header.Set("Content-Type", "application/json")
 	header.Set("ETag", "0") // TODO: actors can't be changed, so they will always return the same value so ETag is always 0 (for now)
 	response.WriteHeader(http.StatusOK)
 }
@@ -203,7 +203,7 @@ func (data ConfigurationData) getActor(response http.ResponseWriter, request *ht
 	fmt.Printf("Request get for actor: %v\n", actor.Id)
 
 	header := response.Header()
-	header.Set("Content-Type", "text/plain")
+	header.Set("Content-Type", "application/json")
 	header.Set("ETag", "0") // TODO: actors can't be changed, so they will always return the same value so ETag is always 0 (for now)
 	_, err := response.Write([]byte(actor.marshalActor()))
 	if err != nil {
@@ -232,6 +232,7 @@ const resourceDescriptionRead = "{\"resource_scopes\": [\"urn:example:css:modes:
 const resourceDescriptionReadDelete = "{\"resource_scopes\": [\"urn:example:css:modes:read\",\"urn:example:css:modes:delete\"]}"
 const resourceDescriptionReadCreate = "{\"resource_scopes\": [\"urn:example:css:modes:read\",\"urn:example:css:modes:create\"]}"
 
+/*
 const hardcodedAvailableTransformations = `
 @prefix config: <http://localhost:5000/config#> .
 @prefix fno: <https://w3id.org/function/ontology#> .
@@ -249,8 +250,8 @@ config:Sources
 	fno:type      rdf:List .
 	fno:required  "true"^^xsd:boolean .
 `
+*/
 
-/*
 const hardcodedAvailableTransformations = `
 @prefix config: <http://localhost:5000/config#> .
 @prefix fno: <https://w3id.org/function/ontology#> .
@@ -262,7 +263,6 @@ config:SPARQLEvaluation
 	a                   fno:Function ;
 	fno:name            "A SPARQL query engine"^^xsd:string ;
 	fno:expects         ( config:QueryString config:Sources ) ;
-	fno:returns         ( config:QueryResults ) .
 
 config:QueryString
 	a             fno:Parameter ;
@@ -275,11 +275,4 @@ config:Sources
 	fno:predicate config:sources ;
 	fno:type      rdf:List .
 	fno:required  "true"^^xsd:boolean .
-
-config:QueryResults
-	a             fno:Output ;
-	fno:predicate config:queryResults ;
-	fno:type      xsd:string ;
-	fno:required  "true"^^xsd:boolean .
 `
-*/

@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	pipelineDescription := os.Getenv("FILE_URLS")
+	pipelineDescription := os.Getenv("PIPELINE_DESCRIPTION")
 	if pipelineDescription == "" {
 		log.Fatal("❌ You must set the FILE_URLS environment variable.")
 	}

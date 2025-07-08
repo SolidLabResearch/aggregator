@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -41,10 +42,10 @@ func createActor(pipelineDescription string) (Actor, error) {
 			Containers: []v1.Container{
 				{
 					Name:            "transformation",
-					Image:           "file-server",
+					Image:           "incremunica",
 					ImagePullPolicy: v1.PullNever,
 					Env: []v1.EnvVar{
-						{Name: "FILE_URLS", Value: fmt.Sprintf("%v", pipelineDescription)},
+						{Name: "PIPELINE_DESCRIPTION", Value: fmt.Sprintf("%v", pipelineDescription)},
 						{Name: "http_proxy", Value: "http://uma-proxy-service.default.svc.cluster.local:8080"},
 						{Name: "https_proxy", Value: "http://uma-proxy-service.default.svc.cluster.local:8443"},
 						{Name: "SSL_CERT_FILE", Value: "/key-pair/uma-proxy.crt"},
@@ -192,11 +193,14 @@ func (actor Actor) Stop() {
 	}
 }
 
+// TODO: should return the status of the actor (running, stopped, errors, ect.)
 func (actor Actor) marshalActor() string {
+	pipelineForJson := strings.ReplaceAll(actor.PipelineDescription, `"`, `\"`)
+	pipelineForJson = strings.ReplaceAll(pipelineForJson, "\n", `\n`)
 	actorJson := fmt.Sprintf(
-		"{id:%s,transformation:%s}",
+		`{"id":"%s","transformation":"%s"}`,
 		actor.Id,
-		actor.PipelineDescription,
+		pipelineForJson,
 	)
 	return actorJson
 }

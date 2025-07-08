@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",                   // Modern JS, efficient async/await
+    "module": "CommonJS",                 // Node.js compatible
+    "moduleResolution": "node",           // Standard Node resolution
+    "strict": true,                       // Enable all strict type-checking options
+    "esModuleInterop": true,              // Allow default import for CommonJS modules
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,                 // Faster builds
+    "noImplicitAny": true,                // Catch unsafe `any` usage
+    "resolveJsonModule": true,            // Allow importing JSON
+    "types": ["node"]
+  },
+  "exclude": ["node_modules", "dist"]
+}
