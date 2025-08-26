@@ -1,3 +1,4 @@
+import {createUserManagedAccessFetch} from "./util.js";
 
 /*
 const PipelineDescription = `
@@ -18,35 +19,41 @@ const PipelineDescription = `
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 _:execution a fno:Execution ;
     fno:executes config:SPARQLEvaluation ;
-    config:sources ( "https://maartyman.github.io/static-files/test.ttl"^^xsd:string ) ;
+    config:sources ( "http://localhost:3000/alice/profile/card"^^xsd:string ) ;
     config:queryString "SELECT * WHERE { ?s ?p ?o }" .
 `;
 
+const request = {
+    method: "POST",
+    headers: {
+        "content-type": "text/turtle"
+    },
+    body: PipelineDescription,
+};
+
 async function main() {
-    const fetch = require('node-fetch');
-    const { URL } = require('url');
-
     const pipelineEndpoint = 'http://localhost:5000/config/actors';
-    const pipelineUrl = new URL(pipelineEndpoint);
 
-    console.log(`=== Requesting pipeline at ${pipelineUrl} with body:\n`);
+    console.log(`=== Requesting pipeline at ${pipelineEndpoint} with body:\n`);
     console.log(PipelineDescription);
     console.log('');
 
-    const response = await fetch(pipelineUrl, {
-        method: "POST",
-        headers: {
-            "content-type": "text/turtle"
-        },
-        body: PipelineDescription,
-    });
+    const umaFetch = createUserManagedAccessFetch({
+        token: "http://localhost:3000/alice/profile/card#me",
+        token_format: 'urn:solidlab:uma:claims:formats:webid',
+    })
 
-    if (response.status !== 200) {
+    const response = await umaFetch(pipelineEndpoint, request);
+
+    console.log(`=== Response status: ${response.status}`);
+    if (response.status !== 201) {
         console.error(`Error: ${response.status}, response: ${await response.text()}`);
         return;
     }
 
-    console.log(`= Status: ${response.status}\n`);
+    console.log(`=== Pipeline created successfully!`);
+    const responseText = await response.text();
+    console.log(`Response: ${responseText}`);
 }
 
-main();
+main().catch(console.error);

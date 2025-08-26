@@ -1,13 +1,16 @@
+import { createUserManagedAccessFetch } from './util.js';
+
 async function main() {
-    const fetch = require('node-fetch');
-    const { URL } = require('url');
-
     const pipelineEndpoint = 'http://localhost:5000/config/actors';
-    const pipelineUrl = new URL(pipelineEndpoint);
 
-    console.log(`=== Requesting actors at ${pipelineUrl}`);
+    console.log(`=== Requesting actors at ${pipelineEndpoint}`);
 
-    const response = await fetch(pipelineUrl, {
+    const umaFetch = createUserManagedAccessFetch({
+        token: "http://localhost:3000/alice/profile/card#me",
+        token_format: 'urn:solidlab:uma:claims:formats:webid',
+    })
+
+    const response = await umaFetch(pipelineEndpoint, {
         method: "GET"
     });
     console.log(`=== Response status: ${response.status}`);
@@ -24,7 +27,7 @@ async function main() {
     const actorConfigUrl = pipelineEndpoint + `/${id}`;
 
     console.log(`=== Requesting actor config at ${actorConfigUrl}`);
-    const actorResponse = await fetch(actorConfigUrl, {
+    const actorResponse = await umaFetch(actorConfigUrl, {
         method: "GET"
     });
     console.log(`=== Actor config response status: ${actorResponse.status}`);
@@ -40,7 +43,7 @@ async function main() {
     const actorUrl = "http://localhost:5000" + `/${id}`;
     console.log(`=== Requesting actor results at ${actorUrl}`);
 
-    const actorResultsResponse = await fetch(actorUrl, {
+    const actorResultsResponse = await umaFetch(actorUrl, {
         method: "GET"
     });
 
@@ -49,8 +52,9 @@ async function main() {
         console.error(`Error: ${actorResultsResponse.status}, response: ${await actorResultsResponse.text()}`);
         return;
     }
+
     const actorResults = await actorResultsResponse.text();
-    console.log(`= Actor results:\n${actorResults}\n`);
+    console.log(`= Actor results:\n${actorResults}`);
 }
 
-main();
+main().catch(console.error);
