@@ -156,6 +156,10 @@ func (data ConfigurationData) createActor(response http.ResponseWriter, request 
 
 	// TODO the descriptions need to have the pipelineDescription
 	data.HandleFunc(fmt.Sprintf("/config/actors/%s", actor.Id), data.HandleActorEndpoint, resourceScopesReadDelete)
+	auth.CreateResource(
+		fmt.Sprintf("%s://%s:%s/%s", protocol, host, serverPort, actor.Id),
+		resourceScopesRead,
+	)
 
 	// 5) return the endpoint to the client
 	header := response.Header()
