@@ -66,28 +66,41 @@ func AuthorizeRequest(response http.ResponseWriter, request *http.Request, extra
 	permission, err := verifyTicket(request.Header.Get("Authorization"), []string{"http://localhost:4000/uma"})
 	if err != nil {
 		fmt.Println("Error while verifying ticket: ", err)
+		response.WriteHeader(http.StatusBadRequest)
 		return false
 	}
+
+	// Construct the complete URL for the current request
+	scheme := "http"
+	if request.TLS != nil {
+		scheme = "https"
+	}
+	completeURL := fmt.Sprintf("%s://%s%s", scheme, request.Host, request.URL.Path)
+
 	for _, perm := range permission {
-		if idIndex[perm.ResourceID] == request.URL.Path {
+		if perm.ResourceID == idIndex[completeURL] {
 			if request.Method == "POST" || request.Method == "PUT" || request.Method == "DELETE" {
-				if contains(perm.ResourceScopes, "urn:example:css:modes:read") {
-					return true
-				}
-				return false
-			} else if request.Method == "GET" || request.Method == "HEAD" {
 				if contains(perm.ResourceScopes, "urn:example:css:modes:modify") {
 					return true
 				}
+				response.WriteHeader(http.StatusBadRequest)
+				return false
+			} else if request.Method == "GET" || request.Method == "HEAD" {
+				if contains(perm.ResourceScopes, "urn:example:css:modes:read") {
+					return true
+				}
+				response.WriteHeader(http.StatusBadRequest)
 				return false
 			} else {
 				fmt.Println(fmt.Errorf("authorize request method not supported: %v", request.Method).Error())
+				response.WriteHeader(http.StatusMethodNotAllowed)
 				return false
 			}
 		}
 	}
+	// If we get here, no matching permission was found
+	response.WriteHeader(http.StatusBadRequest)
 	return false
-
 }
 
 type UmaConfig struct {
@@ -112,7 +125,7 @@ type UmaClaims struct {
 func fetchTicket(permissions map[string][]string, issuer string) (string, error) {
 	config, err := fetchUmaConfig(issuer)
 	if err != nil {
-		return "", fmt.Errorf("error while retrieving ticket: %v", err)
+		return "", fmt.Errorf("error while retrieving config: %v", err)
 	}
 
 	var body []Permission
@@ -200,6 +213,12 @@ type JWKS struct {
 }
 
 func verifyTicket(token string, validIssuers []string) ([]Permission, error) {
+	// Remove 'Bearer ' prefix if present (case-insensitive)
+	token = strings.TrimSpace(token)
+	if len(token) > 7 && strings.ToLower(token[:7]) == "bearer " {
+		token = strings.TrimSpace(token[7:])
+	}
+
 	payloadMap, err := decodeJwtPayload(token)
 	if err != nil {
 		return nil, fmt.Errorf("error decoding JWT: %w", err)
@@ -489,24 +508,66 @@ func fetchUmaConfig(issuer string) (UmaConfig, error) {
 	return umaConfig, nil
 }
 
-//const resourceDescription = "{\"resource_scopes\": [\"urn:example:css:modes:read\",\"urn:example:css:modes:append\",\"urn:example:css:modes:create\",\"urn:example:css:modes:delete\",\"urn:example:css:modes:write\"]}"
-
 var idIndex = make(map[string]string)
 
-func CreateResource(resourceId string, resourceDescription string) {
+// ResourceScope enum-like type for UMA resource scopes
+type ResourceScope string
+
+const (
+	ScopeRead   ResourceScope = "urn:example:css:modes:read"
+	ScopeAppend ResourceScope = "urn:example:css:modes:append"
+	ScopeCreate ResourceScope = "urn:example:css:modes:create"
+	ScopeDelete ResourceScope = "urn:example:css:modes:delete"
+	ScopeWrite  ResourceScope = "urn:example:css:modes:write"
+)
+
+func CreateResource(resourceId string, resourceScopes []ResourceScope) {
 	config, err := fetchUmaConfig(AS_ISSUER)
 	if err != nil {
 		fmt.Println("Error while retrieving UMA configuration:", err)
 		return
 	}
 
-	req, err := http.NewRequest("POST", config.resourceRegistrationEndpoint, bytes.NewBufferString(resourceDescription))
+	knownUmaId := idIndex[resourceId]
+	endpoint := config.resourceRegistrationEndpoint
+	method := "POST"
+	if knownUmaId != "" {
+		endpoint = endpoint + "/" + knownUmaId
+		method = "PUT"
+	}
+
+	// Generate resource description with name and resource_scopes
+	scopeStrings := make([]string, len(resourceScopes))
+	for i, scope := range resourceScopes {
+		scopeStrings[i] = string(scope)
+	}
+
+	description := map[string]interface{}{
+		"name":            resourceId,
+		"resource_scopes": scopeStrings,
+	}
+
+	jsonData, err := json.Marshal(description)
+	if err != nil {
+		fmt.Println("Error while marshaling resource description:", err)
+		return
+	}
+
+	req, err := http.NewRequest(method, endpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
 		fmt.Println("Error while creating a request:", err)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+
+	fmt.Printf("%s resource registration for <%s> at <%s>\n", func() string {
+		if knownUmaId != "" {
+			return "Updating"
+		} else {
+			return "Creating"
+		}
+	}(), resourceId, endpoint)
 
 	res, err := doSignedRequest(req)
 	if err != nil {
@@ -515,30 +576,35 @@ func CreateResource(resourceId string, resourceDescription string) {
 	}
 	defer res.Body.Close()
 	body, err := io.ReadAll(res.Body)
-
 	if err != nil {
 		fmt.Println("Error while reading response body:", err, " got response status:", res.Status)
 		return
 	}
-	if res.StatusCode != http.StatusCreated {
-		fmt.Println("Error while creating resource:", res.Status, string(body))
-		fmt.Println("Stack trace:")
-		fmt.Println(string(debug.Stack()))
-		return
-	}
 
-	var responseData struct {
-		ID string `json:"_id"`
+	if knownUmaId != "" {
+		if res.StatusCode != http.StatusOK {
+			fmt.Printf("Resource update request failed. %s\n", string(body))
+			return
+		}
+	} else {
+		if res.StatusCode != http.StatusCreated {
+			fmt.Printf("Resource registration request failed. %s\n", string(body))
+			return
+		}
+		var responseData struct {
+			ID string `json:"_id"`
+		}
+		if err := json.Unmarshal(body, &responseData); err != nil {
+			fmt.Println("Error while parsing response JSON:", err)
+			return
+		}
+		if responseData.ID == "" {
+			fmt.Println("Unexpected response from UMA server; no UMA id received.")
+			return
+		}
+		idIndex[resourceId] = responseData.ID
+		fmt.Printf("Registered resource %s with UMA ID %s\n", resourceId, responseData.ID)
 	}
-	if err := json.Unmarshal(body, &responseData); err != nil {
-		fmt.Println("Error while parsing response JSON:", err)
-		return
-	}
-
-	fmt.Println("Resource created successfully")
-	fmt.Printf("Resource ID: %s, umaId: %s\n", resourceId, responseData.ID)
-
-	idIndex[resourceId] = responseData.ID
 }
 
 func DeleteResource(resourceId string) {
@@ -602,7 +668,7 @@ func DeleteAllResources() {
 
 		req, err := http.NewRequest(
 			"DELETE",
-			config.resourceRegistrationEndpoint+"/"+authId,
+			config.resourceRegistrationEndpoint+authId,
 			&bytes.Buffer{},
 		)
 		if err != nil {

@@ -29,15 +29,15 @@ func startConfigurationEndpoint(mux *http.ServeMux) {
 		serveMux:                 mux,
 	}
 
-	configurationData.HandleFunc("/config", configurationData.HandleConfigurationEndpoint, resourceDescriptionRead)
-	configurationData.HandleFunc("/config/actors", configurationData.HandleActorsEndpoint, resourceDescriptionReadCreate)
+	configurationData.HandleFunc("/config", configurationData.HandleConfigurationEndpoint, resourceScopesRead)
+	configurationData.HandleFunc("/config/actors", configurationData.HandleActorsEndpoint, resourceScopesReadCreate)
 }
 
-func (data ConfigurationData) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), resourceDescription string) {
+func (data ConfigurationData) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), resourceScopes []auth.ResourceScope) {
 	data.serveMux.HandleFunc(pattern, handler)
 	auth.CreateResource(
 		fmt.Sprintf("%s://%s:%s%s", protocol, host, serverPort, pattern),
-		resourceDescription,
+		resourceScopes,
 	)
 }
 
@@ -155,7 +155,7 @@ func (data ConfigurationData) createActor(response http.ResponseWriter, request 
 	data.etagActors++ // TODO maybe hash the actors to get a unique etag
 
 	// TODO the descriptions need to have the pipelineDescription
-	data.HandleFunc(fmt.Sprintf("/config/actors/%s", actor.Id), data.HandleActorEndpoint, resourceDescriptionReadDelete)
+	data.HandleFunc(fmt.Sprintf("/config/actors/%s", actor.Id), data.HandleActorEndpoint, resourceScopesReadDelete)
 
 	// 5) return the endpoint to the client
 	header := response.Header()
@@ -227,10 +227,10 @@ func (data ConfigurationData) deleteActor(response http.ResponseWriter, _ *http.
 	)
 }
 
-// "{\"resource_scopes\": [\"urn:example:css:modes:read\",\"urn:example:css:modes:append\",\"urn:example:css:modes:create\",\"urn:example:css:modes:delete\",\"urn:example:css:modes:write\"]}"
-const resourceDescriptionRead = "{\"resource_scopes\": [\"urn:example:css:modes:read\"]}"
-const resourceDescriptionReadDelete = "{\"resource_scopes\": [\"urn:example:css:modes:read\",\"urn:example:css:modes:delete\"]}"
-const resourceDescriptionReadCreate = "{\"resource_scopes\": [\"urn:example:css:modes:read\",\"urn:example:css:modes:create\"]}"
+// Replace resourceScopes* slices with enum slices using auth.ResourceScope
+var resourceScopesRead = []auth.ResourceScope{auth.ScopeRead}
+var resourceScopesReadDelete = []auth.ResourceScope{auth.ScopeRead, auth.ScopeDelete}
+var resourceScopesReadCreate = []auth.ResourceScope{auth.ScopeRead, auth.ScopeCreate}
 
 /*
 const hardcodedAvailableTransformations = `
