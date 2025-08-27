@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -117,6 +118,17 @@ func FetchHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("📡 Fetch request: %s %s", fetchReq.Method, fetchReq.URL)
 
+	// Parse the original URL to preserve the original host header
+	originalURL, err := url.Parse(fetchReq.URL)
+	if err != nil {
+		http.Error(w, "Invalid URL: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	originalHost := originalURL.Host
+
+	// Redirect localhost URLs to host machine
+	fetchReq.URL = redirectLocalhostURL(fetchReq.URL)
+
 	// Set default method if not provided
 	if fetchReq.Method == "" {
 		fetchReq.Method = "GET"
@@ -138,6 +150,13 @@ func FetchHandler(w http.ResponseWriter, r *http.Request) {
 	// Add headers to the request
 	for key, value := range fetchReq.Headers {
 		req.Header.Set(key, value)
+	}
+
+	// If we redirected a localhost URL, set the Host header to the original localhost value
+	redirectedURL, _ := url.Parse(fetchReq.URL)
+	if redirectedURL.Hostname() == "host.minikube.internal" && (originalHost == "localhost:3000" || strings.HasPrefix(originalHost, "localhost:")) {
+		req.Host = originalHost
+		log.Printf("🔧 Setting Host header to original value: %s", originalHost)
 	}
 
 	// Send the request using the Do function (which handles UMA flow)
@@ -324,4 +343,36 @@ func generateCert(host string) ([]byte, []byte, error) {
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
 	return certPEM, keyPEM, nil
+}
+
+// getHostIP returns the host machine IP address for localhost redirection
+func getHostIP() string {
+	// Try to get host IP from environment variable first
+	if hostIP := os.Getenv("HOST_IP"); hostIP != "" {
+		log.Printf("Using HOST_IP from environment: %s", hostIP)
+		return hostIP
+	}
+
+	// In minikube, try host.minikube.internal first
+	log.Printf("No HOST_IP set, trying host.minikube.internal")
+	return "host.minikube.internal"
+}
+
+// redirectLocalhostURL converts localhost URLs to host machine IP
+func redirectLocalhostURL(originalURL string) string {
+	parsedURL, err := url.Parse(originalURL)
+	if err != nil {
+		return originalURL
+	}
+
+	// Check if it's a localhost URL
+	if parsedURL.Hostname() == "localhost" || parsedURL.Hostname() == "127.0.0.1" {
+		hostIP := getHostIP()
+		parsedURL.Host = fmt.Sprintf("%s:%s", hostIP, parsedURL.Port())
+		redirectedURL := parsedURL.String()
+		log.Printf("🔄 Redirecting localhost URL: %s -> %s", originalURL, redirectedURL)
+		return redirectedURL
+	}
+
+	return originalURL
 }

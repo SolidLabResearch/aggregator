@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -22,6 +23,28 @@ type claim struct {
 var client = &http.Client{}
 
 func Do(req *http.Request) (*http.Response, error) {
+	// Redirect localhost URLs to host machine
+	originalURL := req.URL.String()
+	originalHost := req.Host
+	if originalHost == "" {
+		originalHost = req.URL.Host
+	}
+
+	redirectedURL := redirectLocalhostURL(originalURL)
+	if redirectedURL != originalURL {
+		newURL, err := url.Parse(redirectedURL)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse redirected URL: %v", err)
+		}
+		req.URL = newURL
+
+		// If we redirected a localhost URL, preserve the original Host header
+		if newURL.Hostname() == "host.minikube.internal" && (originalHost == "localhost:3000" || strings.HasPrefix(originalHost, "localhost:")) {
+			req.Host = originalHost
+			log.Printf("🔧 Setting Host header to original value: %s", originalHost)
+		}
+	}
+
 	// Do UMA flow here:
 	// 		request resource
 	// 		If unauthenticated go to Authorization server and with token
