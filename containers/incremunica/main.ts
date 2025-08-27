@@ -11,31 +11,34 @@ if (proxyUrl === undefined) {
 }
 
 // Create custom fetch function that uses the proxy's /fetch endpoint
-const customFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> = async (input: any, init?: any) => {
+async function customFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const originalUrl = input.toString();
+
   // Prepare the request payload for the proxy
   const fetchRequest = {
-    url: input.toString(),
+    url: originalUrl,
     method: init?.method || 'GET',
     headers: init?.headers || {},
     body: init?.body ? init.body.toString() : ''
   };
 
-  try {
-    // Send request to proxy's /fetch endpoint and return the response directly
-    const response = await fetch(`${proxyUrl}/fetch`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(fetchRequest)
-    });
+  const response = await fetch(`${proxyUrl}/fetch`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(fetchRequest)
+  });
 
-    // The proxy now returns the actual response, so we can return it directly
-    return response;
-  } catch (error) {
-    console.error('Custom fetch error:', error);
-    throw error;
-  }
+  // Override the url property to return the original URL
+  Object.defineProperty(response, 'url', {
+    value: originalUrl,
+    writable: false,
+    enumerable: true,
+    configurable: false
+  });
+
+  return response;
 };
 
 async function main() {
