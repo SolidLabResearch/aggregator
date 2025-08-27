@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -15,14 +16,24 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
+
+// FetchRequest represents the JSON payload for the /fetch endpoint
+type FetchRequest struct {
+	URL     string            `json:"url"`
+	Method  string            `json:"method"`
+	Headers map[string]string `json:"headers"`
+	Body    string            `json:"body"`
+}
 
 var caCert *x509.Certificate
 var caKey *rsa.PrivateKey
 
 func main() {
 	http.HandleFunc("/", Handler)
+	http.HandleFunc("/fetch", FetchHandler)
 	go func() {
 		log.Println("HTTP proxy listening on port: 8080")
 		log.Fatal(http.ListenAndServe(":8080", nil))
@@ -88,6 +99,70 @@ func Handler(w http.ResponseWriter, req *http.Request) {
 	io.Copy(w, resp.Body)
 	location, _ := resp.Location()
 	fmt.Println("Response", location, resp.Status)
+}
+
+// Handler for /fetch endpoint
+func FetchHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var fetchReq FetchRequest
+	err := json.NewDecoder(r.Body).Decode(&fetchReq)
+	if err != nil {
+		http.Error(w, "Bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("📡 Fetch request: %s %s", fetchReq.Method, fetchReq.URL)
+
+	// Set default method if not provided
+	if fetchReq.Method == "" {
+		fetchReq.Method = "GET"
+	}
+
+	// Create request body reader if body is provided
+	var bodyReader io.Reader
+	if fetchReq.Body != "" {
+		bodyReader = strings.NewReader(fetchReq.Body)
+	}
+
+	// Create new HTTP request
+	req, err := http.NewRequest(fetchReq.Method, fetchReq.URL, bodyReader)
+	if err != nil {
+		http.Error(w, "Failed to create request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Add headers to the request
+	for key, value := range fetchReq.Headers {
+		req.Header.Set(key, value)
+	}
+
+	// Send the request using the Do function (which handles UMA flow)
+	resp, err := Do(req)
+	if err != nil {
+		log.Printf("❌ Failed to fetch %s: %v", fetchReq.URL, err)
+		http.Error(w, "Failed to fetch URL: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	log.Printf("✅ Response from %s: %d %s", fetchReq.URL, resp.StatusCode, resp.Status)
+
+	// Copy response headers to our response
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+
+	// Set the status code
+	w.WriteHeader(resp.StatusCode)
+
+	// Copy the response body directly
+	io.Copy(w, resp.Body)
 }
 
 // MITM handler

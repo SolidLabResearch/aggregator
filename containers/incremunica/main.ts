@@ -3,6 +3,40 @@ import { QueryEngine as QueryEngineInc } from '@incremunica/query-sparql-increme
 import { isAddition } from '@incremunica/user-tools';
 import { Store, Parser } from 'n3';
 import http from "http";
+import { URL } from "url";
+
+const proxyUrl = process.env.http_proxy || process.env.HTTP_PROXY;
+if (proxyUrl === undefined) {
+  throw new Error('Environment variable PROXY_URL is not set. Please provide the URL of the proxy server.');
+}
+
+// Create custom fetch function that uses the proxy's /fetch endpoint
+const customFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> = async (input: any, init?: any) => {
+  // Prepare the request payload for the proxy
+  const fetchRequest = {
+    url: input.toString(),
+    method: init?.method || 'GET',
+    headers: init?.headers || {},
+    body: init?.body ? init.body.toString() : ''
+  };
+
+  try {
+    // Send request to proxy's /fetch endpoint and return the response directly
+    const response = await fetch(`${proxyUrl}/fetch`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(fetchRequest)
+    });
+
+    // The proxy now returns the actual response, so we can return it directly
+    return response;
+  } catch (error) {
+    console.error('Custom fetch error:', error);
+    throw error;
+  }
+};
 
 async function main() {
   const pipelineDescription = process.env.PIPELINE_DESCRIPTION;
@@ -15,7 +49,7 @@ async function main() {
 
   await new Promise<void>(
     (resolve, reject) => {
-      parser.parse(pipelineDescription, (error, quad, prefixes) => {
+      parser.parse(pipelineDescription, (error, quad, _prefixes) => {
         if (error) {
           reject('Error parsing pipeline description: ' + error);
           return;
@@ -87,7 +121,8 @@ SELECT ?queryString ?source WHERE {
 
   const queryEngine = new QueryEngineInc();
   const bindingsStream = await queryEngine.queryBindings(queryInfo.query, {
-    sources: queryInfo.sources
+    sources: queryInfo.sources,
+    fetch: customFetch
   });
 
   const materializedView: Map<string,{bindings: any, count: number}> = new Map();
@@ -112,10 +147,12 @@ SELECT ?queryString ?source WHERE {
     }
   });
   bindingsStream.on('end', () => {
-    throw new Error('Error during query execution: Query execution finished.');
+    console.log('Query execution finished.');
   });
   bindingsStream.on('error', (error) => {
-    throw new Error('Error during query execution:', error);
+    // Log original error and wrap in a new Error with message
+    console.error('Error during query execution:', error);
+    // Do not throw here to avoid crashing the server; keep running
   });
 
   const server = http.createServer((req, res) => {
