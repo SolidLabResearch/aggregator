@@ -5,6 +5,39 @@ import { Store, Parser } from 'n3';
 import http from "http";
 import { URL } from "url";
 
+// SSE Connection Manager
+class SSEConnectionManager {
+  private connections: Set<http.ServerResponse> = new Set();
+
+  addConnection(res: http.ServerResponse): void {
+    this.connections.add(res);
+    res.on('close', () => {
+      this.connections.delete(res);
+    });
+  }
+
+  broadcast(event: string, data: any): void {
+    const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const connection of this.connections) {
+      try {
+        connection.write(message);
+      } catch (error) {
+        // Remove connection if write fails
+        this.connections.delete(connection);
+      }
+    }
+  }
+
+  sendToConnection(res: http.ServerResponse, event: string, data: any): void {
+    const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    try {
+      res.write(message);
+    } catch (error) {
+      this.connections.delete(res);
+    }
+  }
+}
+
 // Resource registration configuration
 const REGISTRATION_URL = "http://192.168.49.1:4449/register";
 const POD_NAME = process.env.HOSTNAME || "incremunica-pod";
@@ -45,22 +78,23 @@ async function customFetch(input: RequestInfo | URL, init?: RequestInit): Promis
   });
 
   return response;
-};
+}
 
-// Function to register this service with the aggregator
-async function registerWithAggregator(): Promise<void> {
+// Function to register an endpoint with the aggregator
+async function registerEndpointWithAggregator(endpoint: string, description: string, scopes: string[] = ["read"]): Promise<void> {
   const registrationData = {
     pod_name: POD_NAME,
     pod_ip: POD_IP,
     port: SERVICE_PORT,
-    endpoint: "/",
-    scopes: ["read"],
-    description: "SPARQL SELECT incremental query service"
+    endpoint: endpoint,
+    scopes: scopes,
+    description: description
   };
 
   try {
-    console.log(`📝 Registering service with aggregator at ${REGISTRATION_URL}`);
+    console.log(`📝 Registering endpoint ${endpoint} with aggregator at ${REGISTRATION_URL}`);
     console.log(`   Pod: ${POD_NAME}, IP: ${POD_IP}, Port: ${SERVICE_PORT}`);
+    console.log(`   Description: ${description}`);
 
     const response = await fetch(REGISTRATION_URL, {
       method: "POST",
@@ -72,16 +106,38 @@ async function registerWithAggregator(): Promise<void> {
 
     if (response.ok) {
       const result = await response.json();
-      console.log("✅ Successfully registered with aggregator:");
+      console.log(`✅ Successfully registered endpoint ${endpoint}:`);
       console.log(`   External URL: ${result.external_url}`);
       console.log(`   Actor ID: ${result.actor_id}`);
+      return result.actor_id;
     } else {
       const errorText = await response.text();
-      console.error(`❌ Failed to register with aggregator: ${response.status} - ${errorText}`);
+      console.error(`❌ Failed to register endpoint ${endpoint}: ${response.status} - ${errorText}`);
     }
   } catch (error) {
-    console.error("❌ Error registering with aggregator:", error);
+    console.error(`❌ Error registering endpoint ${endpoint}:`, error);
   }
+}
+
+// Function to register all endpoints with the aggregator
+async function registerWithAggregator(): Promise<void> {
+  console.log('🌐 Registering all endpoints with aggregator...');
+
+  // Register the main SPARQL results endpoint
+  await registerEndpointWithAggregator(
+    "/",
+    "SPARQL SELECT incremental query service - JSON results",
+    ["read"]
+  );
+
+  // Register the server-sent events endpoint
+  await registerEndpointWithAggregator(
+    "/events",
+    "SPARQL SELECT incremental query service - Real-time SSE stream",
+    ["read"]
+  );
+
+  console.log('✅ All endpoints registered with aggregator');
 }
 
 async function main() {
@@ -172,6 +228,10 @@ SELECT ?queryString ?source WHERE {
   });
 
   const materializedView: Map<string,{bindings: any, count: number}> = new Map();
+
+  // Create SSE manager for broadcasting updates
+  const sseManager = new SSEConnectionManager();
+
   bindingsStream.on('data', (bindings: any) => {
     const key = bindings.toString();
     if (isAddition(bindings)) {
@@ -180,6 +240,9 @@ SELECT ?queryString ?source WHERE {
       } else {
         materializedView.set(key, { bindings: bindings, count: 1 });
       }
+
+      // Broadcast only the added binding to all SSE connections
+      sseManager.broadcast("addition", bindingToSparqlJson(bindings));
     } else {
       if (materializedView.has(key)) {
         const existingElement = materializedView.get(key)!;
@@ -187,6 +250,9 @@ SELECT ?queryString ?source WHERE {
         if (existingElement.count <= 0) {
           materializedView.delete(key);
         }
+
+        // Broadcast only the removed binding to all SSE connections
+        sseManager.broadcast("removal", bindingToSparqlJson(bindings));
       } else {
         throw new Error('Received a removal for a binding that was not in the materialized view:' + key);
       }
@@ -205,48 +271,32 @@ SELECT ?queryString ?source WHERE {
     console.log(`Received request: ${req.method} ${req.url}`);
     if (req.method === "GET" && req.url === "/") {
       res.writeHead(200, { "Content-Type": "application/sparql-results+json" });
-      const variablesSet: Set<string> = new Set();
-      const results: {[variableName: string]: {type: string, value: string, datatype?: string, "xml:lang"?: string }}[] = [];
-      for (const materializedElement of materializedView.values()) {
-        for (const variable of materializedElement.bindings.keys()) {
-          variablesSet.add(variable.value);
-        }
-        let result: {[variableName: string]: {type: string, value: string, datatype?: string, "xml:lang"?: string }} = {};
-        for (const [variable, value] of materializedElement.bindings) {
-          if (value.termType === 'Literal') {
-            result[variable.value] = {
-              type: 'literal',
-              value: value.value
-            };
-            if (value.datatype) {
-              result[variable.value].datatype = value.datatype.value;
-            }
-            if (value.language) {
-              result[variable.value]["xml:lang"] = value.language;
-            }
-          } else if (value.termType === 'NamedNode') {
-            result[variable.value] = {
-              type: 'uri',
-              value: value.value
-            };
-          } else if (value.termType === 'BlankNode') {
-            result[variable.value] = {
-              type: 'bnode',
-              value: value.value
-            };
-          }
-        }
-        for (let i = 0; i < materializedElement.count; i++) {
-          results.push(result);
-        }
-      }
-
-      const sparqlJson = {
-        head: { vars: [...variablesSet.keys()] },
-        results: { bindings: results },
-      };
-
+      const sparqlJson = materializedViewToSparqlJson(materializedView);
       res.end(JSON.stringify(sparqlJson, null, 2));
+    } else if (req.method === "GET" && req.url === "/events") {
+      // Handle SSE connection
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Cache-Control"
+      });
+
+      // Add this connection to the SSE manager
+      sseManager.addConnection(res);
+
+      // Send initial data immediately
+      sseManager.sendToConnection(res, "init", materializedViewToSparqlJson(materializedView));
+
+      // Keep connection alive with periodic heartbeat
+      const heartbeat = setInterval(() => {
+        sseManager.sendToConnection(res, "heartbeat", { timestamp: Date.now() });
+      }, 30000);
+
+      req.on('close', () => {
+        clearInterval(heartbeat);
+      });
     } else {
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not found");
@@ -255,10 +305,96 @@ SELECT ?queryString ?source WHERE {
 
   server.listen(8080, async () => {
     console.log("SPARQL SELECT result server running at http://localhost:8080/");
+    console.log("Server-Sent Events available at http://localhost:8080/events");
 
     // Register with the aggregator after server starts
     await registerWithAggregator();
   });
+}
+
+// Function to convert materialized view to SPARQL JSON format
+function materializedViewToSparqlJson(materializedView: Map<string,{bindings: any, count: number}>) {
+  const variablesSet: Set<string> = new Set();
+  const results: {[variableName: string]: {type: string, value: string, datatype?: string, "xml:lang"?: string }}[] = [];
+
+  for (const materializedElement of materializedView.values()) {
+    for (const variable of materializedElement.bindings.keys()) {
+      variablesSet.add(variable.value);
+    }
+    let result: {[variableName: string]: {type: string, value: string, datatype?: string, "xml:lang"?: string }} = {};
+    for (const [variable, value] of materializedElement.bindings) {
+      if (value.termType === 'Literal') {
+        result[variable.value] = {
+          type: 'literal',
+          value: value.value
+        };
+        if (value.datatype) {
+          result[variable.value].datatype = value.datatype.value;
+        }
+        if (value.language) {
+          result[variable.value]["xml:lang"] = value.language;
+        }
+      } else if (value.termType === 'NamedNode') {
+        result[variable.value] = {
+          type: 'uri',
+          value: value.value
+        };
+      } else if (value.termType === 'BlankNode') {
+        result[variable.value] = {
+          type: 'bnode',
+          value: value.value
+        };
+      }
+    }
+    for (let i = 0; i < materializedElement.count; i++) {
+      results.push(result);
+    }
+  }
+
+  return {
+    head: { vars: [...variablesSet.keys()] },
+    results: { bindings: results },
+  };
+}
+
+// Function to convert a single binding to SPARQL JSON format
+function bindingToSparqlJson(bindings: any) {
+  const variablesSet: Set<string> = new Set();
+  let result: {[variableName: string]: {type: string, value: string, datatype?: string, "xml:lang"?: string }} = {};
+
+  for (const variable of bindings.keys()) {
+    variablesSet.add(variable.value);
+  }
+
+  for (const [variable, value] of bindings) {
+    if (value.termType === 'Literal') {
+      result[variable.value] = {
+        type: 'literal',
+        value: value.value
+      };
+      if (value.datatype) {
+        result[variable.value].datatype = value.datatype.value;
+      }
+      if (value.language) {
+        result[variable.value]["xml:lang"] = value.language;
+      }
+    } else if (value.termType === 'NamedNode') {
+      result[variable.value] = {
+        type: 'uri',
+        value: value.value
+      };
+    } else if (value.termType === 'BlankNode') {
+      result[variable.value] = {
+        type: 'bnode',
+        value: value.value
+      };
+    }
+  }
+
+  return {
+    head: { vars: [...variablesSet.keys()] },
+    binding: result
+  };
 }
 
 main();

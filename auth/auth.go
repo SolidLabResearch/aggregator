@@ -22,6 +22,7 @@ const AS_ISSUER = "http://localhost:4000/uma"
 func AuthorizeRequest(response http.ResponseWriter, request *http.Request, extraPermissions []Permission) bool {
 	// check if Authorization header is present, if not create ticket
 	if request.Header.Get("Authorization") == "" {
+		fmt.Printf("🔐 Authorization header missing for %s %s\n", request.Method, request.URL.Path)
 		// create ticket
 		// Get the scheme
 		scheme := "http"
@@ -29,32 +30,39 @@ func AuthorizeRequest(response http.ResponseWriter, request *http.Request, extra
 			scheme = "https"
 		}
 		// Get the complete URL
-		completeURL := fmt.Sprintf("%s://%s%s", scheme, request.Host, request.Pattern)
+		completeURL := fmt.Sprintf("%s://%s%s", scheme, request.Host, request.URL.Path)
+		fmt.Printf("🎫 Creating ticket for URL: %s\n", completeURL)
 
 		ticketPermissions := make(map[string][]string)
 		if request.Method == "POST" || request.Method == "PUT" || request.Method == "DELETE" {
 			ticketPermissions[completeURL] = []string{"modify"}
+			fmt.Printf("🔧 Requesting 'modify' permissions for %s method\n", request.Method)
 		} else if request.Method == "GET" || request.Method == "HEAD" {
 			ticketPermissions[completeURL] = []string{"read"}
+			fmt.Printf("📖 Requesting 'read' permissions for %s method\n", request.Method)
 		} else {
-			fmt.Println(fmt.Errorf("method not supported by authorization: %v", request.Method).Error())
+			fmt.Printf("❌ Method %s not supported by authorization\n", request.Method)
 			http.Error(response, "method not supported by authorization", http.StatusMethodNotAllowed)
 			return false
 		}
 		if extraPermissions != nil {
+			fmt.Printf("➕ Adding %d extra permissions\n", len(extraPermissions))
 			for _, permission := range extraPermissions {
 				ticketPermissions[permission.ResourceID] = permission.ResourceScopes
+				fmt.Printf("   Extra permission: %s -> %v\n", permission.ResourceID, permission.ResourceScopes)
 			}
 		}
 		ticket, err := fetchTicket(ticketPermissions, AS_ISSUER)
 		if err != nil {
-			fmt.Println(fmt.Errorf("error while retrieving ticket: %v", err).Error())
+			fmt.Printf("❌ Error while retrieving ticket: %v\n", err)
 			http.Error(response, "error while retrieving ticket", http.StatusUnauthorized)
 			return false
 		}
 		if ticket == "" {
+			fmt.Println("✅ No ticket needed - access granted immediately")
 			return true
 		}
+		fmt.Printf("🎫 Ticket created successfully, sending WWW-Authenticate header\n")
 		response.Header().Set(
 			"WWW-Authenticate",
 			fmt.Sprintf(`UMA as_uri="%s", ticket="%s"`, AS_ISSUER, ticket),
@@ -63,9 +71,10 @@ func AuthorizeRequest(response http.ResponseWriter, request *http.Request, extra
 		return false
 	}
 
+	fmt.Printf("🔍 Verifying authorization token for %s %s\n", request.Method, request.URL.Path)
 	permission, err := verifyTicket(request.Header.Get("Authorization"), []string{"http://localhost:4000/uma"})
 	if err != nil {
-		fmt.Println("Error while verifying ticket: ", err)
+		fmt.Printf("❌ Error while verifying ticket: %v\n", err)
 		response.WriteHeader(http.StatusBadRequest)
 		return false
 	}
@@ -76,29 +85,59 @@ func AuthorizeRequest(response http.ResponseWriter, request *http.Request, extra
 		scheme = "https"
 	}
 	completeURL := fmt.Sprintf("%s://%s%s", scheme, request.Host, request.URL.Path)
+	fmt.Printf("🌐 Checking permissions for URL: %s\n", completeURL)
+
+	// Log the ID index lookup
+	resourceId, exists := idIndex[completeURL]
+	if exists {
+		fmt.Printf("📋 Found resource ID for URL %s: %s\n", completeURL, resourceId)
+	} else {
+		fmt.Printf("⚠️  No resource ID found in idIndex for URL: %s\n", completeURL)
+	}
+
+	fmt.Printf("🔑 User has %d permissions:\n", len(permission))
+	for i, perm := range permission {
+		fmt.Printf("   Permission %d: ResourceID=%s, Scopes=%v\n", i+1, perm.ResourceID, perm.ResourceScopes)
+	}
 
 	for _, perm := range permission {
 		if perm.ResourceID == idIndex[completeURL] {
+			fmt.Printf("✅ Found matching permission for resource ID: %s\n", perm.ResourceID)
 			if request.Method == "POST" || request.Method == "PUT" || request.Method == "DELETE" {
+				fmt.Printf("🔧 Checking for 'modify' scope for %s method\n", request.Method)
 				if contains(perm.ResourceScopes, "urn:example:css:modes:modify") {
+					fmt.Printf("✅ Authorization successful - user has modify permissions\n")
 					return true
 				}
+				fmt.Printf("❌ Authorization failed - user lacks 'urn:example:css:modes:modify' scope\n")
+				fmt.Printf("   User scopes: %v\n", perm.ResourceScopes)
 				response.WriteHeader(http.StatusBadRequest)
 				return false
 			} else if request.Method == "GET" || request.Method == "HEAD" {
+				fmt.Printf("📖 Checking for 'read' scope for %s method\n", request.Method)
 				if contains(perm.ResourceScopes, "urn:example:css:modes:read") {
+					fmt.Printf("✅ Authorization successful - user has read permissions\n")
 					return true
 				}
+				fmt.Printf("❌ Authorization failed - user lacks 'urn:example:css:modes:read' scope\n")
+				fmt.Printf("   User scopes: %v\n", perm.ResourceScopes)
 				response.WriteHeader(http.StatusBadRequest)
 				return false
 			} else {
-				fmt.Println(fmt.Errorf("authorize request method not supported: %v", request.Method).Error())
+				fmt.Printf("❌ Method %s not supported in authorization check\n", request.Method)
 				response.WriteHeader(http.StatusMethodNotAllowed)
 				return false
 			}
 		}
 	}
 	// If we get here, no matching permission was found
+	fmt.Printf("❌ No matching permission found for resource ID: %s\n", idIndex[completeURL])
+	fmt.Printf("   Looking for resource ID: %s\n", idIndex[completeURL])
+	fmt.Printf("   Available resource IDs in permissions: ")
+	for _, perm := range permission {
+		fmt.Printf("%s ", perm.ResourceID)
+	}
+	fmt.Printf("\n")
 	response.WriteHeader(http.StatusBadRequest)
 	return false
 }

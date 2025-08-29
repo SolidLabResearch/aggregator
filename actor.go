@@ -151,6 +151,7 @@ func createActor(pipelineDescription string) (Actor, error) {
 	fmt.Println("Pod is running on:", fmt.Sprintf("http://%s:%d", nodeIp, nodePort))
 
 	var handleAllRequests = func(w http.ResponseWriter, r *http.Request) {
+		log.Println("Received request for actor:", id, "Path:", r.URL.Path, "Method:", r.Method)
 		if !auth.AuthorizeRequest(w, r, nil) {
 			return
 		}
@@ -197,9 +198,41 @@ func createActor(pipelineDescription string) (Actor, error) {
 			}
 		}
 
-		// Copy response back to client
+		// Set status code
 		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
+
+		// Check if this is a streaming response (like SSE)
+		contentType := resp.Header.Get("Content-Type")
+		isSSE := strings.Contains(contentType, "text/event-stream")
+
+		log.Println("Content-Type:", contentType, "IsSSE:", isSSE)
+		if isSSE {
+			// Handle Server-Sent Events streaming
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+				return
+			}
+
+			// Stream the response in chunks
+			buffer := make([]byte, 1024)
+			for {
+				n, err := resp.Body.Read(buffer)
+				if n > 0 {
+					w.Write(buffer[:n])
+					flusher.Flush() // Immediately send data to client
+				}
+				if err != nil {
+					if err != io.EOF {
+						fmt.Printf("Error reading SSE stream: %v\n", err)
+					}
+					break
+				}
+			}
+		} else {
+			// Handle regular responses
+			io.Copy(w, resp.Body)
+		}
 	}
 
 	serverMux.HandleFunc("/"+id+"/", handleAllRequests)
