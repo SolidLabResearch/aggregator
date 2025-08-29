@@ -152,7 +152,6 @@ func createActor(pipelineDescription string) (Actor, error) {
 
 	var handleAllRequests = func(w http.ResponseWriter, r *http.Request) {
 		if !auth.AuthorizeRequest(w, r, nil) {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 

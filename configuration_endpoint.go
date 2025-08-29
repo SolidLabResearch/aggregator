@@ -159,8 +159,13 @@ func (data ConfigurationData) createActor(response http.ResponseWriter, request 
 
 	// 5) return the endpoint to the client
 	header := response.Header()
-	header.Set("Content-Type", "test/plain")
+	header.Set("Content-Type", "application/json")
+	response.WriteHeader(http.StatusCreated)
 	_, err = response.Write([]byte(actor.marshalActor()))
+	if err != nil {
+		fmt.Printf("Error writing response: %v\n", err)
+		return
+	}
 }
 
 // HandleActorEndpoint handles requests to the /config/actors/{id} endpoint
