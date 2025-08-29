@@ -31,17 +31,16 @@ type ResourceRegistration struct {
 var registeredResources = make(map[string]*ResourceRegistration)
 
 func SetupResourceRegistration() {
-	// Create the aggregator service for the main server
-	if err := createAggregatorService(); err != nil {
-		log.Printf("❌ Failed to create aggregator service: %v", err)
-	}
-
 	// Create a separate mux for the registration server
 	registrationMux := http.NewServeMux()
-	registrationMux.HandleFunc("/register", handleResourceRegistration)
+	registrationMux.HandleFunc("/", handleResourceOperations)
 
 	log.Printf("🚀 Resource Registration server starting on port %s", resourceSubscriptionPort)
-	log.Printf("🔗 Registration endpoint: http://aggregator-registration:%s/register", resourceSubscriptionPort)
+	log.Printf("🔗 Resource endpoints:")
+	log.Printf("   PUT    http://aggregator-registration:%s/ - Create/update resource", resourceSubscriptionPort)
+	log.Printf("   POST   http://aggregator-registration:%s/ - Create resource", resourceSubscriptionPort)
+	log.Printf("   PATCH  http://aggregator-registration:%s/ - Update resource", resourceSubscriptionPort)
+	log.Printf("   DELETE http://aggregator-registration:%s/ - Delete resource", resourceSubscriptionPort)
 
 	// Start the registration server with its own mux
 	go func() {
@@ -55,14 +54,24 @@ func SetupResourceRegistration() {
 	}()
 }
 
-func handleResourceRegistration(w http.ResponseWriter, r *http.Request) {
+func handleResourceOperations(w http.ResponseWriter, r *http.Request) {
 	log.Printf("📥 Received resource registration request from %s", r.RemoteAddr)
 
-	if r.Method != "POST" {
+	switch r.Method {
+	case http.MethodPost, http.MethodPut:
+		handleResourceRegistration(w, r)
+	case http.MethodPatch:
+		handleResourceUpdate(w, r)
+	case http.MethodDelete:
+		handleResourceDeletion(w, r)
+	default:
 		log.Printf("❌ Invalid method %s for resource registration", r.Method)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
+}
+
+func handleResourceRegistration(w http.ResponseWriter, r *http.Request) {
+	log.Printf("📝 Processing resource registration for method %s from %s", r.Method, r.RemoteAddr)
 
 	var registration ResourceRegistration
 	if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
@@ -105,27 +114,128 @@ func handleResourceRegistration(w http.ResponseWriter, r *http.Request) {
 
 	// Store the registration
 	resourceKey := fmt.Sprintf("%s%s", actorID, registration.Endpoint)
+
+	// Check if this is an update (PUT) or creation (POST)
+	isUpdate := false
+	if _, exists := registeredResources[resourceKey]; exists && r.Method == "PUT" {
+		isUpdate = true
+	} else if _, exists := registeredResources[resourceKey]; exists && r.Method == "POST" {
+		log.Printf("❌ Resource %s already exists for pod %s (use PUT to update)", registration.Endpoint, actorID)
+		http.Error(w, "Resource already exists, use PUT to update", http.StatusConflict)
+		return
+	}
+
 	registeredResources[resourceKey] = &registration
 
-	// Create Kubernetes service for the pod
-	if err := setupServiceForResource(actorID, &registration); err != nil {
-		log.Printf("❌ Failed to setup service: %v", err)
-		// Continue anyway
+	// Create Kubernetes service for the pod (only if new registration)
+	if !isUpdate {
+		if err := setupServiceForResource(actorID, &registration); err != nil {
+			log.Printf("❌ Failed to setup service: %v", err)
+			// Continue anyway
+		}
+
+		// Register resource with UMA Authorization Server (only if new registration)
+		if err := registerResourceWithUMA(actorID, &registration); err != nil {
+			log.Printf("❌ Failed to register resource with UMA: %v", err)
+			// Continue anyway - the service is still functional
+		}
 	}
 
-	// Register resource with UMA Authorization Server
-	if err := registerResourceWithUMA(actorID, &registration); err != nil {
-		log.Printf("❌ Failed to register resource with UMA: %v", err)
-		// Continue anyway - the service is still functional
+	action := "registered"
+	if isUpdate {
+		action = "updated"
 	}
-
-	log.Printf("🎉 Successfully registered resource: %s from pod %s", registration.Endpoint, actorID)
+	log.Printf("🎉 Successfully %s resource: %s from pod %s", action, registration.Endpoint, actorID)
 
 	response := map[string]interface{}{
 		"status":       "success",
-		"message":      "Resource registered successfully",
+		"message":      fmt.Sprintf("Resource %s successfully", action),
 		"external_url": fmt.Sprintf("%s://%s:%s/%s%s", Protocol, Host, ServerPort, actorID, registration.Endpoint),
 		"actor_id":     actorID,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func handleResourceUpdate(w http.ResponseWriter, r *http.Request) {
+	log.Printf("✏️ Received resource update request from %s", r.RemoteAddr)
+
+	var updateInfo ResourceRegistration
+	if err := json.NewDecoder(r.Body).Decode(&updateInfo); err != nil {
+		log.Printf("❌ Failed to decode update JSON: %v", err)
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	// Extract actorID from pod_name
+	actorID := updateInfo.PodName
+	if actorID == "" {
+		log.Printf("❌ Missing pod_name in update request")
+		http.Error(w, "Missing required field: pod_name", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("📋 Processing update for pod: %s", actorID)
+
+	// Update the registration
+	resourceKey := fmt.Sprintf("%s%s", actorID, updateInfo.Endpoint)
+	if _, exists := registeredResources[resourceKey]; !exists {
+		log.Printf("❌ Resource %s not found for pod %s", updateInfo.Endpoint, actorID)
+		http.Error(w, "Resource not found", http.StatusNotFound)
+		return
+	}
+
+	// Update the resource registration
+	registeredResources[resourceKey] = &updateInfo
+
+	log.Printf("✅ Successfully updated resource: %s for pod %s", updateInfo.Endpoint, actorID)
+
+	response := map[string]interface{}{
+		"status":  "success",
+		"message": "Resource updated successfully",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func handleResourceDeletion(w http.ResponseWriter, r *http.Request) {
+	log.Printf("🗑️ Received resource deletion request from %s", r.RemoteAddr)
+
+	var deletionInfo ResourceRegistration
+	if err := json.NewDecoder(r.Body).Decode(&deletionInfo); err != nil {
+		log.Printf("❌ Failed to decode deletion JSON: %v", err)
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	// Extract actorID from pod_name
+	actorID := deletionInfo.PodName
+	if actorID == "" {
+		log.Printf("❌ Missing pod_name in deletion request")
+		http.Error(w, "Missing required field: pod_name", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("📋 Processing deletion for pod: %s", actorID)
+
+	// Delete the registration
+	resourceKey := fmt.Sprintf("%s%s", actorID, deletionInfo.Endpoint)
+	if _, exists := registeredResources[resourceKey]; !exists {
+		log.Printf("❌ Resource %s not found for pod %s", deletionInfo.Endpoint, actorID)
+		http.Error(w, "Resource not found", http.StatusNotFound)
+		return
+	}
+
+	// Remove the resource registration
+	delete(registeredResources, resourceKey)
+
+	log.Printf("✅ Successfully deleted resource: %s for pod %s", deletionInfo.Endpoint, actorID)
+
+	response := map[string]interface{}{
+		"status":  "success",
+		"message": "Resource deleted successfully",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -237,165 +347,4 @@ func getHostIPForCluster() (string, error) {
 
 	log.Printf("🔍 Detected host IP accessible from cluster: %s", hostIP)
 	return hostIP, nil
-}
-
-func createAggregatorService() error {
-	log.Printf("🔧 Creating aggregator service for resource registration")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Get the actual host IP address dynamically
-	hostIP, err := getHostIPForCluster()
-	if err != nil {
-		return err
-	}
-
-	// Create service and endpoint for the resource registration
-	registrationService := &v1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "aggregator-registration",
-			Labels: map[string]string{
-				"app":       "aggregator",
-				"component": "registration-service",
-			},
-		},
-		Spec: v1.ServiceSpec{
-			Ports: []v1.ServicePort{
-				{
-					Name:       "registration",
-					Port:       4449,
-					TargetPort: intstr.FromInt(4449),
-					Protocol:   v1.ProtocolTCP,
-				},
-			},
-			Type: v1.ServiceTypeClusterIP,
-		},
-	}
-
-	// Create endpoint that points to the host
-	registrationEndpoint := &v1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "aggregator-registration",
-		},
-		Subsets: []v1.EndpointSubset{
-			{
-				Addresses: []v1.EndpointAddress{
-					{
-						IP: hostIP,
-					},
-				},
-				Ports: []v1.EndpointPort{
-					{
-						Port:     4449,
-						Protocol: v1.ProtocolTCP,
-					},
-				},
-			},
-		},
-	}
-
-	// Check if registration service already exists
-	_, err = Clientset.CoreV1().Services("default").Get(ctx, "aggregator-registration", metav1.GetOptions{})
-	if err == nil {
-		log.Printf("✅ Service aggregator-registration already exists")
-		// Update the endpoint to make sure it points to the host
-		_, err = Clientset.CoreV1().Endpoints("default").Update(ctx, registrationEndpoint, metav1.UpdateOptions{})
-		if err != nil {
-			log.Printf("❌ Failed to update registration endpoint: %v", err)
-		} else {
-			log.Printf("✅ Updated aggregator-registration endpoint to point to host")
-		}
-	} else {
-		// Create the registration service
-		_, err = Clientset.CoreV1().Services("default").Create(ctx, registrationService, metav1.CreateOptions{})
-		if err != nil {
-			log.Printf("❌ Failed to create registration service: %v", err)
-		} else {
-			log.Printf("✅ Created aggregator-registration service")
-		}
-
-		// Create the endpoint
-		_, err = Clientset.CoreV1().Endpoints("default").Create(ctx, registrationEndpoint, metav1.CreateOptions{})
-		if err != nil {
-			log.Printf("❌ Failed to create registration endpoint: %v", err)
-		} else {
-			log.Printf("✅ Created aggregator-registration endpoint pointing to host")
-		}
-	}
-
-	// Create service for the main aggregator (if it doesn't exist)
-	mainService := &v1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "aggregator-service",
-			Labels: map[string]string{
-				"app":       "aggregator",
-				"component": "main-service",
-			},
-		},
-		Spec: v1.ServiceSpec{
-			Ports: []v1.ServicePort{
-				{
-					Name:       "http",
-					Port:       80,
-					TargetPort: intstr.FromInt(5000),
-					Protocol:   v1.ProtocolTCP,
-				},
-			},
-			Type: v1.ServiceTypeClusterIP,
-		},
-	}
-
-	// Create endpoint for main service that points to the host
-	mainEndpoint := &v1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "aggregator-service",
-		},
-		Subsets: []v1.EndpointSubset{
-			{
-				Addresses: []v1.EndpointAddress{
-					{
-						IP: hostIP,
-					},
-				},
-				Ports: []v1.EndpointPort{
-					{
-						Port:     5000,
-						Protocol: v1.ProtocolTCP,
-					},
-				},
-			},
-		},
-	}
-
-	// Check if main service already exists
-	_, err = Clientset.CoreV1().Services("default").Get(ctx, "aggregator-service", metav1.GetOptions{})
-	if err == nil {
-		log.Printf("✅ Service aggregator-service already exists")
-		// Update the endpoint to make sure it points to the host
-		_, err = Clientset.CoreV1().Endpoints("default").Update(ctx, mainEndpoint, metav1.UpdateOptions{})
-		if err != nil {
-			log.Printf("❌ Failed to update main service endpoint: %v", err)
-		} else {
-			log.Printf("✅ Updated aggregator-service endpoint to point to host")
-		}
-	} else {
-		// Create the main service
-		_, err = Clientset.CoreV1().Services("default").Create(ctx, mainService, metav1.CreateOptions{})
-		if err != nil {
-			log.Printf("❌ Failed to create main aggregator service: %v", err)
-		} else {
-			log.Printf("✅ Created aggregator-service")
-		}
-
-		// Create the endpoint
-		_, err = Clientset.CoreV1().Endpoints("default").Create(ctx, mainEndpoint, metav1.CreateOptions{})
-		if err != nil {
-			log.Printf("❌ Failed to create main service endpoint: %v", err)
-		} else {
-			log.Printf("✅ Created aggregator-service endpoint pointing to host")
-		}
-	}
-
-	return nil
 }
