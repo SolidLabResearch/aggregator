@@ -46,8 +46,8 @@ func createActor(pipelineDescription string) (Actor, error) {
 					ImagePullPolicy: v1.PullNever,
 					Env: []v1.EnvVar{
 						{Name: "PIPELINE_DESCRIPTION", Value: fmt.Sprintf("%v", pipelineDescription)},
-						{Name: "http_proxy", Value: "http://uma-proxy-service.default.svc.cluster.local:8080"},
-						{Name: "https_proxy", Value: "http://uma-proxy-service.default.svc.cluster.local:8443"},
+						{Name: "HTTP_PROXY", Value: "http://uma-proxy-service.default.svc.cluster.local:8080"},
+						{Name: "HTTPS_PROXY", Value: "http://uma-proxy-service.default.svc.cluster.local:8443"},
 						{Name: "SSL_CERT_FILE", Value: "/key-pair/uma-proxy.crt"},
 					},
 					Ports: []v1.ContainerPort{
@@ -150,14 +150,40 @@ func createActor(pipelineDescription string) (Actor, error) {
 
 	fmt.Println("Pod is running on:", fmt.Sprintf("http://%s:%d", nodeIp, nodePort))
 
-	serverMux.HandleFunc("/"+id, func(w http.ResponseWriter, r *http.Request) {
+	var handleAllRequests = func(w http.ResponseWriter, r *http.Request) {
 		if !auth.AuthorizeRequest(w, r, nil) {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
-		// Forward the request (can also copy headers, method, etc.)
-		resp, err := http.Get(fmt.Sprintf("http://%s:%d", nodeIp, nodePort))
+		// Extract the subpath after the actor ID
+		actorPrefix := "/" + id + "/"
+		subPath := strings.TrimPrefix(r.URL.Path, actorPrefix)
+
+		// Construct the target URL with the subpath and query parameters
+		targetURL := fmt.Sprintf("http://%s:%d/%s", nodeIp, nodePort, subPath)
+		if r.URL.RawQuery != "" {
+			targetURL += "?" + r.URL.RawQuery
+		}
+
+		// Create a new request with the same method, headers, and body
+		req, err := http.NewRequest(r.Method, targetURL, r.Body)
+		if err != nil {
+			fmt.Println("Error creating request:", err.Error())
+			http.Error(w, "Failed to create request", http.StatusInternalServerError)
+			return
+		}
+
+		// Copy headers from original request
+		for name, values := range r.Header {
+			for _, value := range values {
+				req.Header.Add(name, value)
+			}
+		}
+
+		// Make the request to the pod
+		client := &http.Client{}
+		resp, err := client.Do(req)
 		if err != nil {
 			fmt.Println("Error reaching pod service:", err.Error())
 			http.Error(w, "Failed to reach pod service", http.StatusInternalServerError)
@@ -165,10 +191,22 @@ func createActor(pipelineDescription string) (Actor, error) {
 		}
 		defer resp.Body.Close()
 
+		// Copy response headers
+		for name, values := range resp.Header {
+			for _, value := range values {
+				w.Header().Add(name, value)
+			}
+		}
+
 		// Copy response back to client
 		w.WriteHeader(resp.StatusCode)
 		io.Copy(w, resp.Body)
-	})
+	}
+
+	serverMux.HandleFunc("/"+id+"/", handleAllRequests)
+
+	// Also handle exact match without trailing slash for backwards compatibility
+	serverMux.HandleFunc("/"+id, handleAllRequests)
 
 	actor := Actor{
 		Id:                  id,

@@ -36,7 +36,7 @@ func startConfigurationEndpoint(mux *http.ServeMux) {
 func (data ConfigurationData) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), resourceScopes []auth.ResourceScope) {
 	data.serveMux.HandleFunc(pattern, handler)
 	auth.CreateResource(
-		fmt.Sprintf("%s://%s:%s%s", protocol, host, serverPort, pattern),
+		fmt.Sprintf("%s://%s:%s%s", Protocol, Host, ServerPort, pattern),
 		resourceScopes,
 	)
 }
@@ -156,10 +156,6 @@ func (data ConfigurationData) createActor(response http.ResponseWriter, request 
 
 	// TODO the descriptions need to have the pipelineDescription
 	data.HandleFunc(fmt.Sprintf("/config/actors/%s", actor.Id), data.HandleActorEndpoint, resourceScopesReadDelete)
-	auth.CreateResource(
-		fmt.Sprintf("%s://%s:%s/%s", protocol, host, serverPort, actor.Id),
-		resourceScopesRead,
-	)
 
 	// 5) return the endpoint to the client
 	header := response.Header()
@@ -227,7 +223,7 @@ func (data ConfigurationData) deleteActor(response http.ResponseWriter, _ *http.
 	response.WriteHeader(http.StatusOK)
 
 	auth.DeleteResource(
-		fmt.Sprintf("%s://%s:%s/config/actors/%s", protocol, host, serverPort, actor.Id),
+		fmt.Sprintf("%s://%s:%s/config/actors/%s", Protocol, Host, ServerPort, actor.Id),
 	)
 }
 

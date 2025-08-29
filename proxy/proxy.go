@@ -152,5 +152,4 @@ func SetupProxy(clientset *kubernetes.Clientset) {
 			panic(err)
 		}
 	}
-
 }

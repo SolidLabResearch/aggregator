@@ -5,6 +5,12 @@ import { Store, Parser } from 'n3';
 import http from "http";
 import { URL } from "url";
 
+// Resource registration configuration
+const REGISTRATION_URL = "http://192.168.49.1:4449/register";
+const POD_NAME = process.env.HOSTNAME || "incremunica-pod";
+const POD_IP = process.env.POD_IP || "127.0.0.1";
+const SERVICE_PORT = 8080;
+
 const proxyUrl = process.env.http_proxy || process.env.HTTP_PROXY;
 if (proxyUrl === undefined) {
   throw new Error('Environment variable PROXY_URL is not set. Please provide the URL of the proxy server.');
@@ -40,6 +46,43 @@ async function customFetch(input: RequestInfo | URL, init?: RequestInit): Promis
 
   return response;
 };
+
+// Function to register this service with the aggregator
+async function registerWithAggregator(): Promise<void> {
+  const registrationData = {
+    pod_name: POD_NAME,
+    pod_ip: POD_IP,
+    port: SERVICE_PORT,
+    endpoint: "/",
+    scopes: ["read"],
+    description: "SPARQL SELECT incremental query service"
+  };
+
+  try {
+    console.log(`📝 Registering service with aggregator at ${REGISTRATION_URL}`);
+    console.log(`   Pod: ${POD_NAME}, IP: ${POD_IP}, Port: ${SERVICE_PORT}`);
+
+    const response = await fetch(REGISTRATION_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(registrationData)
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      console.log("✅ Successfully registered with aggregator:");
+      console.log(`   External URL: ${result.external_url}`);
+      console.log(`   Actor ID: ${result.actor_id}`);
+    } else {
+      const errorText = await response.text();
+      console.error(`❌ Failed to register with aggregator: ${response.status} - ${errorText}`);
+    }
+  } catch (error) {
+    console.error("❌ Error registering with aggregator:", error);
+  }
+}
 
 async function main() {
   const pipelineDescription = process.env.PIPELINE_DESCRIPTION;
@@ -210,8 +253,11 @@ SELECT ?queryString ?source WHERE {
     }
   });
 
-  server.listen(8080, () => {
+  server.listen(8080, async () => {
     console.log("SPARQL SELECT result server running at http://localhost:8080/");
+
+    // Register with the aggregator after server starts
+    await registerWithAggregator();
   });
 }
 

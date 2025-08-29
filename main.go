@@ -16,9 +16,9 @@ import (
 	"syscall"
 )
 
-var protocol = "http"
-var host = "localhost"
-var serverPort = "5000"
+var Protocol = "http"
+var Host = "localhost"
+var ServerPort = "5000"
 
 var Clientset *kubernetes.Clientset
 
@@ -33,16 +33,15 @@ func main() {
 	}
 	proxy.SetupProxy(Clientset)
 
-	//startResourceSubscriptionEndpoint()
-
 	serverMux := http.NewServeMux()
 	go func() {
-		log.Println("Server listening on port: " + serverPort)
-		log.Fatal(http.ListenAndServe(":"+serverPort, serverMux))
+		log.Println("Server listening on port: " + ServerPort)
+		log.Fatal(http.ListenAndServe(":"+ServerPort, serverMux))
 	}()
 	auth.InitSigning(serverMux)
 	InitializeKubernetes(serverMux)
 	startConfigurationEndpoint(serverMux)
+	SetupResourceRegistration()
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)

@@ -40,7 +40,7 @@ async function main() {
     console.log(`= Actor config id:\n${actorConfig.id}\n`);
     console.log(`= Actor config transformation:\n${actorConfig.transformation}\n`);
 
-    const actorUrl = "http://localhost:5000" + `/${id}`;
+    const actorUrl = "http://localhost:5000" + `/${id}/`;
     console.log(`=== Requesting actor results at ${actorUrl}`);
 
     const actorResultsResponse = await umaFetch(actorUrl, {
