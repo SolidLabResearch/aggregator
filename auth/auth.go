@@ -521,11 +521,11 @@ const (
 	ScopeWrite  ResourceScope = "urn:example:css:modes:write"
 )
 
-func CreateResource(resourceId string, resourceScopes []ResourceScope) {
+func CreateResource(resourceId string, resourceScopes []ResourceScope) error {
 	config, err := fetchUmaConfig(AS_ISSUER)
 	if err != nil {
 		fmt.Println("Error while retrieving UMA configuration:", err)
-		return
+		return err
 	}
 
 	knownUmaId := idIndex[resourceId]
@@ -550,13 +550,13 @@ func CreateResource(resourceId string, resourceScopes []ResourceScope) {
 	jsonData, err := json.Marshal(description)
 	if err != nil {
 		fmt.Println("Error while marshaling resource description:", err)
-		return
+		return err
 	}
 
 	req, err := http.NewRequest(method, endpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
 		fmt.Println("Error while creating a request:", err)
-		return
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -572,39 +572,40 @@ func CreateResource(resourceId string, resourceScopes []ResourceScope) {
 	res, err := doSignedRequest(req)
 	if err != nil {
 		fmt.Println("Error while making a request: ", err)
-		return
+		return err
 	}
 	defer res.Body.Close()
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		fmt.Println("Error while reading response body:", err, " got response status:", res.Status)
-		return
+		return err
 	}
 
 	if knownUmaId != "" {
 		if res.StatusCode != http.StatusOK {
 			fmt.Printf("Resource update request failed. %s\n", string(body))
-			return
+			return nil
 		}
 	} else {
 		if res.StatusCode != http.StatusCreated {
 			fmt.Printf("Resource registration request failed. %s\n", string(body))
-			return
+			return nil
 		}
 		var responseData struct {
 			ID string `json:"_id"`
 		}
 		if err := json.Unmarshal(body, &responseData); err != nil {
 			fmt.Println("Error while parsing response JSON:", err)
-			return
+			return err
 		}
 		if responseData.ID == "" {
 			fmt.Println("Unexpected response from UMA server; no UMA id received.")
-			return
+			return nil
 		}
 		idIndex[resourceId] = responseData.ID
 		fmt.Printf("Registered resource %s with UMA ID %s\n", resourceId, responseData.ID)
 	}
+	return nil
 }
 
 func DeleteResource(resourceId string) {
