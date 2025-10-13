@@ -1,7 +1,7 @@
 import { QueryEngine } from '@comunica/query-sparql';
 import { QueryEngine as QueryEngineInc } from '@incremunica/query-sparql-incremental';
-import { isAddition } from '@incremunica/user-tools';
-import { Store, Parser } from 'n3';
+import { isAddition, QuerySourceIterator } from '@incremunica/user-tools';
+import { Store, Parser, DataFactory } from 'n3';
 import http from "http";
 import { URL } from "url";
 
@@ -78,6 +78,23 @@ async function customFetch(input: RequestInfo | URL, init?: RequestInit): Promis
   });
 
   return response;
+}
+
+const TRANSFORMATIONS_NS = "http://localhost:5000/config/transformations#";
+const RDF_NS = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+
+const RDF_TYPE = DataFactory.namedNode(`${RDF_NS}type`);
+const RDF_FIRST = DataFactory.namedNode(`${RDF_NS}first`);
+const RDF_REST = DataFactory.namedNode(`${RDF_NS}rest`);
+const RDF_NIL = DataFactory.namedNode(`${RDF_NS}nil`);
+
+const SPARQL_RESULT_SOURCE_CLASS = DataFactory.namedNode(`${TRANSFORMATIONS_NS}SPARQLQueryResultSource`);
+const SPARQL_RESULT_PREDICATE = DataFactory.namedNode(`${TRANSFORMATIONS_NS}sparqlQueryResult`);
+const EXTRACT_VARIABLES_PREDICATE = DataFactory.namedNode(`${TRANSFORMATIONS_NS}extractVariables`);
+
+interface DynamicSourceConfig {
+  endpoint: string;
+  variables: string[];
 }
 
 // Function to register an endpoint with the aggregator
@@ -184,20 +201,25 @@ SELECT ?queryString ?source WHERE {
     ]
   })
 
-  const queryInfo: {query: string, sources: [string, ...string[]]} = await new Promise(
+  const queryInfo: {query: string, sources: any[]} = await new Promise(
     (resolve, reject) => {
       let queryString: string | undefined = undefined
-      let sources: [string, ...string[]] | undefined = undefined;
+      let sources: any[] | undefined = undefined;
       queryInfoStream.on('data', (data) => {
-        if (queryString === undefined && data.get('queryString').value !== undefined) {
-          queryString = data.get('queryString').value;
+        const queryTerm = data.get('queryString');
+        if (queryString === undefined && queryTerm?.value !== undefined) {
+          queryString = queryTerm.value;
         }
-        if (data.get('queryString').value === queryString) {
-          if (sources === undefined) {
-            sources = [data.get('source').value];
+        if (queryTerm?.value === queryString) {
+          const sourceTerm = data.get('source');
+          if (!sourceTerm) {
             return;
           }
-          sources.push(data.get('source').value);
+          if (sources === undefined) {
+            sources = [sourceTerm];
+            return;
+          }
+          sources.push(sourceTerm);
         }
       });
       queryInfoStream.on('end', () => {
@@ -218,12 +240,32 @@ SELECT ?queryString ?source WHERE {
   );
   queryInfoStream.destroy();
 
+  const { staticSources, dynamicSources } = classifySources(pipelineDescriptionStore, queryInfo.sources);
+
   console.log(`Executing SPARQL SELECT query: ${queryInfo.query}`);
-  console.log(`Using sources: ${JSON.stringify(queryInfo.sources)}`);
+  console.log(`Using static sources: ${JSON.stringify(staticSources)}`);
+  if (dynamicSources.length > 0) {
+    console.log(`Configuring dynamic sources from SSE endpoints: ${JSON.stringify(dynamicSources)}`);
+  }
+
+  const iteratorOptions: {
+    seedSources?: string[];
+    distinct: boolean;
+  } = {
+    distinct: true,
+  };
+  if (staticSources.length > 0) {
+    iteratorOptions.seedSources = staticSources;
+  }
+  const querySourceIterator = new QuerySourceIterator(iteratorOptions);
+
+  for (const dynamicSource of dynamicSources) {
+    void maintainDynamicSource(dynamicSource, querySourceIterator);
+  }
 
   const queryEngine = new QueryEngineInc();
   const bindingsStream = await queryEngine.queryBindings(queryInfo.query, {
-    sources: queryInfo.sources,
+    sources: [querySourceIterator as any],
     fetch: customFetch
   });
 
@@ -309,6 +351,264 @@ SELECT ?queryString ?source WHERE {
 
     // Register with the aggregator after server starts
     await registerWithAggregator();
+  });
+}
+
+function classifySources(store: Store, sourceTerms: any[]): { staticSources: string[]; dynamicSources: DynamicSourceConfig[] } {
+  const staticSources: string[] = [];
+  const dynamicSources: DynamicSourceConfig[] = [];
+
+  for (const term of sourceTerms ?? []) {
+    if (!term) {
+      continue;
+    }
+
+    if (term.termType === 'BlankNode' && store.countQuads(term, RDF_TYPE, SPARQL_RESULT_SOURCE_CLASS, null) > 0) {
+      const endpointQuad = store.getQuads(term, SPARQL_RESULT_PREDICATE, null, null)[0];
+      const variablesQuad = store.getQuads(term, EXTRACT_VARIABLES_PREDICATE, null, null)[0];
+
+      const endpoint = endpointQuad?.object?.value;
+      const variables = variablesQuad ? readRdfList(store, variablesQuad.object)
+        .map(variableTerm => variableTerm?.value)
+        .filter((value): value is string => typeof value === "string" && value.length > 0) : [];
+
+      if (endpoint) {
+        dynamicSources.push({ endpoint, variables });
+      } else {
+        console.warn("Dynamic source is missing sparqlQueryResult endpoint definition.");
+      }
+      continue;
+    }
+
+    const staticValue = getSourceValue(term);
+    if (staticValue !== undefined) {
+      staticSources.push(staticValue);
+    } else {
+      console.warn(`Unable to interpret source term ${JSON.stringify(term)}`);
+    }
+  }
+
+  return { staticSources, dynamicSources };
+}
+
+function getSourceValue(term: any): string | undefined {
+  if (!term) {
+    return undefined;
+  }
+  if (term.termType === 'Literal' || term.termType === 'NamedNode') {
+    return term.value;
+  }
+  return undefined;
+}
+
+function readRdfList(store: Store, head: any): any[] {
+  const values: any[] = [];
+  if (!head) {
+    return values;
+  }
+
+  let current: any | undefined = head;
+  const visited = new Set<string>();
+
+  while (current && !(current.termType === 'NamedNode' && current.value === RDF_NIL.value)) {
+    const key = `${current.termType}:${current.value ?? ''}`;
+    if (visited.has(key)) {
+      break;
+    }
+    visited.add(key);
+
+    const firstQuad = store.getQuads(current, RDF_FIRST, null, null)[0];
+    if (!firstQuad) {
+      break;
+    }
+    values.push(firstQuad.object);
+
+    const restQuad = store.getQuads(current, RDF_REST, null, null)[0];
+    if (!restQuad) {
+      break;
+    }
+    current = restQuad.object;
+  }
+
+  return values;
+}
+
+async function maintainDynamicSource(config: DynamicSourceConfig, iterator: QuerySourceIterator): Promise<void> {
+  while (true) {
+    try {
+      console.log(`Connecting to dynamic source stream at ${config.endpoint} (variables: ${config.variables.join(", ") || "none"})`);
+      await consumeDynamicSourceStream(config, iterator);
+      console.log(`SSE stream at ${config.endpoint} ended, will attempt to reconnect in 5 seconds.`);
+    } catch (error) {
+      console.error(`Error while consuming SSE stream at ${config.endpoint}:`, error);
+    }
+    await delay(5000);
+  }
+}
+
+async function consumeDynamicSourceStream(config: DynamicSourceConfig, iterator: QuerySourceIterator): Promise<void> {
+  const response = await customFetch(config.endpoint, {
+    headers: {
+      "Accept": "text/event-stream",
+    },
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error(`Failed to connect to SSE stream at ${config.endpoint}: ${response.status} ${response.statusText}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    buffer = buffer.replace(/\r\n/gu, "\n");
+
+    let separatorIndex = buffer.indexOf("\n\n");
+    while (separatorIndex !== -1) {
+      const rawEvent = buffer.slice(0, separatorIndex);
+      buffer = buffer.slice(separatorIndex + 2);
+      const event = parseSseEvent(rawEvent);
+      if (event) {
+        handleSseEvent(event, config, iterator);
+      }
+      separatorIndex = buffer.indexOf("\n\n");
+    }
+  }
+}
+
+interface ParsedSseEvent {
+  event: string;
+  data: string;
+}
+
+function parseSseEvent(raw: string): ParsedSseEvent | null {
+  const lines = raw.split("\n");
+  let eventName = "message";
+  const dataLines: string[] = [];
+
+  for (const originalLine of lines) {
+    const line = originalLine.trimEnd();
+    if (line.length === 0 || line.startsWith(":")) {
+      continue;
+    }
+    if (line.startsWith("event:")) {
+      eventName = line.slice(6).trimStart();
+      continue;
+    }
+    if (line.startsWith("data:")) {
+      let dataValue = line.slice(5);
+      if (dataValue.startsWith(" ")) {
+        dataValue = dataValue.slice(1);
+      }
+      dataLines.push(dataValue);
+      continue;
+    }
+  }
+
+  if (dataLines.length === 0) {
+    return null;
+  }
+  return { event: eventName, data: dataLines.join("\n") };
+}
+
+function handleSseEvent(event: ParsedSseEvent, config: DynamicSourceConfig, iterator: QuerySourceIterator): void {
+  if (!event.data) {
+    return;
+  }
+
+  if (event.event === "heartbeat") {
+    return;
+  }
+
+  let payload: any;
+  try {
+    payload = JSON.parse(event.data);
+  } catch (error) {
+    console.error(`Failed to parse SSE event data from ${config.endpoint}:`, error);
+    return;
+  }
+
+  const sources =
+    event.event === "init"
+      ? extractSourcesFromInitPayload(payload, config.variables)
+      : extractSourcesFromBindingPayload(payload, config.variables);
+
+  if (sources.length === 0) {
+    return;
+  }
+
+  if (event.event === "removal") {
+    for (const source of sources) {
+      try {
+        iterator.removeSource(source);
+      } catch (error) {
+        console.error(`Failed to remove dynamic source ${source}:`, error);
+      }
+    }
+  } else if (event.event === "addition" || event.event === "init") {
+    for (const source of sources) {
+      try {
+        iterator.addSource(source);
+      } catch (error) {
+        console.error(`Failed to add dynamic source ${source}:`, error);
+      }
+    }
+  } else {
+    console.warn(`Received unsupported SSE event "${event.event}" from ${config.endpoint}`);
+  }
+}
+
+function extractSourcesFromBindingPayload(payload: any, variables: string[]): string[] {
+  const bindingObject = payload?.binding ?? payload;
+  if (!bindingObject || typeof bindingObject !== "object") {
+    return [];
+  }
+
+  return collectSourcesFromBindingObject(bindingObject, variables);
+}
+
+function extractSourcesFromInitPayload(payload: any, variables: string[]): string[] {
+  const bindings = payload?.results?.bindings;
+  if (!Array.isArray(bindings)) {
+    return [];
+  }
+  const sources: string[] = [];
+  for (const binding of bindings) {
+    sources.push(...collectSourcesFromBindingObject(binding, variables));
+  }
+  return sources;
+}
+
+function collectSourcesFromBindingObject(bindingObject: any, variables: string[]): string[] {
+  if (!bindingObject || typeof bindingObject !== "object") {
+    return [];
+  }
+
+  const sourceValues: string[] = [];
+  const variableNames = variables.length > 0 ? variables : Object.keys(bindingObject);
+
+  for (const variableName of variableNames) {
+    const binding = bindingObject[variableName];
+    if (!binding || typeof binding !== "object") {
+      continue;
+    }
+    if (binding.type === "uri" && typeof binding.value === "string" && binding.value.length > 0) {
+      sourceValues.push(binding.value);
+    }
+  }
+
+  return sourceValues;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => {
+    setTimeout(resolve, ms);
   });
 }
 
