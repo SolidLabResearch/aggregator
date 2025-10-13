@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/golang-jwt/jwt/v4"
+	"github.com/sirupsen/logrus"
 	"io"
 	"math/big"
 	"net/http"
@@ -22,7 +23,7 @@ const AS_ISSUER = "http://localhost:4000/uma"
 func AuthorizeRequest(response http.ResponseWriter, request *http.Request, extraPermissions []Permission) bool {
 	// check if Authorization header is present, if not create ticket
 	if request.Header.Get("Authorization") == "" {
-		fmt.Printf("🔐 Authorization header missing for %s %s\n", request.Method, request.URL.Path)
+		logrus.WithFields(logrus.Fields{"method": request.Method, "path": request.URL.Path}).Warn("🔐 Authorization header missing")
 		// create ticket
 		// Get the scheme
 		scheme := "http"
@@ -31,38 +32,38 @@ func AuthorizeRequest(response http.ResponseWriter, request *http.Request, extra
 		}
 		// Get the complete URL
 		completeURL := fmt.Sprintf("%s://%s%s", scheme, request.Host, request.URL.Path)
-		fmt.Printf("🎫 Creating ticket for URL: %s\n", completeURL)
+		logrus.WithFields(logrus.Fields{"url": completeURL}).Info("🎫 Creating ticket")
 
 		ticketPermissions := make(map[string][]string)
 		if request.Method == "POST" || request.Method == "PUT" || request.Method == "DELETE" {
 			ticketPermissions[completeURL] = []string{"modify"}
-			fmt.Printf("🔧 Requesting 'modify' permissions for %s method\n", request.Method)
+			logrus.WithFields(logrus.Fields{"method": request.Method}).Debug("🔧 Requesting 'modify' permissions")
 		} else if request.Method == "GET" || request.Method == "HEAD" {
 			ticketPermissions[completeURL] = []string{"read"}
-			fmt.Printf("📖 Requesting 'read' permissions for %s method\n", request.Method)
+			logrus.WithFields(logrus.Fields{"method": request.Method}).Debug("📖 Requesting 'read' permissions")
 		} else {
-			fmt.Printf("❌ Method %s not supported by authorization\n", request.Method)
+			logrus.WithFields(logrus.Fields{"method": request.Method}).Warn("❌ Method not supported by authorization")
 			http.Error(response, "method not supported by authorization", http.StatusMethodNotAllowed)
 			return false
 		}
 		if extraPermissions != nil {
-			fmt.Printf("➕ Adding %d extra permissions\n", len(extraPermissions))
+			logrus.WithFields(logrus.Fields{"count": len(extraPermissions)}).Debug("➕ Adding extra permissions")
 			for _, permission := range extraPermissions {
 				ticketPermissions[permission.ResourceID] = permission.ResourceScopes
-				fmt.Printf("   Extra permission: %s -> %v\n", permission.ResourceID, permission.ResourceScopes)
+				logrus.WithFields(logrus.Fields{"resource_id": permission.ResourceID, "scopes": permission.ResourceScopes}).Debug("Extra permission")
 			}
 		}
 		ticket, err := fetchTicket(ticketPermissions, AS_ISSUER)
 		if err != nil {
-			fmt.Printf("❌ Error while retrieving ticket: %v\n", err)
+			logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Error while retrieving ticket")
 			http.Error(response, "error while retrieving ticket", http.StatusUnauthorized)
 			return false
 		}
 		if ticket == "" {
-			fmt.Println("✅ No ticket needed - access granted immediately")
+			logrus.Info("✅ No ticket needed - access granted immediately")
 			return true
 		}
-		fmt.Printf("🎫 Ticket created successfully, sending WWW-Authenticate header\n")
+		logrus.WithFields(logrus.Fields{"url": completeURL}).Info("🎫 Ticket created successfully, sending WWW-Authenticate header")
 		response.Header().Set(
 			"WWW-Authenticate",
 			fmt.Sprintf(`UMA as_uri="%s", ticket="%s"`, AS_ISSUER, ticket),
@@ -71,10 +72,10 @@ func AuthorizeRequest(response http.ResponseWriter, request *http.Request, extra
 		return false
 	}
 
-	fmt.Printf("🔍 Verifying authorization token for %s %s\n", request.Method, request.URL.Path)
+	logrus.WithFields(logrus.Fields{"method": request.Method, "path": request.URL.Path}).Info("🔍 Verifying authorization token")
 	permission, err := verifyTicket(request.Header.Get("Authorization"), []string{"http://localhost:4000/uma"})
 	if err != nil {
-		fmt.Printf("❌ Error while verifying ticket: %v\n", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Error while verifying ticket")
 		response.WriteHeader(http.StatusBadRequest)
 		return false
 	}
@@ -85,59 +86,48 @@ func AuthorizeRequest(response http.ResponseWriter, request *http.Request, extra
 		scheme = "https"
 	}
 	completeURL := fmt.Sprintf("%s://%s%s", scheme, request.Host, request.URL.Path)
-	fmt.Printf("🌐 Checking permissions for URL: %s\n", completeURL)
+	logrus.WithFields(logrus.Fields{"url": completeURL}).Debug("🌐 Checking permissions for URL")
 
 	// Log the ID index lookup
 	resourceId, exists := idIndex[completeURL]
 	if exists {
-		fmt.Printf("📋 Found resource ID for URL %s: %s\n", completeURL, resourceId)
+		logrus.WithFields(logrus.Fields{"url": completeURL, "resource_id": resourceId}).Debug("📋 Found resource ID")
 	} else {
-		fmt.Printf("⚠️  No resource ID found in idIndex for URL: %s\n", completeURL)
+		logrus.WithFields(logrus.Fields{"url": completeURL}).Warn("⚠️ No resource ID found in idIndex")
 	}
 
-	fmt.Printf("🔑 User has %d permissions:\n", len(permission))
-	for i, perm := range permission {
-		fmt.Printf("   Permission %d: ResourceID=%s, Scopes=%v\n", i+1, perm.ResourceID, perm.ResourceScopes)
-	}
+	logrus.WithFields(logrus.Fields{"count": len(permission), "permissions": permission}).Debug("🔑 User permissions retrieved")
 
 	for _, perm := range permission {
 		if perm.ResourceID == idIndex[completeURL] {
-			fmt.Printf("✅ Found matching permission for resource ID: %s\n", perm.ResourceID)
+			logrus.WithFields(logrus.Fields{"resource_id": perm.ResourceID}).Debug("✅ Found matching permission")
 			if request.Method == "POST" || request.Method == "PUT" || request.Method == "DELETE" {
-				fmt.Printf("🔧 Checking for 'modify' scope for %s method\n", request.Method)
+				logrus.WithFields(logrus.Fields{"method": request.Method}).Debug("🔧 Checking for 'modify' scope")
 				if contains(perm.ResourceScopes, "urn:example:css:modes:modify") {
-					fmt.Printf("✅ Authorization successful - user has modify permissions\n")
+					logrus.Info("✅ Authorization successful - user has modify permissions")
 					return true
 				}
-				fmt.Printf("❌ Authorization failed - user lacks 'urn:example:css:modes:modify' scope\n")
-				fmt.Printf("   User scopes: %v\n", perm.ResourceScopes)
+				logrus.WithFields(logrus.Fields{"user_scopes": perm.ResourceScopes}).Warn("❌ Authorization failed - missing modify scope")
 				response.WriteHeader(http.StatusBadRequest)
 				return false
 			} else if request.Method == "GET" || request.Method == "HEAD" {
-				fmt.Printf("📖 Checking for 'read' scope for %s method\n", request.Method)
+				logrus.WithFields(logrus.Fields{"method": request.Method}).Debug("📖 Checking for 'read' scope")
 				if contains(perm.ResourceScopes, "urn:example:css:modes:read") {
-					fmt.Printf("✅ Authorization successful - user has read permissions\n")
+					logrus.Info("✅ Authorization successful - user has read permissions")
 					return true
 				}
-				fmt.Printf("❌ Authorization failed - user lacks 'urn:example:css:modes:read' scope\n")
-				fmt.Printf("   User scopes: %v\n", perm.ResourceScopes)
+				logrus.WithFields(logrus.Fields{"user_scopes": perm.ResourceScopes}).Warn("❌ Authorization failed - missing read scope")
 				response.WriteHeader(http.StatusBadRequest)
 				return false
 			} else {
-				fmt.Printf("❌ Method %s not supported in authorization check\n", request.Method)
+				logrus.WithFields(logrus.Fields{"method": request.Method}).Warn("❌ Method not supported in authorization check")
 				response.WriteHeader(http.StatusMethodNotAllowed)
 				return false
 			}
 		}
 	}
 	// If we get here, no matching permission was found
-	fmt.Printf("❌ No matching permission found for resource ID: %s\n", idIndex[completeURL])
-	fmt.Printf("   Looking for resource ID: %s\n", idIndex[completeURL])
-	fmt.Printf("   Available resource IDs in permissions: ")
-	for _, perm := range permission {
-		fmt.Printf("%s ", perm.ResourceID)
-	}
-	fmt.Printf("\n")
+	logrus.WithFields(logrus.Fields{"resource_id": idIndex[completeURL], "permissions": permission}).Warn("❌ No matching permission found")
 	response.WriteHeader(http.StatusBadRequest)
 	return false
 }
@@ -197,14 +187,14 @@ func fetchTicket(permissions map[string][]string, issuer string) (string, error)
 	}
 	defer resp.Body.Close()
 
-	println(resp.StatusCode)
+	logrus.WithFields(logrus.Fields{"status_code": resp.StatusCode}).Debug("Permission endpoint response status")
 
 	if resp.StatusCode == http.StatusOK {
 		bodyBytes, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return "", err
 		}
-		println(string(bodyBytes))
+		logrus.WithFields(logrus.Fields{"body": string(bodyBytes)}).Debug("Permission endpoint response body")
 		return "", nil
 	}
 
@@ -563,7 +553,7 @@ const (
 func CreateResource(resourceId string, resourceScopes []ResourceScope) error {
 	config, err := fetchUmaConfig(AS_ISSUER)
 	if err != nil {
-		fmt.Println("Error while retrieving UMA configuration:", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("Error while retrieving UMA configuration")
 		return err
 	}
 
@@ -588,61 +578,59 @@ func CreateResource(resourceId string, resourceScopes []ResourceScope) error {
 
 	jsonData, err := json.Marshal(description)
 	if err != nil {
-		fmt.Println("Error while marshaling resource description:", err)
+		logrus.WithFields(logrus.Fields{"err": err, "resource_id": resourceId}).Error("Error while marshaling resource description")
 		return err
 	}
 
 	req, err := http.NewRequest(method, endpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
-		fmt.Println("Error while creating a request:", err)
+		logrus.WithFields(logrus.Fields{"err": err, "resource_id": resourceId}).Error("Error while creating UMA request")
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	fmt.Printf("%s resource registration for <%s> at <%s>\n", func() string {
-		if knownUmaId != "" {
-			return "Updating"
-		} else {
-			return "Creating"
-		}
-	}(), resourceId, endpoint)
+	action := "Creating"
+	if knownUmaId != "" {
+		action = "Updating"
+	}
+	logrus.WithFields(logrus.Fields{"action": action, "resource_id": resourceId, "endpoint": endpoint}).Info("Processing UMA resource registration")
 
 	res, err := doSignedRequest(req)
 	if err != nil {
-		fmt.Println("Error while making a request: ", err)
+		logrus.WithFields(logrus.Fields{"err": err, "resource_id": resourceId, "endpoint": endpoint}).Error("Error while making UMA request")
 		return err
 	}
 	defer res.Body.Close()
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		fmt.Println("Error while reading response body:", err, " got response status:", res.Status)
+		logrus.WithFields(logrus.Fields{"err": err, "status": res.Status, "resource_id": resourceId}).Error("Error while reading UMA response body")
 		return err
 	}
 
 	if knownUmaId != "" {
 		if res.StatusCode != http.StatusOK {
-			fmt.Printf("Resource update request failed. %s\n", string(body))
+			logrus.WithFields(logrus.Fields{"status": res.Status, "body": string(body), "resource_id": resourceId}).Error("Resource update request failed")
 			return nil
 		}
 	} else {
 		if res.StatusCode != http.StatusCreated {
-			fmt.Printf("Resource registration request failed. %s\n", string(body))
+			logrus.WithFields(logrus.Fields{"status": res.Status, "body": string(body), "resource_id": resourceId}).Error("Resource registration request failed")
 			return nil
 		}
 		var responseData struct {
 			ID string `json:"_id"`
 		}
 		if err := json.Unmarshal(body, &responseData); err != nil {
-			fmt.Println("Error while parsing response JSON:", err)
+			logrus.WithFields(logrus.Fields{"err": err, "resource_id": resourceId}).Error("Error while parsing UMA response JSON")
 			return err
 		}
 		if responseData.ID == "" {
-			fmt.Println("Unexpected response from UMA server; no UMA id received.")
+			logrus.WithFields(logrus.Fields{"resource_id": resourceId}).Warn("Unexpected UMA response; no UMA id received")
 			return nil
 		}
 		idIndex[resourceId] = responseData.ID
-		fmt.Printf("Registered resource %s with UMA ID %s\n", resourceId, responseData.ID)
+		logrus.WithFields(logrus.Fields{"resource_id": resourceId, "uma_id": responseData.ID}).Info("Registered resource with UMA")
 	}
 	return nil
 }
@@ -650,13 +638,13 @@ func CreateResource(resourceId string, resourceScopes []ResourceScope) error {
 func DeleteResource(resourceId string) {
 	config, err := fetchUmaConfig(AS_ISSUER)
 	if err != nil {
-		fmt.Println("Error while retrieving UMA configuration: ", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("Error while retrieving UMA configuration")
 		return
 	}
 
 	authId := idIndex[resourceId]
 	if authId == "" {
-		fmt.Println("Resource not found in local index")
+		logrus.WithFields(logrus.Fields{"resource_id": resourceId}).Warn("Resource not found in local index")
 		return
 	}
 
@@ -666,43 +654,41 @@ func DeleteResource(resourceId string) {
 		nil,
 	)
 	if err != nil {
-		fmt.Println("Error while making a request: ", err)
+		logrus.WithFields(logrus.Fields{"err": err, "resource_id": resourceId, "uma_id": authId}).Error("Error while creating UMA delete request")
 		return
 	}
 
 	res, err := doSignedRequest(req)
 	if err != nil {
-		fmt.Println("Error while making a request: ", err)
+		logrus.WithFields(logrus.Fields{"err": err, "resource_id": resourceId, "uma_id": authId}).Error("Error while making UMA delete request")
 		return
 	}
 	defer res.Body.Close()
 	body, err := io.ReadAll(res.Body)
 
 	if err != nil {
-		fmt.Println("Error while reading response body:", err, " got response status:", res.Status)
+		logrus.WithFields(logrus.Fields{"err": err, "status": res.Status, "resource_id": resourceId}).Error("Error while reading UMA delete response")
 		return
 	}
 	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNoContent {
-		fmt.Println("Error while creating resource:", res.Status, string(body))
-		fmt.Println("Stack trace:")
-		fmt.Println(string(debug.Stack()))
+		logrus.WithFields(logrus.Fields{"status": res.Status, "body": string(body), "resource_id": resourceId, "uma_id": authId}).Error("Error while deleting UMA resource")
+		logrus.WithFields(logrus.Fields{"trace": string(debug.Stack())}).Debug("Stack trace")
 		return
 	}
 
-	fmt.Println("Resource deleted successfully")
-	fmt.Printf("Resource ID: %s, umaId: %s\n", resourceId, authId)
+	logrus.WithFields(logrus.Fields{"resource_id": resourceId, "uma_id": authId}).Info("Resource deleted successfully")
 	delete(idIndex, resourceId)
 }
 
 func DeleteAllResources() {
 	config, err := fetchUmaConfig(AS_ISSUER)
 	if err != nil {
-		fmt.Println("Error while retrieving UMA configuration: ", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("Error while retrieving UMA configuration")
 		return
 	}
 	for resourceId, authId := range idIndex {
 		if authId == "" {
-			fmt.Println("Resource not found in local index")
+			logrus.WithFields(logrus.Fields{"resource_id": resourceId}).Warn("Resource not found in local index")
 			return
 		}
 
@@ -712,31 +698,29 @@ func DeleteAllResources() {
 			&bytes.Buffer{},
 		)
 		if err != nil {
-			fmt.Println("Error while creating request:", err)
+			logrus.WithFields(logrus.Fields{"err": err, "resource_id": resourceId, "uma_id": authId}).Error("Error while creating UMA delete request")
 			return
 		}
 
 		res, err := doSignedRequest(req)
 		if err != nil {
-			fmt.Println("Error while making a request:", err)
+			logrus.WithFields(logrus.Fields{"err": err, "resource_id": resourceId, "uma_id": authId}).Error("Error while making UMA delete request")
 			return
 		}
 		defer res.Body.Close()
 		body, err := io.ReadAll(res.Body)
 
 		if err != nil {
-			fmt.Println("Error while reading response body:", err, " got response status:", res.Status)
+			logrus.WithFields(logrus.Fields{"err": err, "status": res.Status}).Error("Error while reading UMA delete response")
 			return
 		}
 		if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNoContent {
-			fmt.Println("Error while deleting resource", resourceId, authId, ":", res.Status, string(body))
-			fmt.Println("Stack trace:")
-			fmt.Println(string(debug.Stack()))
+			logrus.WithFields(logrus.Fields{"status": res.Status, "body": string(body), "resource_id": resourceId, "uma_id": authId}).Error("Error while deleting UMA resource")
+			logrus.WithFields(logrus.Fields{"trace": string(debug.Stack())}).Debug("Stack trace")
 			return
 		}
 
-		fmt.Println("Resource deleted successfully")
-		fmt.Printf("Resource ID: %s, umaId: %s\n", resourceId, authId)
+		logrus.WithFields(logrus.Fields{"resource_id": resourceId, "uma_id": authId}).Info("Resource deleted successfully")
 	}
 	idIndex = make(map[string]string)
 }

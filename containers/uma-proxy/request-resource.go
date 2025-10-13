@@ -5,13 +5,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 )
 
 var aggregatorOwner = "https://pod.playground.solidlab.be/user1/profile/card#me"
+	"github.com/sirupsen/logrus"
+)
 
 type claim struct {
 	grantType        string `json:"grant_type"`
@@ -41,7 +43,7 @@ func Do(req *http.Request) (*http.Response, error) {
 		// If we redirected a localhost URL, preserve the original Host header
 		if newURL.Hostname() == "host.minikube.internal" && (originalHost == "localhost:3000" || strings.HasPrefix(originalHost, "localhost:")) {
 			req.Host = originalHost
-			log.Printf("🔧 Setting Host header to original value: %s", originalHost)
+			logrus.WithFields(logrus.Fields{"original_host": originalHost}).Debug("🔧 Setting Host header to original value")
 		}
 	}
 
@@ -106,7 +108,7 @@ func Do(req *http.Request) (*http.Response, error) {
 		return client.Do(req)
 	}
 	// If the response is not unauthorized, return it as is
-	fmt.Println("No authorization needed")
+	logrus.Debug("No authorization needed")
 	return unauthenticatedResp, nil
 }
 
@@ -128,7 +130,7 @@ func getTicketInfo(headerString string) (string, string, error) {
 		case "ticket":
 			ticket = value
 		default:
-			return "", "", fmt.Errorf("unknown parameter: %s", key)
+			logrus.WithFields(logrus.Fields{"key": key, "value": value}).Debug("Unknown UMA parameter")
 		}
 	}
 	return asUri, ticket, nil

@@ -4,12 +4,12 @@ import (
 	"aggregator/auth"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"io"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -49,6 +49,7 @@ func createActor(pipelineDescription string) (Actor, error) {
 						{Name: "HTTP_PROXY", Value: "http://uma-proxy-service.default.svc.cluster.local:8080"},
 						{Name: "HTTPS_PROXY", Value: "http://uma-proxy-service.default.svc.cluster.local:8443"},
 						{Name: "SSL_CERT_FILE", Value: "/key-pair/uma-proxy.crt"},
+						{Name: "LOG_LEVEL", Value: logLevelValue},
 					},
 					Ports: []v1.ContainerPort{
 						{ContainerPort: 8080},
@@ -110,7 +111,8 @@ func createActor(pipelineDescription string) (Actor, error) {
 
 	nodes, err := Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		log.Fatal(err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to list nodes")
+		return Actor{}, err
 	}
 
 	nodeIp := ""
@@ -148,10 +150,10 @@ func createActor(pipelineDescription string) (Actor, error) {
 		}
 	}
 
-	fmt.Println("Pod is running on:", fmt.Sprintf("http://%s:%d", nodeIp, nodePort))
+	logrus.WithFields(logrus.Fields{"url": fmt.Sprintf("http://%s:%d", nodeIp, nodePort)}).Info("Pod is running")
 
 	var handleAllRequests = func(w http.ResponseWriter, r *http.Request) {
-		log.Println("Received request for actor:", id, "Path:", r.URL.Path, "Method:", r.Method)
+		logrus.WithFields(logrus.Fields{"actor_id": id, "path": r.URL.Path, "method": r.Method}).Info("Received request for actor")
 		if !auth.AuthorizeRequest(w, r, nil) {
 			return
 		}
@@ -169,7 +171,7 @@ func createActor(pipelineDescription string) (Actor, error) {
 		// Create a new request with the same method, headers, and body
 		req, err := http.NewRequest(r.Method, targetURL, r.Body)
 		if err != nil {
-			fmt.Println("Error creating request:", err.Error())
+			logrus.WithFields(logrus.Fields{"err": err}).Error("Error creating request")
 			http.Error(w, "Failed to create request", http.StatusInternalServerError)
 			return
 		}
@@ -185,7 +187,7 @@ func createActor(pipelineDescription string) (Actor, error) {
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		if err != nil {
-			fmt.Println("Error reaching pod service:", err.Error())
+			logrus.WithFields(logrus.Fields{"err": err, "target_url": req.URL.String()}).Error("Error reaching pod service")
 			http.Error(w, "Failed to reach pod service", http.StatusInternalServerError)
 			return
 		}
@@ -205,7 +207,7 @@ func createActor(pipelineDescription string) (Actor, error) {
 		contentType := resp.Header.Get("Content-Type")
 		isSSE := strings.Contains(contentType, "text/event-stream")
 
-		log.Println("Content-Type:", contentType, "IsSSE:", isSSE)
+		logrus.WithFields(logrus.Fields{"content_type": contentType, "is_sse": isSSE}).Debug("Content-Type response")
 		if isSSE {
 			// Handle Server-Sent Events streaming
 			flusher, ok := w.(http.Flusher)
@@ -224,7 +226,7 @@ func createActor(pipelineDescription string) (Actor, error) {
 				}
 				if err != nil {
 					if err != io.EOF {
-						fmt.Printf("Error reading SSE stream: %v\n", err)
+						logrus.WithFields(logrus.Fields{"err": err}).Error("Error reading SSE stream")
 					}
 					break
 				}
@@ -256,9 +258,9 @@ func (actor Actor) Stop() {
 		defer cancel()
 		err := Clientset.CoreV1().Pods("default").Delete(ctx, actor.pod.Name, metav1.DeleteOptions{})
 		if err != nil {
-			fmt.Println("Error stopping actor:", err.Error())
+			logrus.WithFields(logrus.Fields{"err": err, "actor_id": actor.Id}).Error("Error stopping actor")
 		} else {
-			fmt.Println("Actor stopped successfully:", actor.Id)
+			logrus.WithFields(logrus.Fields{"actor_id": actor.Id}).Info("Actor stopped successfully")
 		}
 	}
 }

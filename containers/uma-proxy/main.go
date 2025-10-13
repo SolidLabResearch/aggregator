@@ -10,8 +10,8 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"github.com/sirupsen/logrus"
 	"io"
-	"log"
 	"math/big"
 	"net"
 	"net/http"
@@ -33,33 +33,44 @@ var caCert *x509.Certificate
 var caKey *rsa.PrivateKey
 
 func main() {
+	var err error
+	logLevel, err := logrus.ParseLevel(os.Getenv("LOG_LEVEL"))
+	if err != nil {
+		logLevel = logrus.InfoLevel
+		err = nil
+	}
+	logrus.SetLevel(logLevel)
 	http.HandleFunc("/", Handler)
 	http.HandleFunc("/fetch", FetchHandler)
 	go func() {
-		log.Println("HTTP proxy listening on port: 8080")
-		log.Fatal(http.ListenAndServe(":8080", nil))
+		logrus.WithFields(logrus.Fields{"port": 8080}).Info("HTTP proxy listening")
+		if err := http.ListenAndServe(":8080", nil); err != nil {
+			logrus.WithFields(logrus.Fields{"err": err}).Error("HTTP proxy failed")
+			os.Exit(1)
+		}
 	}()
 	caCertPath := os.Getenv("CERT_PATH")
 	caKeyPath := os.Getenv("KEY_PATH")
 
-	var err error
 	caCert, caKey, err = loadCA(caCertPath, caKeyPath)
 	if err != nil {
-		log.Fatalf("❌ Failed to load CA cert and key: %v", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to load CA cert and key")
+		os.Exit(1)
 	}
 
 	// HTTPS MITM proxy on 8443
 	ln, err := net.Listen("tcp", ":8443")
 	if err != nil {
-		log.Fatal(err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to start MITM listener")
+		os.Exit(1)
 	}
 	defer ln.Close()
-	log.Println("🚀 HTTPS MITM proxy listening on port: 8443")
+	logrus.WithFields(logrus.Fields{"port": 8443}).Info("🚀 HTTPS MITM proxy listening")
 
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			log.Println("Accept error:", err)
+			logrus.WithFields(logrus.Fields{"err": err}).Warn("Accept error")
 			continue
 		}
 		go handleMITM(conn)
@@ -69,7 +80,7 @@ func main() {
 // TODO add a cache to the proxy
 // Handler for HTTP UMA flow
 func Handler(w http.ResponseWriter, req *http.Request) {
-	fmt.Println("Request received", req.Method, req.RequestURI)
+	logrus.WithFields(logrus.Fields{"method": req.Method, "request_uri": req.RequestURI}).Info("Request received")
 
 	outReq, err := http.NewRequest(req.Method, req.RequestURI, req.Body)
 	if err != nil {
@@ -99,7 +110,7 @@ func Handler(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 	location, _ := resp.Location()
-	fmt.Println("Response", location, resp.Status)
+	logrus.WithFields(logrus.Fields{"location": location, "status": resp.Status}).Info("Response delivered")
 }
 
 // Handler for /fetch endpoint
@@ -116,7 +127,7 @@ func FetchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("📡 Fetch request: %s %s", fetchReq.Method, fetchReq.URL)
+	logrus.WithFields(logrus.Fields{"method": fetchReq.Method, "url": fetchReq.URL}).Info("📡 Fetch request")
 
 	// Parse the original URL to preserve the original host header
 	originalURL, err := url.Parse(fetchReq.URL)
@@ -156,19 +167,19 @@ func FetchHandler(w http.ResponseWriter, r *http.Request) {
 	redirectedURL, _ := url.Parse(fetchReq.URL)
 	if redirectedURL.Hostname() == "host.minikube.internal" && (originalHost == "localhost:3000" || strings.HasPrefix(originalHost, "localhost:")) {
 		req.Host = originalHost
-		log.Printf("🔧 Setting Host header to original value: %s", originalHost)
+		logrus.WithFields(logrus.Fields{"original_host": originalHost}).Debug("🔧 Setting Host header to original value")
 	}
 
 	// Send the request using the Do function (which handles UMA flow)
 	resp, err := Do(req)
 	if err != nil {
-		log.Printf("❌ Failed to fetch %s: %v", fetchReq.URL, err)
+		logrus.WithFields(logrus.Fields{"url": fetchReq.URL, "err": err}).Error("❌ Failed to fetch URL")
 		http.Error(w, "Failed to fetch URL: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
-	log.Printf("✅ Response from %s: %d %s", fetchReq.URL, resp.StatusCode, resp.Status)
+	logrus.WithFields(logrus.Fields{"url": fetchReq.URL, "status_code": resp.StatusCode, "status": resp.Status}).Info("✅ Response received")
 
 	// Copy response headers to our response
 	for key, values := range resp.Header {
@@ -191,12 +202,12 @@ func handleMITM(conn net.Conn) {
 
 	req, err := http.ReadRequest(connReader)
 	if err != nil {
-		log.Println("❌ Failed to parse CONNECT request:", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to parse CONNECT request")
 		return
 	}
 
 	if req.Method != http.MethodConnect {
-		log.Println("❌ Non-CONNECT request received on MITM listener, ignoring")
+		logrus.Warn("❌ Non-CONNECT request received on MITM listener, ignoring")
 		return
 	}
 
@@ -204,19 +215,19 @@ func handleMITM(conn net.Conn) {
 	if err != nil {
 		targetHost = req.Host // fallback if no port
 	}
-	log.Println("🔌 Intercepting CONNECT to:", targetHost)
+	logrus.WithFields(logrus.Fields{"host": targetHost}).Info("🔌 Intercepting CONNECT")
 
 	fmt.Fprint(conn, "HTTP/1.1 200 Connection Established\r\n\r\n")
 
 	// Generate cert for target
 	certPEM, keyPEM, err := generateCert(targetHost)
 	if err != nil {
-		log.Println("❌ Failed to generate MITM cert:", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to generate MITM cert")
 		return
 	}
 	tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		log.Println("❌ X509KeyPair error:", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ X509KeyPair error")
 		return
 	}
 
@@ -225,7 +236,7 @@ func handleMITM(conn net.Conn) {
 	}
 	tlsConn := tls.Server(conn, tlsConfig)
 	if err := tlsConn.Handshake(); err != nil {
-		log.Println("❌ TLS handshake error:", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ TLS handshake error")
 		return
 	}
 	defer tlsConn.Close()
@@ -237,14 +248,14 @@ func handleMITM(conn net.Conn) {
 			if err == io.EOF {
 				return
 			}
-			log.Println("❌ Failed to read decrypted request:", err)
+			logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to read decrypted request")
 			return
 		}
 
 		req.URL.Scheme = "https"
 		req.URL.Host = req.Host
 
-		log.Println("➡️ MITM request:", req.Method, req.URL.String())
+		logrus.WithFields(logrus.Fields{"method": req.Method, "url": req.URL.String()}).Debug("➡️ MITM request")
 
 		outReq, err := http.NewRequest(req.Method, req.URL.String(), req.Body)
 		if err != nil {
@@ -270,7 +281,7 @@ func handleMITM(conn net.Conn) {
 
 		err = resp.Write(tlsConn)
 		if err != nil {
-			log.Println("❌ Failed to write back to client:", err)
+			logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to write back to client")
 			return
 		}
 	}
@@ -349,12 +360,12 @@ func generateCert(host string) ([]byte, []byte, error) {
 func getHostIP() string {
 	// Try to get host IP from environment variable first
 	if hostIP := os.Getenv("HOST_IP"); hostIP != "" {
-		log.Printf("Using HOST_IP from environment: %s", hostIP)
+		logrus.WithFields(logrus.Fields{"host_ip": hostIP}).Info("Using HOST_IP from environment")
 		return hostIP
 	}
 
 	// In minikube, try host.minikube.internal first
-	log.Printf("No HOST_IP set, trying host.minikube.internal")
+	logrus.Info("No HOST_IP set, trying host.minikube.internal")
 	return "host.minikube.internal"
 }
 
@@ -370,7 +381,7 @@ func redirectLocalhostURL(originalURL string) string {
 		hostIP := getHostIP()
 		parsedURL.Host = fmt.Sprintf("%s:%s", hostIP, parsedURL.Port())
 		redirectedURL := parsedURL.String()
-		log.Printf("🔄 Redirecting localhost URL: %s -> %s", originalURL, redirectedURL)
+		logrus.WithFields(logrus.Fields{"original_url": originalURL, "redirected_url": redirectedURL}).Debug("🔄 Redirecting localhost URL")
 		return redirectedURL
 	}
 

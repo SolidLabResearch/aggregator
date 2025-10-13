@@ -2,14 +2,18 @@ package proxy
 
 import (
 	"fmt"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
-	"log"
 )
+
+type ProxyConfig struct {
+	LogLevel string
+}
 
 func isPodRunning(clientset *kubernetes.Clientset) (bool, error) {
 	pods, err := clientset.CoreV1().Pods("default").List(context.Background(), metav1.ListOptions{
@@ -28,7 +32,22 @@ func isPodRunning(clientset *kubernetes.Clientset) (bool, error) {
 	return false, nil
 }
 
-func createPod(clientset *kubernetes.Clientset) error {
+func createPod(clientset *kubernetes.Clientset, config ProxyConfig) error {
+	envVars := []v1.EnvVar{
+		{
+			Name:  "CERT_PATH",
+			Value: "/key-pair/uma-proxy.crt",
+		},
+		{
+			Name:  "KEY_PATH",
+			Value: "/key-pair/uma-proxy.key",
+		},
+		{
+			Name:  "LOG_LEVEL",
+			Value: config.LogLevel,
+		},
+	}
+
 	pod := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "uma-proxy",
@@ -53,16 +72,7 @@ func createPod(clientset *kubernetes.Clientset) error {
 							ReadOnly:  true,
 						},
 					},
-					Env: []v1.EnvVar{
-						{
-							Name:  "CERT_PATH",
-							Value: "/key-pair/uma-proxy.crt",
-						},
-						{
-							Name:  "KEY_PATH",
-							Value: "/key-pair/uma-proxy.key",
-						},
-					},
+					Env: envVars,
 				},
 			},
 			Volumes: []v1.Volume{
@@ -79,7 +89,8 @@ func createPod(clientset *kubernetes.Clientset) error {
 	}
 	_, err := clientset.CoreV1().Pods("default").Create(context.Background(), pod, metav1.CreateOptions{})
 	if err != nil {
-		log.Fatalf("Failed to create uma-proxy pod: %v", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to create uma-proxy pod")
+		return err
 	}
 	return nil
 }
@@ -121,14 +132,15 @@ func createService(clientset *kubernetes.Clientset) error {
 	}
 	_, err := clientset.CoreV1().Services("default").Create(context.Background(), svc, metav1.CreateOptions{})
 	if err != nil {
-		log.Fatalf("Failed to create uma-proxy service: %v", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to create uma-proxy service")
+		return err
 	}
 	return nil
 }
 
-func SetupProxy(clientset *kubernetes.Clientset) {
+func SetupProxy(clientset *kubernetes.Clientset, config ProxyConfig) {
 	if running, err := isPodRunning(clientset); err != nil || !running {
-		err := createPod(clientset)
+		err := createPod(clientset, config)
 		if err != nil {
 			panic(err)
 		}

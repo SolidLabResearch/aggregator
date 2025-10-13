@@ -5,15 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"net"
-	"net/http"
-	"strings"
-	"time"
-
+	"github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"time"
 )
 
 const resourceSubscriptionPort = "4449"
@@ -35,12 +35,12 @@ func SetupResourceRegistration() {
 	registrationMux := http.NewServeMux()
 	registrationMux.HandleFunc("/", handleResourceOperations)
 
-	log.Printf("🚀 Resource Registration server starting on port %s", resourceSubscriptionPort)
-	log.Printf("🔗 Resource endpoints:")
-	log.Printf("   PUT    http://aggregator-registration:%s/ - Create/update resource", resourceSubscriptionPort)
-	log.Printf("   POST   http://aggregator-registration:%s/ - Create resource", resourceSubscriptionPort)
-	log.Printf("   PATCH  http://aggregator-registration:%s/ - Update resource", resourceSubscriptionPort)
-	log.Printf("   DELETE http://aggregator-registration:%s/ - Delete resource", resourceSubscriptionPort)
+	logrus.WithFields(logrus.Fields{"port": resourceSubscriptionPort}).Info("🚀 Resource Registration server starting")
+	logrus.Info("🔗 Resource endpoints")
+	logrus.WithFields(logrus.Fields{"method": "PUT", "url": fmt.Sprintf("http://aggregator-registration:%s/", resourceSubscriptionPort), "description": "Create/update resource"}).Info("Resource endpoint")
+	logrus.WithFields(logrus.Fields{"method": "POST", "url": fmt.Sprintf("http://aggregator-registration:%s/", resourceSubscriptionPort), "description": "Create resource"}).Info("Resource endpoint")
+	logrus.WithFields(logrus.Fields{"method": "PATCH", "url": fmt.Sprintf("http://aggregator-registration:%s/", resourceSubscriptionPort), "description": "Update resource"}).Info("Resource endpoint")
+	logrus.WithFields(logrus.Fields{"method": "DELETE", "url": fmt.Sprintf("http://aggregator-registration:%s/", resourceSubscriptionPort), "description": "Delete resource"}).Info("Resource endpoint")
 
 	// Start the registration server with its own mux
 	go func() {
@@ -49,13 +49,14 @@ func SetupResourceRegistration() {
 			Handler: registrationMux,
 		}
 		if err := server.ListenAndServe(); err != nil {
-			log.Fatalf("Failed to start resource registration server: %v", err)
+			logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to start resource registration server")
+			os.Exit(1)
 		}
 	}()
 }
 
 func handleResourceOperations(w http.ResponseWriter, r *http.Request) {
-	log.Printf("📥 Received resource registration request from %s", r.RemoteAddr)
+	logrus.WithFields(logrus.Fields{"remote_addr": r.RemoteAddr, "method": r.Method}).Info("📥 Received resource registration request")
 
 	switch r.Method {
 	case http.MethodPost, http.MethodPut:
@@ -65,17 +66,17 @@ func handleResourceOperations(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		handleResourceDeletion(w, r)
 	default:
-		log.Printf("❌ Invalid method %s for resource registration", r.Method)
+		logrus.WithFields(logrus.Fields{"method": r.Method}).Warn("❌ Invalid method for resource registration")
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
 func handleResourceRegistration(w http.ResponseWriter, r *http.Request) {
-	log.Printf("📝 Processing resource registration for method %s from %s", r.Method, r.RemoteAddr)
+	logrus.WithFields(logrus.Fields{"method": r.Method, "remote_addr": r.RemoteAddr}).Info("📝 Processing resource registration")
 
 	var registration ResourceRegistration
 	if err := json.NewDecoder(r.Body).Decode(&registration); err != nil {
-		log.Printf("❌ Failed to decode registration JSON: %v", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to decode registration JSON")
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
@@ -83,16 +84,12 @@ func handleResourceRegistration(w http.ResponseWriter, r *http.Request) {
 	// Extract actorID from pod_name
 	actorID := registration.PodName
 	if actorID == "" {
-		log.Printf("❌ Missing pod_name in registration")
+		logrus.Warn("❌ Missing pod_name in registration")
 		http.Error(w, "Missing required field: pod_name", http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("📋 Processing registration for pod: %s", actorID)
-	log.Printf("   Pod IP: %s", registration.PodIP)
-	log.Printf("   Port: %d", registration.Port)
-	log.Printf("   Endpoint: %s", registration.Endpoint)
-	log.Printf("   Scopes: %v", registration.Scopes)
+	logrus.WithFields(logrus.Fields{"pod": actorID, "pod_ip": registration.PodIP, "port": registration.Port, "endpoint": registration.Endpoint, "scopes": registration.Scopes}).Info("📋 Processing registration")
 
 	// Default endpoint to "/" if not specified
 	if registration.Endpoint == "" {
@@ -101,13 +98,13 @@ func handleResourceRegistration(w http.ResponseWriter, r *http.Request) {
 
 	// Validate required fields
 	if registration.PodIP == "" || registration.Port == 0 {
-		log.Printf("❌ Missing required fields in registration")
+		logrus.WithFields(logrus.Fields{"pod_ip": registration.PodIP, "port": registration.Port}).Warn("❌ Missing required fields in registration")
 		http.Error(w, "Missing required fields: pod_ip, port", http.StatusBadRequest)
 		return
 	}
 
 	if len(registration.Scopes) == 0 {
-		log.Printf("❌ No scopes provided for resource %s", actorID)
+		logrus.WithFields(logrus.Fields{"pod": actorID}).Warn("❌ No scopes provided for resource")
 		http.Error(w, "Scopes are required", http.StatusBadRequest)
 		return
 	}
@@ -120,7 +117,7 @@ func handleResourceRegistration(w http.ResponseWriter, r *http.Request) {
 	if _, exists := registeredResources[resourceKey]; exists && r.Method == "PUT" {
 		isUpdate = true
 	} else if _, exists := registeredResources[resourceKey]; exists && r.Method == "POST" {
-		log.Printf("❌ Resource %s already exists for pod %s (use PUT to update)", registration.Endpoint, actorID)
+		logrus.WithFields(logrus.Fields{"endpoint": registration.Endpoint, "pod": actorID}).Warn("❌ Resource already exists for pod")
 		http.Error(w, "Resource already exists, use PUT to update", http.StatusConflict)
 		return
 	}
@@ -130,13 +127,13 @@ func handleResourceRegistration(w http.ResponseWriter, r *http.Request) {
 	// Create Kubernetes service for the pod (only if new registration)
 	if !isUpdate {
 		if err := setupServiceForResource(actorID, &registration); err != nil {
-			log.Printf("❌ Failed to setup service: %v", err)
+			logrus.WithFields(logrus.Fields{"pod": actorID, "err": err}).Error("❌ Failed to setup service")
 			// Continue anyway
 		}
 
 		// Register resource with UMA Authorization Server (only if new registration)
 		if err := registerResourceWithUMA(actorID, &registration); err != nil {
-			log.Printf("❌ Failed to register resource with UMA: %v", err)
+			logrus.WithFields(logrus.Fields{"pod": actorID, "err": err}).Error("❌ Failed to register resource with UMA")
 			// Continue anyway - the service is still functional
 		}
 	}
@@ -145,7 +142,7 @@ func handleResourceRegistration(w http.ResponseWriter, r *http.Request) {
 	if isUpdate {
 		action = "updated"
 	}
-	log.Printf("🎉 Successfully %s resource: %s from pod %s", action, registration.Endpoint, actorID)
+	logrus.WithFields(logrus.Fields{"action": action, "endpoint": registration.Endpoint, "pod": actorID}).Info("🎉 Resource registration success")
 
 	response := map[string]interface{}{
 		"status":       "success",
@@ -159,11 +156,11 @@ func handleResourceRegistration(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleResourceUpdate(w http.ResponseWriter, r *http.Request) {
-	log.Printf("✏️ Received resource update request from %s", r.RemoteAddr)
+	logrus.WithFields(logrus.Fields{"remote_addr": r.RemoteAddr}).Info("✏️ Received resource update request")
 
 	var updateInfo ResourceRegistration
 	if err := json.NewDecoder(r.Body).Decode(&updateInfo); err != nil {
-		log.Printf("❌ Failed to decode update JSON: %v", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to decode update JSON")
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
@@ -171,17 +168,17 @@ func handleResourceUpdate(w http.ResponseWriter, r *http.Request) {
 	// Extract actorID from pod_name
 	actorID := updateInfo.PodName
 	if actorID == "" {
-		log.Printf("❌ Missing pod_name in update request")
+		logrus.Warn("❌ Missing pod_name in update request")
 		http.Error(w, "Missing required field: pod_name", http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("📋 Processing update for pod: %s", actorID)
+	logrus.WithFields(logrus.Fields{"pod": actorID, "endpoint": updateInfo.Endpoint}).Info("📋 Processing update")
 
 	// Update the registration
 	resourceKey := fmt.Sprintf("%s%s", actorID, updateInfo.Endpoint)
 	if _, exists := registeredResources[resourceKey]; !exists {
-		log.Printf("❌ Resource %s not found for pod %s", updateInfo.Endpoint, actorID)
+		logrus.WithFields(logrus.Fields{"endpoint": updateInfo.Endpoint, "pod": actorID}).Warn("❌ Resource not found for pod")
 		http.Error(w, "Resource not found", http.StatusNotFound)
 		return
 	}
@@ -189,7 +186,7 @@ func handleResourceUpdate(w http.ResponseWriter, r *http.Request) {
 	// Update the resource registration
 	registeredResources[resourceKey] = &updateInfo
 
-	log.Printf("✅ Successfully updated resource: %s for pod %s", updateInfo.Endpoint, actorID)
+	logrus.WithFields(logrus.Fields{"endpoint": updateInfo.Endpoint, "pod": actorID}).Info("✅ Resource updated")
 
 	response := map[string]interface{}{
 		"status":  "success",
@@ -201,11 +198,11 @@ func handleResourceUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleResourceDeletion(w http.ResponseWriter, r *http.Request) {
-	log.Printf("🗑️ Received resource deletion request from %s", r.RemoteAddr)
+	logrus.WithFields(logrus.Fields{"remote_addr": r.RemoteAddr}).Info("🗑️ Received resource deletion request")
 
 	var deletionInfo ResourceRegistration
 	if err := json.NewDecoder(r.Body).Decode(&deletionInfo); err != nil {
-		log.Printf("❌ Failed to decode deletion JSON: %v", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to decode deletion JSON")
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
@@ -213,17 +210,17 @@ func handleResourceDeletion(w http.ResponseWriter, r *http.Request) {
 	// Extract actorID from pod_name
 	actorID := deletionInfo.PodName
 	if actorID == "" {
-		log.Printf("❌ Missing pod_name in deletion request")
+		logrus.Warn("❌ Missing pod_name in deletion request")
 		http.Error(w, "Missing required field: pod_name", http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("📋 Processing deletion for pod: %s", actorID)
+	logrus.WithFields(logrus.Fields{"pod": actorID, "endpoint": deletionInfo.Endpoint}).Info("📋 Processing deletion")
 
 	// Delete the registration
 	resourceKey := fmt.Sprintf("%s%s", actorID, deletionInfo.Endpoint)
 	if _, exists := registeredResources[resourceKey]; !exists {
-		log.Printf("❌ Resource %s not found for pod %s", deletionInfo.Endpoint, actorID)
+		logrus.WithFields(logrus.Fields{"endpoint": deletionInfo.Endpoint, "pod": actorID}).Warn("❌ Resource not found for pod")
 		http.Error(w, "Resource not found", http.StatusNotFound)
 		return
 	}
@@ -231,7 +228,7 @@ func handleResourceDeletion(w http.ResponseWriter, r *http.Request) {
 	// Remove the resource registration
 	delete(registeredResources, resourceKey)
 
-	log.Printf("✅ Successfully deleted resource: %s for pod %s", deletionInfo.Endpoint, actorID)
+	logrus.WithFields(logrus.Fields{"endpoint": deletionInfo.Endpoint, "pod": actorID}).Info("✅ Resource deleted")
 
 	response := map[string]interface{}{
 		"status":  "success",
@@ -243,7 +240,7 @@ func handleResourceDeletion(w http.ResponseWriter, r *http.Request) {
 }
 
 func setupServiceForResource(actorID string, registration *ResourceRegistration) error {
-	log.Printf("��� Creating Kubernetes service for actor %s", actorID)
+	logrus.WithFields(logrus.Fields{"actor_id": actorID}).Info("Creating Kubernetes service for actor")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -253,7 +250,7 @@ func setupServiceForResource(actorID string, registration *ResourceRegistration)
 	// Check if service already exists
 	_, err := Clientset.CoreV1().Services("default").Get(ctx, serviceName, metav1.GetOptions{})
 	if err == nil {
-		log.Printf("✅ Service %s already exists", serviceName)
+		logrus.WithFields(logrus.Fields{"service": serviceName}).Info("Service already exists")
 		return nil
 	}
 
@@ -287,12 +284,12 @@ func setupServiceForResource(actorID string, registration *ResourceRegistration)
 		return fmt.Errorf("failed to create service %s: %v", serviceName, err)
 	}
 
-	log.Printf("✅ Created Kubernetes service %s for actor %s", serviceName, actorID)
+	logrus.WithFields(logrus.Fields{"service": serviceName, "actor_id": actorID}).Info("Created Kubernetes service for actor")
 	return nil
 }
 
 func registerResourceWithUMA(actorID string, registration *ResourceRegistration) error {
-	log.Printf("🔑 Registering resource with UMA for actor %s", actorID)
+	logrus.WithFields(logrus.Fields{"actor_id": actorID}).Info("🔑 Registering resource with UMA")
 
 	// Convert string scopes to auth.ResourceScope types
 	resourceScopes := make([]auth.ResourceScope, 0, len(registration.Scopes))
@@ -309,7 +306,7 @@ func registerResourceWithUMA(actorID string, registration *ResourceRegistration)
 		case "delete":
 			resourceScopes = append(resourceScopes, auth.ScopeDelete)
 		default:
-			log.Printf("⚠️ Unknown scope '%s' for resource %s, skipping", scope, actorID)
+			logrus.WithFields(logrus.Fields{"scope": scope, "actor_id": actorID}).Warn("⚠️ Unknown scope for resource scope entry skipped")
 		}
 	}
 
@@ -325,7 +322,7 @@ func registerResourceWithUMA(actorID string, registration *ResourceRegistration)
 		return fmt.Errorf("failed to create UMA resource: %v", err)
 	}
 
-	log.Printf("✅ Successfully registered resource with UMA for actor %s with scopes %v", actorID, resourceScopes)
+	logrus.WithFields(logrus.Fields{"actor_id": actorID, "scopes": resourceScopes}).Info("✅ Successfully registered resource with UMA")
 	return nil
 }
 
@@ -345,6 +342,6 @@ func getHostIPForCluster() (string, error) {
 	localAddr := conn.LocalAddr().(*net.UDPAddr)
 	hostIP := localAddr.IP.String()
 
-	log.Printf("🔍 Detected host IP accessible from cluster: %s", hostIP)
+	logrus.WithFields(logrus.Fields{"host_ip": hostIP}).Info("🔍 Detected host IP accessible from cluster")
 	return hostIP, nil
 }

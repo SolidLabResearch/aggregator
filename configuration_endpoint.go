@@ -3,6 +3,7 @@ package main
 import (
 	"aggregator/auth"
 	"fmt"
+	"github.com/sirupsen/logrus"
 	"io"
 	"net/http"
 	"strconv"
@@ -72,7 +73,6 @@ func (data ConfigurationData) getAvailableTransformations(response http.Response
 	header.Set("Content-Type", "text/turtle")
 	_, err := response.Write([]byte(data.availableTransformations))
 	if err != nil {
-		println(err.Error())
 		http.Error(response, "error when writing body", http.StatusInternalServerError)
 	}
 }
@@ -111,7 +111,6 @@ func (data ConfigurationData) headActors(response http.ResponseWriter, _ *http.R
 func (data ConfigurationData) getActors(response http.ResponseWriter, _ *http.Request) {
 	header := response.Header()
 	header.Set("Content-Type", "application/json")
-	fmt.Printf("Request get for actors, etag: %v\n", data.etagActors)
 	header.Set("ETag", strconv.Itoa(data.etagActors))
 	// TODO not sure yet how this should be returned
 	actors := "{\"actors\":["
@@ -123,7 +122,6 @@ func (data ConfigurationData) getActors(response http.ResponseWriter, _ *http.Re
 	actors += "]}"
 	_, err := response.Write([]byte(actors))
 	if err != nil {
-		println(err.Error())
 		http.Error(response, "error when writing body", http.StatusInternalServerError)
 	}
 }
@@ -136,17 +134,17 @@ func (data ConfigurationData) createActor(response http.ResponseWriter, request 
 	// 2) get transformation and sources from request body
 	pipelineDescription, err := io.ReadAll(request.Body)
 	if err != nil {
-		println(err.Error())
+		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to read pipeline description")
 		http.Error(response, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 	defer request.Body.Close()
-	fmt.Printf("Transformation: %v\n", string(pipelineDescription))
+	logrus.WithFields(logrus.Fields{"pipeline_description": string(pipelineDescription)}).Debug("Transformation received")
 
 	actor, err := createActor(string(pipelineDescription))
 
 	if err != nil {
-		fmt.Println("Failed to create an actor: " + err.Error())
+		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to create an actor")
 		http.Error(response, "Failed to create the actor", http.StatusInternalServerError)
 		return
 	}
@@ -163,7 +161,7 @@ func (data ConfigurationData) createActor(response http.ResponseWriter, request 
 	response.WriteHeader(http.StatusCreated)
 	_, err = response.Write([]byte(actor.marshalActor()))
 	if err != nil {
-		fmt.Printf("Error writing response: %v\n", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("Error writing create actor response")
 		return
 	}
 }
@@ -196,7 +194,7 @@ func (data ConfigurationData) HandleActorEndpoint(response http.ResponseWriter, 
 
 // headActor HEAD config/actors/{id} returns the ETag header for the actor with the given ID
 func (data ConfigurationData) headActor(response http.ResponseWriter, request *http.Request, actor Actor) {
-	fmt.Printf("Request head for actor: %v\n", actor.Id)
+	logrus.WithFields(logrus.Fields{"actor_id": actor.Id}).Debug("Request head for actor")
 
 	header := response.Header()
 	header.Set("Content-Type", "application/json")
@@ -205,21 +203,20 @@ func (data ConfigurationData) headActor(response http.ResponseWriter, request *h
 }
 
 func (data ConfigurationData) getActor(response http.ResponseWriter, request *http.Request, actor Actor) {
-	fmt.Printf("Request get for actor: %v\n", actor.Id)
+	logrus.WithFields(logrus.Fields{"actor_id": actor.Id}).Info("Request get for actor")
 
 	header := response.Header()
 	header.Set("Content-Type", "application/json")
 	header.Set("ETag", "0") // TODO: actors can't be changed, so they will always return the same value so ETag is always 0 (for now)
 	_, err := response.Write([]byte(actor.marshalActor()))
 	if err != nil {
-		println(err.Error())
 		http.Error(response, "error when writing body", http.StatusInternalServerError)
 	}
 }
 
 // DELETE config deletes an actor with the given ID
 func (data ConfigurationData) deleteActor(response http.ResponseWriter, _ *http.Request, actor Actor) {
-	fmt.Printf("Request to delete transformation: %v\n", actor.Id)
+	logrus.WithFields(logrus.Fields{"actor_id": actor.Id}).Info("Request to delete transformation")
 
 	actor.Stop()
 	delete(data.actors, actor.Id)

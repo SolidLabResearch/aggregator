@@ -10,8 +10,8 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"github.com/sirupsen/logrus"
 	"io"
-	"log"
 	"math/big"
 	"net/http"
 	"os"
@@ -53,13 +53,14 @@ func InitSigning(mux *http.ServeMux) {
 	//    We'll serve this at /.well-known/jwks.json so verifiers can fetch it.
 	pubJwk, err := makeJWKFromRSAPrivateKey(keyID)
 	if err != nil {
-		log.Fatalf("Failed to create JWK: %v", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to create JWK")
+		os.Exit(1)
 	}
 	myJWKS = Jwks{Keys: []Jwk{pubJwk}}
 
 	// 3) Start a small HTTP server that hosts our JWKS.
 	mux.HandleFunc("/.well-known/jwks.json", func(w http.ResponseWriter, r *http.Request) {
-		println("Serving JWKS")
+		logrus.Debug("Serving JWKS")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(myJWKS)
 	})
@@ -75,19 +76,19 @@ func setPrivateKey(keyFilePath string) {
 		// Read the key from the file
 		keyData, err := os.ReadFile(keyFilePath)
 		if err != nil {
-			fmt.Println("Error reading RSA key from file: ", err)
+			logrus.WithFields(logrus.Fields{"err": err}).Error("Error reading RSA key from file")
 			return
 		}
 
 		block, _ := pem.Decode(keyData)
 		if block == nil || block.Type != "RSA PRIVATE KEY" {
-			fmt.Println("Failed to decode PEM block containing RSA private key")
+			logrus.Error("Failed to decode PEM block containing RSA private key")
 			return
 		}
 
 		key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 		if err != nil {
-			fmt.Println("Error parsing RSA private key: ", err)
+			logrus.WithFields(logrus.Fields{"err": err}).Error("Error parsing RSA private key")
 			return
 		}
 
@@ -98,7 +99,7 @@ func setPrivateKey(keyFilePath string) {
 	// If not, generate new key
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		fmt.Println("Error generating RSA key: ", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("Error generating RSA key")
 		return
 	}
 	rsaPrivateKey = key
@@ -112,7 +113,7 @@ func setPrivateKey(keyFilePath string) {
 
 	err = os.WriteFile(keyFilePath, pemData, 0600)
 	if err != nil {
-		fmt.Println("Error writing RSA key to file: ", err)
+		logrus.WithFields(logrus.Fields{"err": err}).Error("Error writing RSA key to file")
 		return
 	}
 	return
