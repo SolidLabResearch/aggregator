@@ -33,6 +33,10 @@ var caCert *x509.Certificate
 var caKey *rsa.PrivateKey
 
 func main() {
+	// Initialize Solid OIDC authentication if configured
+	webId := os.Getenv("WEBID")
+	email := os.Getenv("EMAIL")
+	password := os.Getenv("PASSWORD")
 	var err error
 	logLevel, err := logrus.ParseLevel(os.Getenv("LOG_LEVEL"))
 	if err != nil {
@@ -41,6 +45,21 @@ func main() {
 	}
 	logrus.SetLevel(logLevel)
 	logrus.SetOutput(os.Stdout)
+
+	if webId != "" && email != "" && password != "" {
+		logrus.WithFields(logrus.Fields{"webid": webId}).Info("🔐 Initializing Solid OIDC authentication")
+		solidAuth = NewSolidAuth(webId)
+		if err := solidAuth.Init(email, password); err != nil {
+			logrus.WithFields(logrus.Fields{"err": err}).Error("⚠️ Failed to initialize Solid OIDC auth")
+			logrus.Warn("⚠️ Continuing without Solid OIDC authentication")
+			solidAuth = nil
+		} else {
+			logrus.Info("✅ Solid OIDC authentication initialized successfully")
+		}
+	} else {
+		logrus.Warn("⚠️ WEBID, EMAIL, and/or PASSWORD not set")
+		logrus.Warn("⚠️ Solid OIDC disabled - proxy will not perform authentication")
+	}
 
 	http.HandleFunc("/", Handler)
 	http.HandleFunc("/fetch", FetchHandler)
@@ -79,7 +98,8 @@ func main() {
 	}
 }
 
-// TODO add a cache to the proxy
+// ...existing code...
+
 // Handler for HTTP UMA flow
 func Handler(w http.ResponseWriter, req *http.Request) {
 	logrus.WithFields(logrus.Fields{"method": req.Method, "request_uri": req.RequestURI}).Info("Request received")
@@ -388,4 +408,24 @@ func redirectLocalhostURL(originalURL string) string {
 	}
 
 	return originalURL
+}
+
+// createRequestWithRedirect creates an HTTP request with localhost URL redirection and Host header preservation
+func createRequestWithRedirect(method, urlStr string, body io.Reader) (*http.Request, error) {
+	redirectedURL := redirectLocalhostURL(urlStr)
+
+	req, err := http.NewRequest(method, redirectedURL, body)
+	if err != nil {
+		return nil, err
+	}
+
+	// Preserve original Host header if redirected
+	if redirectedURL != urlStr {
+		originalURL, err := url.Parse(urlStr)
+		if err == nil && originalURL != nil {
+			req.Host = originalURL.Host
+		}
+	}
+
+	return req, nil
 }

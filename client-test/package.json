@@ -11,14 +11,18 @@
     "stream-actor-demo": "tsc && node dist/stream-actor-demo.js"
   },
   "dependencies": {
+    "@inrupt/solid-client-authn-core": "^3.1.0",
     "cross-fetch": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "typescript": "^5.0.0"
   },
-  "keywords": ["aggregator", "client", "test"],
+  "keywords": [
+    "aggregator",
+    "client",
+    "test"
+  ],
   "author": "",
   "license": "ISC"
 }
-

@@ -9,20 +9,19 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-)
 
-var aggregatorOwner = "https://pod.playground.solidlab.be/user1/profile/card#me"
 	"github.com/sirupsen/logrus"
 )
 
 type claim struct {
-	grantType        string `json:"grant_type"`
-	ticket           string `json:"ticket"`
-	claimToken       string `json:"claim_token"`
-	claimTokenFormat string `json:"claim_token_format"`
+	GrantType        string `json:"grant_type"`
+	Ticket           string `json:"ticket"`
+	ClaimToken       string `json:"claim_token"`
+	ClaimTokenFormat string `json:"claim_token_format"`
 }
 
 var client = &http.Client{}
+var solidAuth *SolidAuth // Global auth instance
 
 func Do(req *http.Request) (*http.Response, error) {
 	// Redirect localhost URLs to host machine
@@ -47,12 +46,12 @@ func Do(req *http.Request) (*http.Response, error) {
 		}
 	}
 
-	// Do UMA flow here:
-	// 		request resource
-	// 		If unauthenticated go to Authorization server and with token
-	// 			If unauthenticated return unauthenticated response
-	// 			If authenticated request resource with Bearer token
-	// 		If authenticated return response
+	// If no authentication is configured, just pass through the request
+	if solidAuth == nil {
+		return client.Do(req)
+	}
+
+	// Do UMA flow with authentication
 	unauthenticatedResp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -63,29 +62,70 @@ func Do(req *http.Request) (*http.Response, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		// Discover token endpoint
+		reqConf, err := createRequestWithRedirect("GET", asUri+"/.well-known/uma2-configuration", nil)
+		if err != nil {
+			return nil, err
+		}
+		uma2ConfigResponse, err := client.Do(reqConf)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get UMA2 configuration: %w", err)
+		}
+		defer uma2ConfigResponse.Body.Close()
+
+		if uma2ConfigResponse.StatusCode != http.StatusOK {
+			return unauthenticatedResp, nil
+		}
+
+		var uma2Config struct {
+			TokenEndpoint string `json:"token_endpoint"`
+		}
+		if err := json.NewDecoder(uma2ConfigResponse.Body).Decode(&uma2Config); err != nil {
+			return nil, fmt.Errorf("failed to decode UMA2 config: %w", err)
+		}
+
+		tokenEndpoint := uma2Config.TokenEndpoint
+
+		// Create claim with Solid OIDC
+		claimTokenFormat := "http://openid.net/specs/openid-connect-core-1_0.html#IDToken"
+		claimTokenStr, err := solidAuth.CreateClaimToken(tokenEndpoint)
+		if err != nil {
+			return nil, fmt.Errorf("⚠️ Failed to create Solid OIDC claim: %v", err)
+		}
+
 		jsonBody, err := json.Marshal(claim{
-			grantType:        "urn:ietf:params:oauth:grant-type:uma-ticket",
-			ticket:           ticket,
-			claimToken:       url.QueryEscape(aggregatorOwner),
-			claimTokenFormat: "urn:solidlab:uma:claims:formats:webid",
+			GrantType:        "urn:ietf:params:oauth:grant-type:uma-ticket",
+			Ticket:           ticket,
+			ClaimToken:       claimTokenStr,
+			ClaimTokenFormat: claimTokenFormat,
 		})
 		if err != nil {
 			return nil, err
 		}
-		authReps, err := client.Post(asUri+"/token", "application/json", bytes.NewReader(jsonBody))
+
+		tokenReq, err := createRequestWithRedirect("POST", tokenEndpoint, bytes.NewReader(jsonBody))
 		if err != nil {
 			return nil, err
 		}
-		defer authReps.Body.Close()
-		if authReps.StatusCode != http.StatusOK {
+		tokenReq.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(tokenReq)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		logrus.WithFields(logrus.Fields{"status_code": resp.StatusCode}).Debug("Received response from token endpoint")
+		if resp.StatusCode != http.StatusOK {
+			logrus.WithFields(logrus.Fields{"url": req.URL.String()}).Warn("Unauthorized to access resource")
 			return &http.Response{
 				StatusCode: http.StatusUnauthorized,
 				Status:     http.StatusText(http.StatusUnauthorized),
 				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("")),
 			}, nil
 		}
 		var asResponse map[string]string
-		err = json.NewDecoder(authReps.Body).Decode(&asResponse)
+		err = json.NewDecoder(resp.Body).Decode(&asResponse)
 		if err != nil {
 			return nil, err
 		}
@@ -99,12 +139,8 @@ func Do(req *http.Request) (*http.Response, error) {
 			return nil, fmt.Errorf("token_type not found in response")
 		}
 
-		decodedToken, err := parseJwt(accessToken)
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Authorization", fmt.Sprintf("%s %s", tokenType, decodedToken))
+		// Use the raw access token, not the decoded version
+		req.Header.Set("Authorization", fmt.Sprintf("%s %s", tokenType, accessToken))
 		return client.Do(req)
 	}
 	// If the response is not unauthorized, return it as is

@@ -1,14 +1,19 @@
-import { createUserManagedAccessFetch } from './util.js';
+import {SolidOIDCAuth} from './util.js';
 
 async function main() {
     const pipelineEndpoint = 'http://localhost:5000/config/actors';
 
-    console.log(`=== Requesting actors at ${pipelineEndpoint}`);
+    console.log(`=== Initializing Solid OIDC authentication`);
+    const auth = new SolidOIDCAuth(
+      'http://localhost:3000/alice/profile/card#me',
+      'http://localhost:3000'
+    );
+    await auth.init('alice@example.org', 'abc123');
+    console.log(`=== Solid OIDC authentication initialized successfully\n`);
 
-    const umaFetch = createUserManagedAccessFetch({
-        token: "http://localhost:3000/alice/profile/card#me",
-        token_format: 'urn:solidlab:uma:claims:formats:webid',
-    })
+    const umaFetch = auth.createUMAFetch();
+
+    console.log(`=== Requesting actors at ${pipelineEndpoint}`);
 
     const response = await umaFetch(pipelineEndpoint, {
         method: "GET"

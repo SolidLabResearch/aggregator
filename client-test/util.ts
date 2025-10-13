@@ -1,95 +1,165 @@
 import {fetch} from 'cross-fetch';
+import {createDpopHeader, generateDpopKeyPair, KeyPair} from "@inrupt/solid-client-authn-core";
 
 /**
- * Decodes a JSON Web Token (JWT) by parsing its payload.
- *
- * @param {string} token - The JSON Web Token to be parsed.
- * @returns {Object} The decoded payload of the JWT as a JavaScript object.
- *
+ * Solid OIDC authenticated fetcher with DPoP support
  */
-export function parseJwt(token: string): any {
-    return JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-}
+export class SolidOIDCAuth {
+    private dpopKey: KeyPair | undefined;
+    private authString: string | undefined;
+    private accessToken: string | undefined;
+    private expiresAt: number | undefined;
 
-/**
- * Parses the 'WWW-Authenticate' header from the given headers to extract UMA session details.
- *
- * @param {Headers} headers - The HTTP headers from which the 'WWW-Authenticate' header is to be extracted.
- * @returns {UMA_Session} The parsed UMA session details.
- * @throws Will throw an error if the 'WWW-Authenticate' header is not present.
- */
-export function parseAuthenticateHeader(headers: Headers): { tokenEndpoint: string; ticket: string } {
-    const wwwAuthenticateHeader = headers.get("WWW-Authenticate")
-    if (!wwwAuthenticateHeader) throw Error("No WWW-Authenticate Header present");
+    constructor(private webId: string, private cssBaseURL: string) {}
 
-    const { as_uri, ticket } = Object.fromEntries(wwwAuthenticateHeader.replace(/^UMA /, '').split(', ').map(
-        param => param.split('=').map(s => s.replace(/"/g, ''))
-    ));
+    async init(email: string, password: string) {
+        // Generate DPoP key pair
+        this.dpopKey = await generateDpopKeyPair();
 
-    const tokenEndpoint = as_uri + "/token" // NOTE: should normally be retrieved from .well-known/uma2-configuration
+        // Step 1: Get controls from account endpoint
+        let indexResponse = await fetch(`${this.cssBaseURL}/.account/`);
+        let controls = (await indexResponse.json()).controls;
 
-    return {
-        tokenEndpoint,
-        ticket
-    }
-}
-
-/**
- * Authenticated fetcher following the User Managed Access 2.0 Grant for Oauth 2.0 Authorization flow
- * using one claim.
- * (https://docs.kantarainitiative.org/uma/wg/rec-oauth-uma-grant-2.0.html)
- */
-const grant_type = 'urn:ietf:params:oauth:grant-type:uma-ticket';
-export function createUserManagedAccessFetch(claim: { token: string; token_format: string }) {
-    return async (url: string, init: RequestInit = {}): Promise<Response> => {
-        // https://docs.kantarainitiative.org/uma/wg/rec-oauth-uma-grant-2.0.html#rfc.section.3.1
-        // 3.1 Client Requests Resource Without Providing an Access Token
-        const noTokenResponse = await fetch(url, init);
-        if (noTokenResponse.status > 199 && noTokenResponse.status < 300) {
-            console.log('No Authorization token was required.')
-            return noTokenResponse;
+        // Step 2: Login with password
+        let response = await fetch(controls.password.login, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ email, password }),
+        });
+        if (!response.ok) {
+            throw new Error('Login failed: ' + await response.text());
         }
-        // https://docs.kantarainitiative.org/uma/wg/rec-oauth-uma-grant-2.0.html#rfc.section.3.2
-        // 3.2 Resource Server Responds to Client's Tokenless Access Attempt
+        const { authorization } = await response.json();
 
-        const {tokenEndpoint, ticket} = parseAuthenticateHeader(noTokenResponse.headers)
-
-        const content = {
-            grant_type: grant_type,
-            ticket,
-            claim_token: encodeURIComponent(claim.token),
-            claim_token_format: claim.token_format,
+        // Step 3: Get controls with authorization
+        indexResponse = await fetch(`${this.cssBaseURL}/.account/`, {
+            headers: { authorization: `CSS-Account-Token ${authorization}` }
+        });
+        if (!indexResponse.ok) {
+            throw new Error('Failed to get authenticated controls: ' + await indexResponse.text());
         }
+        controls = (await indexResponse.json()).controls;
 
-        // https://docs.kantarainitiative.org/uma/wg/rec-oauth-uma-grant-2.0.html#rfc.section.3.3.1
-        // 3.3.1 Client Request to Authorization Server for RPT
-        const asRequestResponse = await fetch(tokenEndpoint, {
-            method: "POST",
+        // Step 4: Create client credentials
+        response = await fetch(controls.account.clientCredentials, {
+            method: 'POST',
             headers: {
-                "content-type": "application/json"
+                authorization: `CSS-Account-Token ${authorization}`,
+                'content-type': 'application/json'
             },
-            body: JSON.stringify(content),
+            body: JSON.stringify({ name: 'client-test-token', webId: this.webId }),
         });
 
-        if (asRequestResponse.status !== 200) {
-            // https://docs.kantarainitiative.org/uma/wg/rec-oauth-uma-grant-2.0.html#rfc.section.3.3.6
-            // 3.3.6 Authorization Server Response to Client on Authorization  Failure
-            // TODO: log properly
-            return asRequestResponse
+        const { id, secret } = await response.json();
+        this.authString = `${encodeURIComponent(id)}:${encodeURIComponent(secret)}`;
+
+        // Get initial access token
+        await this.refreshAccessToken();
+    }
+
+    private async refreshAccessToken() {
+        if (!this.authString || !this.dpopKey) {
+            throw new Error('Not initialized');
         }
 
-        // https://docs.kantarainitiative.org/uma/wg/rec-oauth-uma-grant-2.0.html#rfc.section.3.3.5
-        // 3.3.5 Authorization Server Response to Client on Authorization Success
-        const asResponse = await asRequestResponse.json();
+        const tokenURL = `${this.cssBaseURL}/.oidc/token`;
 
-        // RPT added to header
-        const headers = new Headers(init.headers);
-        headers.set('Authorization', `${asResponse.token_type} ${asResponse.access_token}`);
+        const response = await fetch(tokenURL, {
+            method: 'POST',
+            headers: {
+                authorization: `Basic ${Buffer.from(this.authString).toString('base64')}`,
+                'content-type': 'application/x-www-form-urlencoded',
+                dpop: await createDpopHeader(tokenURL, 'POST', this.dpopKey),
+            },
+            body: 'grant_type=client_credentials&scope=webid',
+        });
 
-        // https://docs.kantarainitiative.org/uma/wg/rec-oauth-uma-grant-2.0.html#rfc.section.3.4
-        // 3.4 Client Requests Resource and Provides an RPT
-        // https://docs.kantarainitiative.org/uma/wg/rec-oauth-uma-grant-2.0.html#rfc.section.3.3.5
-        // 3.5 Resource Server Responds to Client's RPT-Accompanied Resource Request
-        return fetch(url, {...init, headers});
+        const accessTokenJson = await response.json();
+        this.accessToken = accessTokenJson.access_token;
+        this.expiresAt = Date.now() + (accessTokenJson.expires_in * 1000);
+    }
+
+    private async ensureValidToken() {
+        if (!this.accessToken || !this.expiresAt || Date.now() >= this.expiresAt - 500) {
+            await this.refreshAccessToken();
+        }
+    }
+
+    private async createClaimToken(tokenEndpoint: string): Promise<string> {
+        await this.ensureValidToken();
+
+        if (!this.accessToken || !this.dpopKey) {
+            throw new Error('Not initialized');
+        }
+
+        return JSON.stringify({
+            'Authorization': 'DPoP ' + this.accessToken,
+            'DPoP': await createDpopHeader(tokenEndpoint, 'POST', this.dpopKey)
+        });
+    }
+
+    private parseAuthenticateHeader(headers: Headers): { tokenEndpoint: string; ticket: string } {
+        const wwwAuthenticateHeader = headers.get("WWW-Authenticate")
+        if (!wwwAuthenticateHeader) throw Error("No WWW-Authenticate Header present");
+
+        const { as_uri, ticket } = Object.fromEntries(wwwAuthenticateHeader.replace(/^UMA /, '').split(', ').map(
+          param => param.split('=').map(s => s.replace(/"/g, ''))
+        ));
+
+        const tokenEndpoint = as_uri + "/token" // NOTE: should normally be retrieved from .well-known/uma2-configuration
+
+        return {
+            tokenEndpoint,
+            ticket
+        }
+    }
+
+    /**
+     * Create a UMA fetch function that uses Solid OIDC authentication
+     */
+    createUMAFetch() {
+        return async (url: string, init: RequestInit = {}): Promise<Response> => {
+            // Try request without token first
+            const noTokenResponse = await fetch(url, init);
+            if (noTokenResponse.status > 199 && noTokenResponse.status < 300) {
+                console.log('No Authorization token was required.')
+                return noTokenResponse;
+            }
+
+            // Get UMA ticket
+            const {tokenEndpoint, ticket} = this.parseAuthenticateHeader(noTokenResponse.headers);
+
+            // Create claim with Solid OIDC
+            const claimToken = await this.createClaimToken(tokenEndpoint);
+
+            const content = {
+                grant_type: 'urn:ietf:params:oauth:grant-type:uma-ticket',
+                ticket,
+                claim_token: claimToken,
+                claim_token_format: 'http://openid.net/specs/openid-connect-core-1_0.html#IDToken',
+            };
+
+            // Request RPT from authorization server
+            const asRequestResponse = await fetch(tokenEndpoint, {
+                method: "POST",
+                headers: {
+                    "content-type": "application/json"
+                },
+                body: JSON.stringify(content),
+            });
+
+            if (asRequestResponse.status !== 200) {
+                return asRequestResponse;
+            }
+
+            const asResponse = await asRequestResponse.json();
+
+            // Add RPT to request headers
+            const headers = new Headers(init.headers);
+            headers.set('Authorization', `${asResponse.token_type} ${asResponse.access_token}`);
+
+            // Retry request with RPT
+            return fetch(url, {...init, headers});
+        }
     }
 }

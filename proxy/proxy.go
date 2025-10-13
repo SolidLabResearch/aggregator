@@ -11,7 +11,11 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
+// ProxyConfig holds the configuration for Solid OIDC authentication
 type ProxyConfig struct {
+	WebId    string
+	Email    string
+	Password string
 	LogLevel string
 }
 
@@ -41,6 +45,18 @@ func createPod(clientset *kubernetes.Clientset, config ProxyConfig) error {
 		{
 			Name:  "KEY_PATH",
 			Value: "/key-pair/uma-proxy.key",
+		},
+		{
+			Name:  "WEBID",
+			Value: config.WebId,
+		},
+		{
+			Name:  "EMAIL",
+			Value: config.Email,
+		},
+		{
+			Name:  "PASSWORD",
+			Value: config.Password,
 		},
 		{
 			Name:  "LOG_LEVEL",

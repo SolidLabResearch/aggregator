@@ -27,6 +27,9 @@ var Clientset *kubernetes.Clientset
 
 func main() {
 	// Define CLI flags for Solid OIDC configuration
+	webId := flag.String("webid", "", "WebID for Solid OIDC authentication")
+	email := flag.String("email", "", "Email for CSS account login")
+	password := flag.String("password", "", "Password for CSS account login")
 	logLevelValue := *flag.String("log-level", "info", "Logging verbosity (debug, info, warn, error)")
 	flag.Parse()
 
@@ -47,8 +50,27 @@ func main() {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to create Kubernetes client")
 		os.Exit(1)
 	}
+
+	// Validate and warn about Solid OIDC configuration
+	if *webId == "" || *email == "" || *password == "" {
+		logrus.Warn("⚠️  WARNING: Solid OIDC configuration incomplete")
+		if *webId == "" {
+			logrus.Warn("⚠️  Missing --webid argument")
+		}
+		if *email == "" {
+			logrus.Warn("⚠️  Missing --email argument")
+		}
+		if *password == "" {
+			logrus.Warn("⚠️  Missing --password argument")
+		}
+		logrus.Warn("⚠️  UMA proxy will run WITHOUT authentication - requests will be passed through as-is")
 	}
+
+	// Setup proxy with Solid OIDC configuration
 	proxyConfig := proxy.ProxyConfig{
+		WebId:    *webId,
+		Email:    *email,
+		Password: *password,
 		LogLevel: logLevelValue,
 	}
 	proxy.SetupProxy(Clientset, proxyConfig)

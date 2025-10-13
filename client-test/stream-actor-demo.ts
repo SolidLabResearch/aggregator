@@ -1,4 +1,4 @@
-import { createUserManagedAccessFetch } from './util.js';
+import { SolidOIDCAuth } from "./util.js";
 
 // Pipeline description for querying Alice's name
 const PipelineDescription = `
@@ -398,10 +398,15 @@ async function main() {
     console.log('🎬 Starting Interactive Server-Sent Events Demo');
     console.log('=============================================\n');
 
-    const umaFetch = createUserManagedAccessFetch({
-        token: "http://localhost:3000/alice/profile/card#me",
-        token_format: 'urn:solidlab:uma:claims:formats:webid',
-    });
+    console.log(`=== Initializing Solid OIDC authentication`);
+    const auth = new SolidOIDCAuth(
+      'http://localhost:3000/alice/profile/card#me',
+      'http://localhost:3000'
+    );
+    await auth.init('alice@example.org', 'abc123');
+    console.log(`=== Solid OIDC authentication initialized successfully\n`);
+
+    const umaFetch = auth.createUMAFetch();
 
     try {
         // Step 1: Create the actor
