@@ -255,26 +255,40 @@ config:Sources
 */
 
 const hardcodedAvailableTransformations = `
-@prefix config: <http://localhost:5000/config#> .
+@base <http://localhost:5000/config/transformations#> .
 @prefix fno: <https://w3id.org/function/ontology#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 
 # SPARQL execution
-config:SPARQLEvaluation
+<SPARQLEvaluation>
 	a                   fno:Function ;
 	fno:name            "A SPARQL query engine"^^xsd:string ;
-	fno:expects         ( config:QueryString config:Sources ) ;
+	fno:expects         ( <QueryString> <Sources> ) ;
 
-config:QueryString
+<QueryString>
 	a             fno:Parameter ;
-	fno:predicate config:queryString ;
+	fno:predicate <queryString> ;
 	fno:type      xsd:string ;
 	fno:required  "true"^^xsd:boolean .
 
-config:Sources
+<Sources>
 	a             fno:Parameter ;
-	fno:predicate config:sources ;
+	fno:predicate <sources> ;
 	fno:type      rdf:List .
 	fno:required  "true"^^xsd:boolean .
+
+<SPARQLQueryResultSource>
+    a owl:Class ;
+    rdfs:label "SPARQL Query Result Source"@en .
+
+<sparqlQueryResult>
+	a rdf:Property ;
+    rdfs:domain <SPARQLQueryResultSource> ;
+    rdfs:range xsd:anyURI .
+
+<extractVariables>
+	a rdf:Property ;
+    rdfs:domain <SPARQLQueryResultSource> ;
+    rdfs:range rdf:List 
 `
