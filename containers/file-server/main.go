@@ -16,6 +16,7 @@ func main() {
 		logLevel = logrus.InfoLevel
 	}
 	logrus.SetLevel(logLevel)
+	logrus.SetOutput(os.Stdout)
 
 	pipelineDescription := os.Getenv("PIPELINE_DESCRIPTION")
 	if pipelineDescription == "" {

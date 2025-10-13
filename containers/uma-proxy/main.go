@@ -40,6 +40,8 @@ func main() {
 		err = nil
 	}
 	logrus.SetLevel(logLevel)
+	logrus.SetOutput(os.Stdout)
+
 	http.HandleFunc("/", Handler)
 	http.HandleFunc("/fetch", FetchHandler)
 	go func() {
