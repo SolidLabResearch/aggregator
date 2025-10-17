@@ -2,6 +2,8 @@ package main
 
 import (
 	"aggregator/auth"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"github.com/sirupsen/logrus"
 	"io"
@@ -192,23 +194,30 @@ func (data ConfigurationData) HandleActorEndpoint(response http.ResponseWriter, 
 	}
 }
 
+// generateActorETag generates a consistent ETag based on the marshaled actor data
+func generateActorETag(marshaledData string) string {
+	hash := sha256.Sum256([]byte(marshaledData))
+	return hex.EncodeToString(hash[:8]) // Use first 8 bytes for a shorter ETag
+}
+
 // headActor HEAD config/actors/{id} returns the ETag header for the actor with the given ID
 func (data ConfigurationData) headActor(response http.ResponseWriter, request *http.Request, actor Actor) {
 	logrus.WithFields(logrus.Fields{"actor_id": actor.Id}).Debug("Request head for actor")
 
 	header := response.Header()
 	header.Set("Content-Type", "application/json")
-	header.Set("ETag", "0") // TODO: actors can't be changed, so they will always return the same value so ETag is always 0 (for now)
+	header.Set("ETag", generateActorETag(actor.marshalActor()))
 	response.WriteHeader(http.StatusOK)
 }
 
 func (data ConfigurationData) getActor(response http.ResponseWriter, request *http.Request, actor Actor) {
 	logrus.WithFields(logrus.Fields{"actor_id": actor.Id}).Info("Request get for actor")
 
+	marshaledData := actor.marshalActor()
 	header := response.Header()
 	header.Set("Content-Type", "application/json")
-	header.Set("ETag", "0") // TODO: actors can't be changed, so they will always return the same value so ETag is always 0 (for now)
-	_, err := response.Write([]byte(actor.marshalActor()))
+	header.Set("ETag", generateActorETag(marshaledData))
+	_, err := response.Write([]byte(marshaledData))
 	if err != nil {
 		http.Error(response, "error when writing body", http.StatusInternalServerError)
 	}
