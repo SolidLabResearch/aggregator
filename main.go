@@ -4,6 +4,7 @@ import (
 	"aggregator/auth"
 	"aggregator/proxy"
 	"flag"
+	"fmt"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,7 +22,7 @@ import (
 var Protocol = "http"
 var Host = "localhost"
 var ServerPort = "5000"
-var logLevelValue = "info"
+var LogLevel = logrus.InfoLevel
 
 var Clientset *kubernetes.Clientset
 
@@ -30,14 +31,16 @@ func main() {
 	webId := flag.String("webid", "", "WebID for Solid OIDC authentication")
 	email := flag.String("email", "", "Email for CSS account login")
 	password := flag.String("password", "", "Password for CSS account login")
-	logLevelValue := *flag.String("log-level", "info", "Logging verbosity (debug, info, warn, error)")
+	logLevelPtr := flag.String("log-level", "info", "Logging verbosity (debug, info, warn, error)")
 	flag.Parse()
 
-	logLevel, err := logrus.ParseLevel(strings.ToLower(logLevelValue))
+	logLevelValue := strings.ToLower(*logLevelPtr)
+	parsedLevel, err := logrus.ParseLevel(logLevelValue)
 	if err != nil {
-		logLevel = logrus.InfoLevel
+		parsedLevel = logrus.InfoLevel
 	}
-	logrus.SetLevel(logLevel)
+	LogLevel = parsedLevel
+	logrus.SetLevel(LogLevel)
 	logrus.SetOutput(os.Stdout)
 
 	config, err := clientcmd.BuildConfigFromFlags("", filepath.Join(homedir.HomeDir(), ".kube", "config"))
@@ -76,6 +79,7 @@ func main() {
 	proxy.SetupProxy(Clientset, proxyConfig)
 
 	serverMux := http.NewServeMux()
+
 	go func() {
 		logrus.WithFields(logrus.Fields{"port": ServerPort}).Info("Server listening")
 		if err := http.ListenAndServe(":"+ServerPort, serverMux); err != nil {
@@ -87,9 +91,10 @@ func main() {
 	InitializeKubernetes(serverMux)
 	startConfigurationEndpoint(serverMux)
 	SetupResourceRegistration()
+	InitAuthProxy(serverMux, fmt.Sprintf("%s://%s:%s", Protocol, Host, ServerPort))
 
 	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
 
 	<-stop // wait for signal
 	logrus.Info("Shutting down gracefully...")

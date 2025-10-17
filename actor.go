@@ -49,7 +49,7 @@ func createActor(pipelineDescription string) (Actor, error) {
 						{Name: "HTTP_PROXY", Value: "http://uma-proxy-service.default.svc.cluster.local:8080"},
 						{Name: "HTTPS_PROXY", Value: "http://uma-proxy-service.default.svc.cluster.local:8443"},
 						{Name: "SSL_CERT_FILE", Value: "/key-pair/uma-proxy.crt"},
-						{Name: "LOG_LEVEL", Value: logLevelValue},
+						{Name: "LOG_LEVEL", Value: LogLevel.String()},
 					},
 					Ports: []v1.ContainerPort{
 						{ContainerPort: 8080},

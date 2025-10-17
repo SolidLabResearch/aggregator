@@ -98,8 +98,6 @@ func main() {
 	}
 }
 
-// ...existing code...
-
 // Handler for HTTP UMA flow
 func Handler(w http.ResponseWriter, req *http.Request) {
 	logrus.WithFields(logrus.Fields{"method": req.Method, "request_uri": req.RequestURI}).Info("Request received")
