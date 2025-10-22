@@ -7,6 +7,7 @@ minikube-init: minikube-start containers-build containers-load minikube-generate
 # deploy minikube dashboard
 minikube-dashboard-start:
 	@echo "🚀 Starting kubectl proxy for Minikube dashboard..."
+	@minikube addons enable metrics-server
 	@minikube dashboard
 
 # Set up key pair for uma-proxy
