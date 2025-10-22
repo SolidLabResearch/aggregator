@@ -58,12 +58,13 @@ func Do(req *http.Request) (*http.Response, error) {
 	}
 	if unauthenticatedResp.StatusCode == http.StatusUnauthorized {
 		defer unauthenticatedResp.Body.Close()
+		logrus.WithFields(logrus.Fields{"WWW-Authenticate": unauthenticatedResp.Header.Get("WWW-Authenticate")}).Info("checking header")
 		asUri, ticket, err := getTicketInfo(unauthenticatedResp.Header.Get("WWW-Authenticate"))
 		if err != nil {
 			return nil, err
 		}
 
-		// Discover token endpoint
+		logrus.WithFields(logrus.Fields{"asUri": asUri}).Info("Received UMA ticket")
 		reqConf, err := createRequestWithRedirect("GET", asUri+"/.well-known/uma2-configuration", nil)
 		if err != nil {
 			return nil, err
@@ -149,26 +150,37 @@ func Do(req *http.Request) (*http.Response, error) {
 }
 
 func getTicketInfo(headerString string) (string, string, error) {
-	header := strings.TrimPrefix(headerString, "Bearer ")
-	params := strings.Split(header, ", ")
+	header := strings.TrimPrefix(headerString, "UMA ")
+	header = strings.TrimSpace(header)
+
 	var asUri string
 	var ticket string
-	for _, param := range params {
-		keyValue := strings.Split(param, "=")
-		if len(keyValue) != 2 {
-			return "", "", fmt.Errorf("invalid parameter: %s", param)
-		}
-		key := strings.ReplaceAll(keyValue[0], "\"", "")
-		value := strings.ReplaceAll(keyValue[1], "\"", "")
-		switch key {
-		case "as_uri":
-			asUri = value
-		case "ticket":
-			ticket = value
-		default:
-			logrus.WithFields(logrus.Fields{"key": key, "value": value}).Debug("Unknown UMA parameter")
+	parts := strings.Split(header, ", ")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if strings.Contains(part, "=") {
+			kv := strings.SplitN(part, "=", 2)
+			key := strings.TrimSpace(kv[0])
+			value := strings.Trim(strings.TrimSpace(kv[1]), `"`)
+
+			switch key {
+			case "as_uri":
+				asUri = value
+			case "ticket":
+				ticket = value
+			default:
+				logrus.WithFields(logrus.Fields{"key": key, "value": value}).Debug("Unknown UMA parameter")
+			}
 		}
 	}
+
+	if asUri == "" {
+		return "", "", fmt.Errorf("as_uri not found in WWW-Authenticate header")
+	}
+	if ticket == "" {
+		return "", "", fmt.Errorf("ticket not found in WWW-Authenticate header")
+	}
+
 	return asUri, ticket, nil
 }
 

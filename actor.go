@@ -1,12 +1,10 @@
 package main
 
 import (
-	"aggregator/auth"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
-	"io"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -92,8 +90,8 @@ func createActor(pipelineDescription string) (Actor, error) {
 			},
 			Ports: []v1.ServicePort{
 				{
-					Port:       80,                   // The port your client will use
-					TargetPort: intstr.FromInt(8080), // The port inside the pod
+					Port:       80,                     // The port your client will use
+					TargetPort: intstr.FromInt32(8080), // The port inside the pod
 				},
 			},
 		},
@@ -152,95 +150,9 @@ func createActor(pipelineDescription string) (Actor, error) {
 
 	logrus.WithFields(logrus.Fields{"url": fmt.Sprintf("http://%s:%d", nodeIp, nodePort)}).Info("Pod is running")
 
-	var handleAllRequests = func(w http.ResponseWriter, r *http.Request) {
-		logrus.WithFields(logrus.Fields{"actor_id": id, "path": r.URL.Path, "method": r.Method}).Info("Received request for actor")
-		if !auth.AuthorizeRequest(w, r, nil) {
-			return
-		}
+	serverMux.HandleFunc("/"+id+"/", AuthProxyInstance.HandleAllRequests)
 
-		// Extract the subpath after the actor ID
-		actorPrefix := "/" + id + "/"
-		subPath := strings.TrimPrefix(r.URL.Path, actorPrefix)
-
-		// Construct the target URL with the subpath and query parameters
-		targetURL := fmt.Sprintf("http://%s:%d/%s", nodeIp, nodePort, subPath)
-		if r.URL.RawQuery != "" {
-			targetURL += "?" + r.URL.RawQuery
-		}
-
-		// Create a new request with the same method, headers, and body
-		req, err := http.NewRequest(r.Method, targetURL, r.Body)
-		if err != nil {
-			logrus.WithFields(logrus.Fields{"err": err}).Error("Error creating request")
-			http.Error(w, "Failed to create request", http.StatusInternalServerError)
-			return
-		}
-
-		// Copy headers from original request
-		for name, values := range r.Header {
-			for _, value := range values {
-				req.Header.Add(name, value)
-			}
-		}
-
-		// Make the request to the pod
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			logrus.WithFields(logrus.Fields{"err": err, "target_url": req.URL.String()}).Error("Error reaching pod service")
-			http.Error(w, "Failed to reach pod service", http.StatusInternalServerError)
-			return
-		}
-		defer resp.Body.Close()
-
-		// Copy response headers
-		for name, values := range resp.Header {
-			for _, value := range values {
-				w.Header().Add(name, value)
-			}
-		}
-
-		// Set status code
-		w.WriteHeader(resp.StatusCode)
-
-		// Check if this is a streaming response (like SSE)
-		contentType := resp.Header.Get("Content-Type")
-		isSSE := strings.Contains(contentType, "text/event-stream")
-
-		logrus.WithFields(logrus.Fields{"content_type": contentType, "is_sse": isSSE}).Debug("Content-Type response")
-		if isSSE {
-			// Handle Server-Sent Events streaming
-			flusher, ok := w.(http.Flusher)
-			if !ok {
-				http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-				return
-			}
-
-			// Stream the response in chunks
-			buffer := make([]byte, 1024)
-			for {
-				n, err := resp.Body.Read(buffer)
-				if n > 0 {
-					w.Write(buffer[:n])
-					flusher.Flush() // Immediately send data to client
-				}
-				if err != nil {
-					if err != io.EOF {
-						logrus.WithFields(logrus.Fields{"err": err}).Error("Error reading SSE stream")
-					}
-					break
-				}
-			}
-		} else {
-			// Handle regular responses
-			io.Copy(w, resp.Body)
-		}
-	}
-
-	serverMux.HandleFunc("/"+id+"/", handleAllRequests)
-
-	// Also handle exact match without trailing slash for backwards compatibility
-	serverMux.HandleFunc("/"+id, handleAllRequests)
+	serverMux.HandleFunc("/"+id, AuthProxyInstance.HandleAllRequests)
 
 	actor := Actor{
 		Id:                  id,
@@ -265,7 +177,6 @@ func (actor Actor) Stop() {
 	}
 }
 
-// TODO: should return the status of the actor (running, stopped, errors, ect.)
 func (actor Actor) marshalActor() string {
 	pipelineForJson := strings.ReplaceAll(actor.PipelineDescription, `"`, `\"`)
 	pipelineForJson = strings.ReplaceAll(pipelineForJson, "\n", `\n`)

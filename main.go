@@ -96,9 +96,9 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
 
-	<-stop // wait for signal
+	<-stop
 	logrus.Info("Shutting down gracefully...")
-	// remove all pods (including proxy?)
+
 	pods, err := Clientset.CoreV1().Pods("default").List(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to list pods during shutdown")
@@ -121,7 +121,6 @@ func main() {
 	}
 
 	for _, svc := range services.Items {
-		// Skip the critical Kubernetes API service
 		if svc.Name == "kubernetes" {
 			continue
 		}
@@ -135,6 +134,5 @@ func main() {
 
 	logrus.Info("Cleanup complete. Exiting.")
 
-	// let AS know that all resources need to be deleted
 	auth.DeleteAllResources()
 }

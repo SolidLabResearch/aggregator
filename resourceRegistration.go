@@ -9,10 +9,8 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"net"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -20,12 +18,12 @@ const resourceSubscriptionPort = "4449"
 
 // ResourceRegistration represents the data sent by pods to register their endpoints
 type ResourceRegistration struct {
-	PodName     string   `json:"pod_name"`
-	PodIP       string   `json:"pod_ip"`
-	Port        int      `json:"port"`
-	Endpoint    string   `json:"endpoint"`
-	Scopes      []string `json:"scopes"`
-	Description string   `json:"description"`
+	PodName     string               `json:"pod_name"`
+	PodIP       string               `json:"pod_ip"`
+	Port        int                  `json:"port"`
+	Endpoint    string               `json:"endpoint"`
+	Scopes      []auth.ResourceScope `json:"scopes"`
+	Description string               `json:"description"`
 }
 
 var registeredResources = make(map[string]*ResourceRegistration)
@@ -109,6 +107,16 @@ func handleResourceRegistration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	externalUrl := fmt.Sprintf("%s://%s:%s/%s%s", Protocol, Host, ServerPort, actorID, registration.Endpoint)
+
+	for _, scope := range registration.Scopes {
+		if scope == auth.ScopeContinuousRead ||
+			scope == auth.ScopeContinuousWrite ||
+			scope == auth.ScopeContinuousDuplex {
+			auth.AddStreamingResource(externalUrl, scope)
+		}
+	}
+
 	// Store the registration
 	resourceKey := fmt.Sprintf("%s%s", actorID, registration.Endpoint)
 
@@ -147,7 +155,7 @@ func handleResourceRegistration(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"status":       "success",
 		"message":      fmt.Sprintf("Resource %s successfully", action),
-		"external_url": fmt.Sprintf("%s://%s:%s/%s%s", Protocol, Host, ServerPort, actorID, registration.Endpoint),
+		"external_url": externalUrl,
 		"actor_id":     actorID,
 	}
 
@@ -291,57 +299,14 @@ func setupServiceForResource(actorID string, registration *ResourceRegistration)
 func registerResourceWithUMA(actorID string, registration *ResourceRegistration) error {
 	logrus.WithFields(logrus.Fields{"actor_id": actorID}).Info("🔑 Registering resource with UMA")
 
-	// Convert string scopes to auth.ResourceScope types
-	resourceScopes := make([]auth.ResourceScope, 0, len(registration.Scopes))
-	for _, scope := range registration.Scopes {
-		switch strings.ToLower(scope) {
-		case "read":
-			resourceScopes = append(resourceScopes, auth.ScopeRead)
-		case "write":
-			resourceScopes = append(resourceScopes, auth.ScopeWrite)
-		case "append":
-			resourceScopes = append(resourceScopes, auth.ScopeAppend)
-		case "create":
-			resourceScopes = append(resourceScopes, auth.ScopeCreate)
-		case "delete":
-			resourceScopes = append(resourceScopes, auth.ScopeDelete)
-		default:
-			logrus.WithFields(logrus.Fields{"scope": scope, "actor_id": actorID}).Warn("⚠️ Unknown scope for resource scope entry skipped")
-		}
-	}
-
-	if len(resourceScopes) == 0 {
-		return fmt.Errorf("no valid UMA scopes found for resource %s", actorID)
-	}
-
 	// Create the resource ID - this should match the external URL pattern
 	resourceID := fmt.Sprintf("%s://%s:%s/%s%s", Protocol, Host, ServerPort, actorID, registration.Endpoint)
 
 	// Register the resource with UMA
-	if err := auth.CreateResource(resourceID, resourceScopes); err != nil {
+	if err := auth.CreateResource(resourceID, registration.Scopes); err != nil {
 		return fmt.Errorf("failed to create UMA resource: %v", err)
 	}
 
-	logrus.WithFields(logrus.Fields{"actor_id": actorID, "scopes": resourceScopes}).Info("✅ Successfully registered resource with UMA")
+	logrus.WithFields(logrus.Fields{"actor_id": actorID, "scopes": registration.Scopes}).Info("✅ Successfully registered resource with UMA")
 	return nil
-}
-
-// getHostIPForCluster gets the host IP address that's accessible from inside the cluster
-func getHostIPForCluster() (string, error) {
-	// For minikube, pods can reach the host via the gateway IP
-	// For minikube, we need to get the host IP that's accessible from pods
-	// This is typically the minikube VM's host-only adapter IP
-
-	// Try to get the IP by connecting to a known external service
-	// This will give us the local IP that would be used for outbound connections
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err != nil {
-		return "", fmt.Errorf("failed to get local IP: %v", err)
-	}
-	defer conn.Close()
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	hostIP := localAddr.IP.String()
-
-	logrus.WithFields(logrus.Fields{"host_ip": hostIP}).Info("🔍 Detected host IP accessible from cluster")
-	return hostIP, nil
 }

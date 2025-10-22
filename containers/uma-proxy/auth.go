@@ -39,19 +39,19 @@ func NewSolidAuth(webId string) *SolidAuth {
 
 // Init initializes the client credentials
 func (sa *SolidAuth) Init(email, password string) error {
-	// Redirect localhost WebID URLs to host machine for Kubernetes
 	req, err := createRequestWithRedirect("GET", sa.webId, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create WebID request: %w", err)
 	}
 
+	req.Header.Set("Accept", "application/n-triples")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to fetch WebID profile: %w", err)
 	}
 	defer resp.Body.Close()
 
-	stream, errChan := rdfgo.Parse(resp.Body, rdfgo.ParserOptions{Format: "text/turtle", BaseIRI: sa.webId})
+	stream, errChan := rdfgo.Parse(resp.Body, rdfgo.ParserOptions{Format: "application/n-triples", BaseIRI: sa.webId})
 
 	for quad := range stream {
 		if quad.GetPredicate().GetValue() == "http://www.w3.org/ns/solid/terms#oidcIssuer" {
@@ -74,6 +74,7 @@ func (sa *SolidAuth) Init(email, password string) error {
 	sa.dpopKey = key
 
 	// Step 1: Get controls from account endpoint
+	logrus.WithFields(logrus.Fields{"endpoint": sa.cssBaseURL + ".account/"}).Debug("🔑 Initializing client credentials for Solid OIDC")
 	reqAccount, err := createRequestWithRedirect("GET", sa.cssBaseURL+".account/", nil)
 	if err != nil {
 		return fmt.Errorf("failed to create account request: %w", err)

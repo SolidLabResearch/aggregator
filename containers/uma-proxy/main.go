@@ -33,7 +33,6 @@ var caCert *x509.Certificate
 var caKey *rsa.PrivateKey
 
 func main() {
-	// Initialize Solid OIDC authentication if configured
 	webId := os.Getenv("WEBID")
 	email := os.Getenv("EMAIL")
 	password := os.Getenv("PASSWORD")

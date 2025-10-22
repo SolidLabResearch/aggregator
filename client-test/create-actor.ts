@@ -13,14 +13,14 @@ _:execution a fno:Execution ;
 `
  */
 const PipelineDescription = `
-@prefix config: <http://localhost:5000/config#> .
+@prefix trans: <http://localhost:5000/config/transformations#> .
 @prefix fno: <https://w3id.org/function/ontology#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 _:execution a fno:Execution ;
-    fno:executes config:SPARQLEvaluation ;
-    config:sources ( "http://localhost:3000/alice/profile/card"^^xsd:string ) ;
-    config:queryString "SELECT * WHERE { ?s ?p ?o }" .
+    fno:executes trans:SPARQLEvaluation ;
+    trans:sources ( "http://localhost:3000/alice/profile/card"^^xsd:string ) ;
+    trans:queryString "SELECT * WHERE { ?s ?p ?o }" .
 `;
 
 const request = {

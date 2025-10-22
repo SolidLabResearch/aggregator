@@ -1,5 +1,7 @@
-import {fetch} from 'cross-fetch';
-import {createDpopHeader, generateDpopKeyPair, KeyPair} from "@inrupt/solid-client-authn-core";
+import { fetch } from 'cross-fetch';
+import { createDpopHeader, generateDpopKeyPair, KeyPair } from "@inrupt/solid-client-authn-core";
+
+const DEFAULT_UMA_ISSUER = 'http://localhost:4000/uma';
 
 /**
  * Solid OIDC authenticated fetcher with DPoP support
@@ -98,7 +100,7 @@ export class SolidOIDCAuth {
         });
     }
 
-    private parseAuthenticateHeader(headers: Headers): { tokenEndpoint: string; ticket: string } {
+    private parseAuthenticateHeader(headers: Headers): { tokenEndpoint: string; ticket: string, serviceEndpoint: string | undefined } {
         const wwwAuthenticateHeader = headers.get("WWW-Authenticate")
         if (!wwwAuthenticateHeader) throw Error("No WWW-Authenticate Header present");
 
@@ -108,9 +110,12 @@ export class SolidOIDCAuth {
 
         const tokenEndpoint = as_uri + "/token" // NOTE: should normally be retrieved from .well-known/uma2-configuration
 
+        const serviceEndpoint = headers.get("Link")?.match(/<([^>]+)>;\s*rel="service-token-endpoint"/)?.[1];
+
         return {
             tokenEndpoint,
-            ticket
+            ticket,
+            serviceEndpoint
         }
     }
 
@@ -161,5 +166,74 @@ export class SolidOIDCAuth {
             // Retry request with RPT
             return fetch(url, {...init, headers});
         }
+    }
+
+    async redeemUmaTicket(ticket: string, tokenEndpoint?: string): Promise<string> {
+        const resolvedEndpoint = tokenEndpoint ?? `${DEFAULT_UMA_ISSUER}/token`;
+        const claimToken = await this.createClaimToken(resolvedEndpoint);
+
+        const content = {
+            grant_type: 'urn:ietf:params:oauth:grant-type:uma-ticket',
+            ticket,
+            claim_token: claimToken,
+            claim_token_format: 'http://openid.net/specs/openid-connect-core-1_0.html#IDToken',
+        };
+
+        const response = await fetch(resolvedEndpoint, {
+            method: "POST",
+            headers: {
+                "content-type": "application/json"
+            },
+            body: JSON.stringify(content),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to redeem UMA ticket: ${response.status} - ${await response.text()}`);
+        }
+
+        const body = await response.json();
+        return `${body.token_type} ${body.access_token}`;
+    }
+
+    async redeemUmaRequest(permissions: { resource_id: string, resource_scopes: string[] }[], tokenEndpoint?: string): Promise<string> {
+        const resolvedEndpoint = tokenEndpoint ?? `${DEFAULT_UMA_ISSUER}/token`;
+        const claimToken = await this.createClaimToken(resolvedEndpoint);
+
+        const content = {
+            permissions,
+            claim_token: claimToken,
+            claim_token_format: 'http://openid.net/specs/openid-connect-core-1_0.html#IDToken',
+        };
+
+        const response = await fetch(resolvedEndpoint, {
+            method: "POST",
+            headers: {
+                "content-type": "application/json"
+            },
+            body: JSON.stringify(content),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to redeem UMA request: ${response.status} - ${await response.text()}`);
+        }
+
+        const body = await response.json();
+        return `${body.token_type} ${body.access_token}`;
+    }
+
+    async getUmaAuthorizationHeader(url: string, method: string = 'GET'): Promise<{token: string | undefined, serviceEndpoint: string | undefined}> {
+        const initialResponse = await fetch(url, { method });
+        const { tokenEndpoint, ticket, serviceEndpoint } = this.parseAuthenticateHeader(initialResponse.headers);
+
+        if (initialResponse.ok) {
+            return {token: initialResponse.headers.get('authorization') ?? undefined, serviceEndpoint};
+        }
+
+        if (initialResponse.status !== 401) {
+            throw new Error(`Unexpected response while obtaining UMA ticket: ${initialResponse.status} - ${await initialResponse.text()}`);
+        }
+
+        const token = await this.redeemUmaTicket(ticket, tokenEndpoint);
+        return {token, serviceEndpoint};
     }
 }

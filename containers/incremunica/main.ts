@@ -1,35 +1,57 @@
 import { QueryEngine } from '@comunica/query-sparql';
 import { QueryEngine as QueryEngineInc } from '@incremunica/query-sparql-incremental';
-import { isAddition, QuerySourceIterator } from '@incremunica/user-tools';
+import { isAddition } from '@incremunica/user-tools';
 import { Store, Parser, DataFactory } from 'n3';
 import http from "http";
 import { URL } from "url";
+import {EventEmitter} from "node:events";
 
-// SSE Connection Manager
 class SSEConnectionManager {
-  private connections: Set<http.ServerResponse> = new Set();
+  private connections: Map<http.ServerResponse, NodeJS.Timeout> = new Map();
 
   addConnection(res: http.ServerResponse): void {
-    this.connections.add(res);
+    console.log('New SSE connection established');
+    const heartbeat = setInterval(() => {
+      this.sendToConnection(res, "heartbeat", { timestamp: Date.now() });
+    }, 30000);
+    this.connections.set(res, heartbeat);
     res.on('close', () => {
-      this.connections.delete(res);
+      this.removeConnection(res);
     });
   }
 
-  broadcast(event: string, data: any): void {
-    const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  removeConnection(res: http.ServerResponse): boolean {
+    console.log('SSE connection closed');
+    const heartbeat = this.connections.get(res);
+    if (heartbeat) {
+      clearInterval(heartbeat);
+    }
+    return this.connections.delete(res);
+  }
+
+  broadcast(event: string, data?: any): void {
+    console.log(`Broadcasting event: ${event}`);
+    let message = `event: ${event}\n`
+    if (data) {
+      message += `data: ${JSON.stringify(data)}\n`;
+    }
+    message += `\n`;
     for (const connection of this.connections) {
       try {
-        connection.write(message);
+        connection[0].write(message);
       } catch (error) {
-        // Remove connection if write fails
-        this.connections.delete(connection);
+        this.removeConnection(connection[0])
       }
     }
   }
 
-  sendToConnection(res: http.ServerResponse, event: string, data: any): void {
-    const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  sendToConnection(res: http.ServerResponse, event: string, data?: any): void {
+    console.log(`Sending event to connection: ${event}`);
+    let message = `event: ${event}\n`
+    if (data) {
+      message += `data: ${JSON.stringify(data)}\n`;
+    }
+    message += `\n`;
     try {
       res.write(message);
     } catch (error) {
@@ -56,7 +78,7 @@ async function customFetch(input: RequestInfo | URL, init?: RequestInit): Promis
   // Prepare the request payload for the proxy
   const fetchRequest = {
     url: originalUrl,
-    method: init?.method || 'GET',
+    method: init?.method?.toUpperCase() || 'GET',
     headers: init?.headers || {},
     body: init?.body ? init.body.toString() : ''
   };
@@ -78,23 +100,6 @@ async function customFetch(input: RequestInfo | URL, init?: RequestInit): Promis
   });
 
   return response;
-}
-
-const TRANSFORMATIONS_NS = "http://localhost:5000/config/transformations#";
-const RDF_NS = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
-
-const RDF_TYPE = DataFactory.namedNode(`${RDF_NS}type`);
-const RDF_FIRST = DataFactory.namedNode(`${RDF_NS}first`);
-const RDF_REST = DataFactory.namedNode(`${RDF_NS}rest`);
-const RDF_NIL = DataFactory.namedNode(`${RDF_NS}nil`);
-
-const SPARQL_RESULT_SOURCE_CLASS = DataFactory.namedNode(`${TRANSFORMATIONS_NS}SPARQLQueryResultSource`);
-const SPARQL_RESULT_PREDICATE = DataFactory.namedNode(`${TRANSFORMATIONS_NS}sparqlQueryResult`);
-const EXTRACT_VARIABLES_PREDICATE = DataFactory.namedNode(`${TRANSFORMATIONS_NS}extractVariables`);
-
-interface DynamicSourceConfig {
-  endpoint: string;
-  variables: string[];
 }
 
 // Function to register an endpoint with the aggregator
@@ -144,17 +149,45 @@ async function registerWithAggregator(): Promise<void> {
   await registerEndpointWithAggregator(
     "/",
     "SPARQL SELECT incremental query service - JSON results",
-    ["read"]
+    ["urn:example:css:modes:read"]
   );
 
   // Register the server-sent events endpoint
   await registerEndpointWithAggregator(
     "/events",
     "SPARQL SELECT incremental query service - Real-time SSE stream",
-    ["read"]
+    ["urn:example:css:modes:continuous:read"]
   );
 
   console.log('✅ All endpoints registered with aggregator');
+}
+
+class UpToDateTimeout {
+  private readonly interval: number;
+  private readonly upToDateCallback: () => void = () => {};
+  private timeout: NodeJS.Timeout | undefined;
+
+  constructor(interval: number = 1000, upToDateCallback?: () => void) {
+    this.interval = interval;
+    if (upToDateCallback) {
+      this.upToDateCallback = upToDateCallback;
+    }
+    this.reset();
+  }
+
+  reset(): void {
+    if (this.timeout) {
+      this.timeout.close();
+    }
+    this.timeout = setTimeout(() => {
+      this.timeout = undefined;
+      this.upToDateCallback();
+    }, this.interval);
+  }
+
+  isUpToDate(): boolean {
+    return this.timeout === undefined;
+  }
 }
 
 async function main() {
@@ -162,6 +195,7 @@ async function main() {
   if (pipelineDescription === undefined) {
     throw new Error('Environment variable PIPELINE_DESCRIPTION is not set. Please provide a valid pipeline description.');
   }
+  console.log(pipelineDescription)
   const pipelineParsingEngine = new QueryEngine();
   const pipelineDescriptionStore = new Store();
   const parser = new Parser();
@@ -176,7 +210,6 @@ async function main() {
         if (quad) {
           pipelineDescriptionStore.addQuad(quad);
         } else {
-          // Parsing finished
           resolve();
         }
       });
@@ -185,15 +218,21 @@ async function main() {
 
   const queryInfoStream = await pipelineParsingEngine.queryBindings(`
 PREFIX fno: <https://w3id.org/function/ontology#>
-PREFIX config: <http://localhost:5000/config#>
+PREFIX trans: <http://localhost:5000/config/transformations#>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 
-SELECT ?queryString ?source WHERE {
+SELECT ?queryString ?source ?endpoint ?variable WHERE {
     ?execution a fno:Execution .
-    ?execution fno:executes config:SPARQLEvaluation .
-    ?execution config:sources ?sourceElement .
+    ?execution fno:executes trans:SPARQLEvaluation .
+    ?execution trans:queryString ?queryString .
+    ?execution trans:sources ?sourceElement .
     ?sourceElement (rdf:rest*/rdf:first) ?source .
-    ?execution config:queryString ?queryString .
+    OPTIONAL {
+        ?source a trans:SPARQLQueryResultSource .
+        ?source trans:sparqlQueryResult ?endpoint .
+        ?source trans:extractVariables ?variablesElement .
+        ?variablesElement (rdf:rest*/rdf:first) ?variable .
+    }
 }
   `, {
     sources: [
@@ -205,21 +244,44 @@ SELECT ?queryString ?source WHERE {
     (resolve, reject) => {
       let queryString: string | undefined = undefined
       let sources: any[] | undefined = undefined;
+      const dynamicSourceMap: Map<string, { endpoint: string, variables: string[] }> = new Map();
       queryInfoStream.on('data', (data) => {
         const queryTerm = data.get('queryString');
         if (queryString === undefined && queryTerm?.value !== undefined) {
           queryString = queryTerm.value;
         }
         if (queryTerm?.value === queryString) {
-          const sourceTerm = data.get('source');
-          if (!sourceTerm) {
+          const sourceNode: any = data.get('source');
+          if (!sourceNode) {
             return;
           }
-          if (sources === undefined) {
-            sources = [sourceTerm];
+
+          const endpointTerm: any = data.get('endpoint');
+          const variableTerm: any = data.get('variable');
+          let sourceTerm: any = sourceNode;
+          if (endpointTerm) {
+            const key = `${sourceNode.termType}:${sourceNode.value ?? ''}`;
+            let entry = dynamicSourceMap.get(key);
+            if (!entry) {
+              entry = { endpoint: endpointTerm.value, variables: [] };
+              dynamicSourceMap.set(key, entry);
+              if (!sources) {
+                sources = [ entry ];
+              } else {
+                sources.push(entry);
+              }
+            }
+            if (variableTerm?.value && !entry.variables.includes(variableTerm.value)) {
+              entry.variables.push(variableTerm.value);
+            }
+          } else {
+            if (!sources) {
+              sources = [ sourceTerm ];
+            } else {
+              sources.push(sourceTerm);
+            }
             return;
           }
-          sources.push(sourceTerm);
         }
       });
       queryInfoStream.on('end', () => {
@@ -240,41 +302,29 @@ SELECT ?queryString ?source WHERE {
   );
   queryInfoStream.destroy();
 
-  const { staticSources, dynamicSources } = classifySources(pipelineDescriptionStore, queryInfo.sources);
-
-  console.log(`Executing SPARQL SELECT query: ${queryInfo.query}`);
-  console.log(`Using static sources: ${JSON.stringify(staticSources)}`);
-  if (dynamicSources.length > 0) {
-    console.log(`Configuring dynamic sources from SSE endpoints: ${JSON.stringify(dynamicSources)}`);
-  }
-
-  const iteratorOptions: {
-    seedSources?: string[];
-    distinct: boolean;
-  } = {
-    distinct: true,
-  };
-  if (staticSources.length > 0) {
-    iteratorOptions.seedSources = staticSources;
-  }
-  const querySourceIterator = new QuerySourceIterator(iteratorOptions);
-
-  for (const dynamicSource of dynamicSources) {
-    void maintainDynamicSource(dynamicSource, querySourceIterator);
+  const sources = await getSources(queryInfo.sources);
+  if (sources.length === 0) {
+    throw new Error('No valid sources found in the pipeline description.');
   }
 
   const queryEngine = new QueryEngineInc();
   const bindingsStream = await queryEngine.queryBindings(queryInfo.query, {
-    sources: [querySourceIterator as any],
-    fetch: customFetch
+    // @ts-ignore
+    sources: sources,
+    fetch: customFetch,
+    deferredEvaluationTrigger: new EventEmitter(),
   });
 
   const materializedView: Map<string,{bindings: any, count: number}> = new Map();
 
   // Create SSE manager for broadcasting updates
   const sseManager = new SSEConnectionManager();
+  const upToDateTimeout = new UpToDateTimeout(1000, () => {
+    sseManager.broadcast("up-to-date", { timestamp: Date.now() });
+  });
 
   bindingsStream.on('data', (bindings: any) => {
+    upToDateTimeout.reset();
     const key = bindings.toString();
     if (isAddition(bindings)) {
       if (materializedView.has(key)) {
@@ -283,7 +333,6 @@ SELECT ?queryString ?source WHERE {
         materializedView.set(key, { bindings: bindings, count: 1 });
       }
 
-      // Broadcast only the added binding to all SSE connections
       sseManager.broadcast("addition", bindingToSparqlJson(bindings));
     } else {
       if (materializedView.has(key)) {
@@ -293,10 +342,9 @@ SELECT ?queryString ?source WHERE {
           materializedView.delete(key);
         }
 
-        // Broadcast only the removed binding to all SSE connections
-        sseManager.broadcast("removal", bindingToSparqlJson(bindings));
+        sseManager.broadcast("deletion", bindingToSparqlJson(bindings));
       } else {
-        throw new Error('Received a removal for a binding that was not in the materialized view:' + key);
+        throw new Error('Received a deletion for a binding that was not in the materialized view:' + key);
       }
     }
   });
@@ -325,19 +373,15 @@ SELECT ?queryString ?source WHERE {
         "Access-Control-Allow-Headers": "Cache-Control"
       });
 
-      // Add this connection to the SSE manager
       sseManager.addConnection(res);
 
-      // Send initial data immediately
       sseManager.sendToConnection(res, "init", materializedViewToSparqlJson(materializedView));
-
-      // Keep connection alive with periodic heartbeat
-      const heartbeat = setInterval(() => {
-        sseManager.sendToConnection(res, "heartbeat", { timestamp: Date.now() });
-      }, 30000);
+      if (upToDateTimeout.isUpToDate()) {
+        sseManager.sendToConnection(res, "up-to-date", { timestamp: Date.now() });
+      }
 
       req.on('close', () => {
-        clearInterval(heartbeat);
+        sseManager.removeConnection(res);
       });
     } else {
       res.writeHead(404, { "Content-Type": "text/plain" });
@@ -345,50 +389,63 @@ SELECT ?queryString ?source WHERE {
     }
   });
 
-  server.listen(8080, async () => {
-    console.log("SPARQL SELECT result server running at http://localhost:8080/");
-    console.log("Server-Sent Events available at http://localhost:8080/events");
+  await new Promise((resolve, reject) => {
+    server.listen(8080, async () => {
+      console.log("SPARQL SELECT result server running at http://localhost:8080/");
+      console.log("Server-Sent Events available at http://localhost:8080/events");
 
-    // Register with the aggregator after server starts
-    await registerWithAggregator();
+      // Register with the aggregator after server starts
+      await registerWithAggregator()
+    });
   });
 }
 
-function classifySources(store: Store, sourceTerms: any[]): { staticSources: string[]; dynamicSources: DynamicSourceConfig[] } {
-  const staticSources: string[] = [];
-  const dynamicSources: DynamicSourceConfig[] = [];
+async function getSources(sourceTerms: any[]): Promise<string[]> {
+  const sources: Set<string> = new Set();
+  const promises: Promise<string[]>[] = [];
 
   for (const term of sourceTerms ?? []) {
     if (!term) {
       continue;
     }
 
-    if (term.termType === 'BlankNode' && store.countQuads(term, RDF_TYPE, SPARQL_RESULT_SOURCE_CLASS, null) > 0) {
-      const endpointQuad = store.getQuads(term, SPARQL_RESULT_PREDICATE, null, null)[0];
-      const variablesQuad = store.getQuads(term, EXTRACT_VARIABLES_PREDICATE, null, null)[0];
-
-      const endpoint = endpointQuad?.object?.value;
-      const variables = variablesQuad ? readRdfList(store, variablesQuad.object)
-        .map(variableTerm => variableTerm?.value)
-        .filter((value): value is string => typeof value === "string" && value.length > 0) : [];
-
-      if (endpoint) {
-        dynamicSources.push({ endpoint, variables });
-      } else {
-        console.warn("Dynamic source is missing sparqlQueryResult endpoint definition.");
-      }
+    if (term.endpoint) {
+      const vars = Array.isArray(term.variables) ? term.variables : [];
+      console.log(`Interpreted dynamic SPARQL source: endpoint=${term.endpoint}, variables=[${vars.join(", ")}]`);
+      promises.push(customFetch(term.endpoint).then(response => {
+        if (!response.ok) {
+          throw new Error(`Failed to fetch from SPARQL endpoint ${term.endpoint}: ${response.status} ${response.statusText}`);
+        }
+        return response.json()
+      }).then((json): string[] => {
+        const endpointSources: string[] = [];
+        json.results.bindings.forEach((binding: any) => {
+          endpointSources.push(...collectSourcesFromBindingObject(binding, vars));
+        });
+        console.log(`Collected ${endpointSources.length} sources from endpoint ${term.endpoint}`);
+        return endpointSources;
+      }));
       continue;
     }
 
     const staticValue = getSourceValue(term);
     if (staticValue !== undefined) {
-      staticSources.push(staticValue);
+      console.log(`Interpreted static source: ${staticValue}`);
+      sources.add(staticValue);
     } else {
       console.warn(`Unable to interpret source term ${JSON.stringify(term)}`);
     }
   }
 
-  return { staticSources, dynamicSources };
+  let awaitedSources = await Promise.all(promises);
+  for (const awaitedSourceList of awaitedSources) {
+    for (const source of awaitedSourceList) {
+      sources.add(source);
+    }
+  }
+  console.log(`Total sources collected: ${sources.size}`);
+
+  return [...sources];
 }
 
 function getSourceValue(term: any): string | undefined {
@@ -401,190 +458,6 @@ function getSourceValue(term: any): string | undefined {
   return undefined;
 }
 
-function readRdfList(store: Store, head: any): any[] {
-  const values: any[] = [];
-  if (!head) {
-    return values;
-  }
-
-  let current: any | undefined = head;
-  const visited = new Set<string>();
-
-  while (current && !(current.termType === 'NamedNode' && current.value === RDF_NIL.value)) {
-    const key = `${current.termType}:${current.value ?? ''}`;
-    if (visited.has(key)) {
-      break;
-    }
-    visited.add(key);
-
-    const firstQuad = store.getQuads(current, RDF_FIRST, null, null)[0];
-    if (!firstQuad) {
-      break;
-    }
-    values.push(firstQuad.object);
-
-    const restQuad = store.getQuads(current, RDF_REST, null, null)[0];
-    if (!restQuad) {
-      break;
-    }
-    current = restQuad.object;
-  }
-
-  return values;
-}
-
-async function maintainDynamicSource(config: DynamicSourceConfig, iterator: QuerySourceIterator): Promise<void> {
-  while (true) {
-    try {
-      console.log(`Connecting to dynamic source stream at ${config.endpoint} (variables: ${config.variables.join(", ") || "none"})`);
-      await consumeDynamicSourceStream(config, iterator);
-      console.log(`SSE stream at ${config.endpoint} ended, will attempt to reconnect in 5 seconds.`);
-    } catch (error) {
-      console.error(`Error while consuming SSE stream at ${config.endpoint}:`, error);
-    }
-    await delay(5000);
-  }
-}
-
-async function consumeDynamicSourceStream(config: DynamicSourceConfig, iterator: QuerySourceIterator): Promise<void> {
-  const response = await customFetch(config.endpoint, {
-    headers: {
-      "Accept": "text/event-stream",
-    },
-  });
-
-  if (!response.ok || !response.body) {
-    throw new Error(`Failed to connect to SSE stream at ${config.endpoint}: ${response.status} ${response.statusText}`);
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder("utf-8");
-  let buffer = "";
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) {
-      break;
-    }
-    buffer += decoder.decode(value, { stream: true });
-    buffer = buffer.replace(/\r\n/gu, "\n");
-
-    let separatorIndex = buffer.indexOf("\n\n");
-    while (separatorIndex !== -1) {
-      const rawEvent = buffer.slice(0, separatorIndex);
-      buffer = buffer.slice(separatorIndex + 2);
-      const event = parseSseEvent(rawEvent);
-      if (event) {
-        handleSseEvent(event, config, iterator);
-      }
-      separatorIndex = buffer.indexOf("\n\n");
-    }
-  }
-}
-
-interface ParsedSseEvent {
-  event: string;
-  data: string;
-}
-
-function parseSseEvent(raw: string): ParsedSseEvent | null {
-  const lines = raw.split("\n");
-  let eventName = "message";
-  const dataLines: string[] = [];
-
-  for (const originalLine of lines) {
-    const line = originalLine.trimEnd();
-    if (line.length === 0 || line.startsWith(":")) {
-      continue;
-    }
-    if (line.startsWith("event:")) {
-      eventName = line.slice(6).trimStart();
-      continue;
-    }
-    if (line.startsWith("data:")) {
-      let dataValue = line.slice(5);
-      if (dataValue.startsWith(" ")) {
-        dataValue = dataValue.slice(1);
-      }
-      dataLines.push(dataValue);
-      continue;
-    }
-  }
-
-  if (dataLines.length === 0) {
-    return null;
-  }
-  return { event: eventName, data: dataLines.join("\n") };
-}
-
-function handleSseEvent(event: ParsedSseEvent, config: DynamicSourceConfig, iterator: QuerySourceIterator): void {
-  if (!event.data) {
-    return;
-  }
-
-  if (event.event === "heartbeat") {
-    return;
-  }
-
-  let payload: any;
-  try {
-    payload = JSON.parse(event.data);
-  } catch (error) {
-    console.error(`Failed to parse SSE event data from ${config.endpoint}:`, error);
-    return;
-  }
-
-  const sources =
-    event.event === "init"
-      ? extractSourcesFromInitPayload(payload, config.variables)
-      : extractSourcesFromBindingPayload(payload, config.variables);
-
-  if (sources.length === 0) {
-    return;
-  }
-
-  if (event.event === "removal") {
-    for (const source of sources) {
-      try {
-        iterator.removeSource(source);
-      } catch (error) {
-        console.error(`Failed to remove dynamic source ${source}:`, error);
-      }
-    }
-  } else if (event.event === "addition" || event.event === "init") {
-    for (const source of sources) {
-      try {
-        iterator.addSource(source);
-      } catch (error) {
-        console.error(`Failed to add dynamic source ${source}:`, error);
-      }
-    }
-  } else {
-    console.warn(`Received unsupported SSE event "${event.event}" from ${config.endpoint}`);
-  }
-}
-
-function extractSourcesFromBindingPayload(payload: any, variables: string[]): string[] {
-  const bindingObject = payload?.binding ?? payload;
-  if (!bindingObject || typeof bindingObject !== "object") {
-    return [];
-  }
-
-  return collectSourcesFromBindingObject(bindingObject, variables);
-}
-
-function extractSourcesFromInitPayload(payload: any, variables: string[]): string[] {
-  const bindings = payload?.results?.bindings;
-  if (!Array.isArray(bindings)) {
-    return [];
-  }
-  const sources: string[] = [];
-  for (const binding of bindings) {
-    sources.push(...collectSourcesFromBindingObject(binding, variables));
-  }
-  return sources;
-}
-
 function collectSourcesFromBindingObject(bindingObject: any, variables: string[]): string[] {
   if (!bindingObject || typeof bindingObject !== "object") {
     return [];
@@ -592,8 +465,9 @@ function collectSourcesFromBindingObject(bindingObject: any, variables: string[]
 
   const sourceValues: string[] = [];
   const variableNames = variables.length > 0 ? variables : Object.keys(bindingObject);
+  const namesNormalized = variableNames.map(v => typeof v === 'string' && v.startsWith('?') ? v.slice(1) : v);
 
-  for (const variableName of variableNames) {
+  for (const variableName of namesNormalized) {
     const binding = bindingObject[variableName];
     if (!binding || typeof binding !== "object") {
       continue;
@@ -606,13 +480,6 @@ function collectSourcesFromBindingObject(bindingObject: any, variables: string[]
   return sourceValues;
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise(resolve => {
-    setTimeout(resolve, ms);
-  });
-}
-
-// Function to convert materialized view to SPARQL JSON format
 function materializedViewToSparqlJson(materializedView: Map<string,{bindings: any, count: number}>) {
   const variablesSet: Set<string> = new Set();
   const results: {[variableName: string]: {type: string, value: string, datatype?: string, "xml:lang"?: string }}[] = [];
@@ -657,14 +524,8 @@ function materializedViewToSparqlJson(materializedView: Map<string,{bindings: an
   };
 }
 
-// Function to convert a single binding to SPARQL JSON format
 function bindingToSparqlJson(bindings: any) {
-  const variablesSet: Set<string> = new Set();
   let result: {[variableName: string]: {type: string, value: string, datatype?: string, "xml:lang"?: string }} = {};
-
-  for (const variable of bindings.keys()) {
-    variablesSet.add(variable.value);
-  }
 
   for (const [variable, value] of bindings) {
     if (value.termType === 'Literal') {
@@ -692,9 +553,16 @@ function bindingToSparqlJson(bindings: any) {
   }
 
   return {
-    head: { vars: [...variablesSet.keys()] },
-    binding: result
+    bindings: [result]
   };
 }
 
-main();
+main()
+  .then(() => {
+    console.error('Error: Incremunica client closed.');
+    process.exit(1);
+  })
+  .catch((error) => {
+    console.error('Error starting Incremunica client:', error);
+    process.exit(1);
+  });

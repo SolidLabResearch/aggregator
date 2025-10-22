@@ -48,10 +48,12 @@ async function main() {
     const actorUrl = "http://localhost:5000" + `/${id}/`;
     console.log(`=== Requesting actor results at ${actorUrl}`);
 
+    const start = process.hrtime();
     const actorResultsResponse = await umaFetch(actorUrl, {
         method: "GET"
     });
-
+    const end = process.hrtime(start);
+    console.log(`=== Actor results fetched in ${end[0]}s ${end[1] / 1000000}ms`);
     console.log(`=== Actor results response status: ${actorResultsResponse.status}`);
     if (actorResultsResponse.status !== 200) {
         console.error(`Error: ${actorResultsResponse.status}, response: ${await actorResultsResponse.text()}`);

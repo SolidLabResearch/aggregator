@@ -1,16 +1,17 @@
 import { SolidOIDCAuth } from "./util.js";
+import { fetch } from 'cross-fetch';
 
 // Pipeline description for querying Alice's name
 const PipelineDescription = `
-@prefix config: <http://localhost:5000/config#> .
+@prefix trans: <http://localhost:5000/config/transformations#> .
 @prefix fno: <https://w3id.org/function/ontology#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 
 _:execution a fno:Execution ;
-    fno:executes config:SPARQLEvaluation ;
-    config:sources ( "http://localhost:3000/alice/profile/card"^^xsd:string ) ;
-    config:queryString "SELECT ?name WHERE { <http://localhost:3000/alice/profile/card#me> <http://xmlns.com/foaf/0.1/name> ?name }" .
+    fno:executes trans:SPARQLEvaluation ;
+    trans:sources ( "http://localhost:3000/alice/profile/card"^^xsd:string ) ;
+    trans:queryString "SELECT ?name WHERE { <http://localhost:3000/alice/profile/card#me> <http://xmlns.com/foaf/0.1/name> ?name }" .
 `;
 
 async function sleep(ms: number): Promise<void> {
@@ -46,330 +47,260 @@ async function getActorUrl(actorId: string): Promise<string> {
     return `http://localhost:5000/${actorId}/events`;
 }
 
-async function connectToSSE(actorUrl: string, umaFetch: any): Promise<void> {
+// Acquire a stream token for the SSE resource using UMA auth
+async function getStreamToken(auth: SolidOIDCAuth, resourceUrl: string): Promise<{ token: string; expiresAtMs: number, sessionId: string, serviceEndpoint: string }>{
+    const { token, serviceEndpoint } = await auth.getUmaAuthorizationHeader(resourceUrl, 'GET');
+    if (!token) throw new Error('Failed to obtain UMA Authorization header');
+    if (!serviceEndpoint) throw new Error('UMA service endpoint is undefined');
+
+    const res = await fetch(serviceEndpoint, {
+        method: 'POST',
+        headers: {
+            'content-type': 'application/json',
+            'authorization': token,
+        },
+        body: JSON.stringify({ resource_url: resourceUrl }),
+    });
+
+    if (!res.ok) {
+        throw new Error(`Failed to get stream token: ${res.status} - ${await res.text()}`);
+    }
+
+    const body = await res.json();
+    return { token: body.service_token as string, expiresAtMs: (body.session_expires_at as number) * 1000, sessionId: body.session_id as string, serviceEndpoint };
+}
+
+// Refresh a stream token for the SSE resource
+async function refreshStreamToken(auth: SolidOIDCAuth, resourceUrl: string, sessionId: string): Promise<{ expiresAtMs: number }>{
+    const { token, serviceEndpoint } = await auth.getUmaAuthorizationHeader(resourceUrl, 'GET');
+    if (!token) throw new Error('Failed to obtain UMA Authorization header');
+    if (!serviceEndpoint) throw new Error('UMA service endpoint is undefined');
+
+    const res = await fetch(serviceEndpoint, {
+        method: 'POST',
+        headers: {
+            'content-type': 'application/json',
+            'authorization': token,
+        },
+        body: JSON.stringify({ resource_url: resourceUrl, session_id: sessionId}),
+    });
+
+    if (!res.ok) {
+        throw new Error(`Failed to refresh stream token: ${res.status} - ${await res.text()}`);
+    }
+
+    const body = await res.json();
+    return { expiresAtMs: (body.session_expires_at as number) * 1000 };
+}
+
+async function connectToSSE(actorUrl: string, umaFetch: any, auth: SolidOIDCAuth): Promise<void> {
     console.log(`🔗 Connecting to SSE stream at: ${actorUrl}`);
 
-    return new Promise((resolve, reject) => {
-        let eventCount = 0;
-        let hasSeenAddition = false;
-        let hasSeenRemoval = false;
-        let addAliceCallback: (() => Promise<void>) | null = null;
-        let removeAliceCallback: (() => Promise<void>) | null = null;
-        let streamCleanup: (() => void) | null = null;
+    let addAliceCallback: (() => Promise<void>) | null = null;
+    let removeAliceCallback: (() => Promise<void>) | null = null;
+
+    // Keep reconnecting on proactive refresh until demo completes
+    return new Promise(async (resolve, reject) => {
         let isCompleted = false;
 
-        // Create an AbortController to forcefully terminate the fetch
-        const abortController = new AbortController();
+        const runStream = async (streamToken: string) => {
+            const abortController = new AbortController();
 
-        // Use fetch to connect to SSE endpoint
-        umaFetch(actorUrl, {
-            method: "GET",
-            headers: {
-                "Accept": "text/event-stream",
-                "Cache-Control": "no-cache"
-            },
-            signal: abortController.signal  // Add abort signal
-        }).then((response: Response) => {
-            if (!response.ok) {
-                reject(new Error(`Failed to connect to SSE: ${response.status}`));
-                return;
-            }
+            try {
+                console.log('🌐 Establishing SSE connection with stream token...');
+                const response = await fetch(actorUrl, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'text/event-stream',
+                        'Cache-Control': 'no-cache',
+                        'Authorization': `Bearer ${streamToken}`,
+                    },
+                    signal: abortController.signal,
+                });
 
-            console.log('✅ Connected to SSE stream');
-
-            if (!response.body) {
-                reject(new Error('Response body is null or undefined'));
-                return;
-            }
-
-            // Store the response object for complete cleanup
-            let responseToCleanup = response;
-
-            // Handle different types of response.body in Node.js
-            let buffer = '';
-            let currentEventType = '';
-
-            const completeDemo = () => {
-                if (isCompleted) return;
-                isCompleted = true;
-
-                console.log('🎉 Demo completed successfully - seen all expected events!');
-                console.log('🧹 Cleaning up SSE connection...');
-
-                // Abort the fetch request to close the connection
-                try {
-                    abortController.abort();
-                } catch (abortError) {
-                    // Abort errors are expected and can be ignored
+                if (!response.ok) {
+                    throw new Error(`Failed to connect to SSE: ${response.status} - ${await response.text()}`);
                 }
 
-                // Clean up the stream
-                if (streamCleanup) {
-                    streamCleanup();
+                console.log('✅ Connected to SSE stream');
+
+                if (!response.body) {
+                    throw new Error('Response body is null or undefined');
                 }
 
-                console.log('🏁 Demo completed - connection closed!');
-                resolve();
-            };
+                let buffer = '';
+                let currentEventType = '';
 
-            const processEvent = (eventType: string, data: any) => {
-                if (eventType === 'init') {
-                    console.log('📊 Initial data received:');
-                    // Simplify the results display
-                    if (data.results && data.results.bindings) {
-                        if (data.results.bindings.length === 0) {
-                            console.log('   results: []');
-                        } else {
-                            const simplifiedResults = data.results.bindings.map((binding: any) => {
-                                const result: any = {};
-                                for (const [key, value] of Object.entries(binding)) {
-                                    result[key] = (value as any).value;
-                                }
-                                return result;
-                            });
-                            console.log('   results:', JSON.stringify(simplifiedResults, null, 2));
-                        }
-                    }
-                    eventCount++;
-
-                    // Start the sequence by adding Alice's name
-                    setTimeout(async () => {
-                        if (addAliceCallback) {
-                            console.log('🚀 Starting interactive sequence...');
-                            try {
-                                await addAliceCallback();
-                            } catch (error) {
-                                console.error('❌ Error adding Alice name:', error);
-                                reject(error);
-                            }
-                        }
-                    }, 1000);
-
-                } else if (eventType === 'addition') {
-                    console.log('➕ Addition event received:');
-                    // Simplify the binding display
-                    if (data.binding) {
-                        const result: any = {};
-                        for (const [key, value] of Object.entries(data.binding)) {
-                            result[key] = (value as any).value;
-                        }
-                        console.log('   binding:', JSON.stringify(result, null, 2));
-                    }
-                    hasSeenAddition = true;
-                    eventCount++;
-
-                    // Automatically trigger removal after seeing addition
-                    console.log('🔄 Addition detected, triggering removal...');
-                    setTimeout(async () => {
-                        if (removeAliceCallback) {
-                            try {
-                                await removeAliceCallback();
-                            } catch (error) {
-                                console.error('❌ Error removing Alice name:', error);
-                                reject(error);
-                            }
-                        }
-                    }, 1000);
-
-                } else if (eventType === 'removal') {
-                    console.log('➖ Removal event received:');
-                    // Simplify the binding display
-                    if (data.binding) {
-                        const result: any = {};
-                        for (const [key, value] of Object.entries(data.binding)) {
-                            result[key] = (value as any).value;
-                        }
-                        console.log('   binding:', JSON.stringify(result, null, 2));
-                    }
-                    hasSeenRemoval = true;
-                    eventCount++;
-
-                    // End the demo after seeing removal
-                    completeDemo();
-
-                } else if (eventType === 'heartbeat') {
-                    console.log('💓 Heartbeat received');
-                }
-            };
-
-            // Check if it's a Web ReadableStream or Node.js stream
-            if (typeof (response.body as any).getReader === 'function') {
-                // Web ReadableStream approach
-                console.log('Using Web ReadableStream approach');
-                const reader = (response.body as ReadableStream).getReader();
-                const decoder = new TextDecoder();
-
-                streamCleanup = () => {
-                    console.log('🔧 Canceling Web ReadableStream...');
-                    reader.cancel().catch(console.error);
+                const completeDemo = () => {
+                    if (isCompleted) return;
+                    isCompleted = true;
+                    try { abortController.abort(); } catch {}
+                    console.log('🎉 Demo completed successfully - closing stream');
+                    resolve();
                 };
 
-                const processWebStream = async () => {
+                let amountOfResults = 0;
+                const processEvent = (eventType: string, data: any) => {
+                    if (eventType === 'up-to-date') {
+                        console.log('🔄 up-to-date received: ', amountOfResults);
+                        if (amountOfResults === 0) {
+                            setTimeout(async () => {
+                                if (addAliceCallback) {
+                                    console.log('🚀 Starting interactive sequence (adding alice\'s name)...');
+                                    try { await addAliceCallback(); } catch (e) { console.error(e); reject(e); }
+                                }
+                            }, 1000);
+                        } else {
+                            setTimeout(async () => {
+                                if (removeAliceCallback) {
+                                    console.log('🚀 New result received, triggering removal...');
+                                    try { await removeAliceCallback(); } catch (e) { console.error(e); reject(e); }
+                                }
+                            }, 1000);
+                        }
+                    } else if (eventType === 'addition') {
+                        console.log('➕ Addition event received:');
+                        if (data.results?.bindings) {
+                            const result: any = {};
+                            for (const [key, value] of Object.entries(data.bindings)) {
+                                amountOfResults++;
+                                result[key] = (value as any).value;
+                            }
+                            console.log('   bindings:', JSON.stringify(result, null, 2));
+                        }
+                    } else if (eventType === 'deletion') {
+                        console.log('➖ Deletion event received:');
+                        if (data.results?.bindings) {
+                            const result: any = {};
+                            for (const [key, value] of Object.entries(data.results.bindings)) {
+                                amountOfResults--;
+                                result[key] = (value as any).value;
+                            }
+                            console.log('   bindings:', JSON.stringify(result, null, 2));
+                        }
+                        completeDemo();
+                    } else if (eventType === 'heartbeat') {
+                        console.log('💓 Heartbeat received');
+                    }
+                };
+
+                // Web ReadableStream
+                if (typeof (response.body as any).getReader === 'function') {
+                    const reader = (response.body as ReadableStream).getReader();
+                    const decoder = new TextDecoder();
                     try {
                         while (!isCompleted) {
                             const { done, value } = await reader.read();
-
-                            if (done) {
-                                console.log('📡 SSE stream ended');
-                                if (!isCompleted) {
-                                    resolve();
-                                }
-                                return;
-                            }
-
+                            if (done) break;
                             buffer += decoder.decode(value, { stream: true });
                             const lines = buffer.split('\n');
                             buffer = lines.pop() || '';
-
                             for (const line of lines) {
-                                if (line.startsWith('event: ')) {
-                                    currentEventType = line.substring(7);
-                                    continue;
-                                }
-
+                                if (line.startsWith('event: ')) { currentEventType = line.substring(7); continue; }
                                 if (line.startsWith('data: ')) {
                                     const data = line.substring(6);
-                                    try {
-                                        const parsedData = JSON.parse(data);
-                                        processEvent(currentEventType, parsedData);
-                                    } catch (e) {
-                                        // Ignore JSON parsing errors for heartbeat or other non-JSON data
-                                    }
+                                    try { processEvent(currentEventType, JSON.parse(data)); } catch {}
                                 }
                             }
                         }
-                    } catch (error) {
-                        if (!isCompleted) {
-                            console.error('❌ Error processing Web stream:', error);
-                            reject(error);
-                        }
+                    } finally {
+                        try { reader.cancel(); } catch {}
                     }
-                };
-
-                processWebStream().catch((error) => {
-                    if (!isCompleted) {
-                        reject(error);
-                    }
-                });
-
-            } else if (typeof (response.body as any).on === 'function') {
-                // Node.js stream approach
-                console.log('Using Node.js stream approach');
-                const nodeStream = response.body as any;
-
-                streamCleanup = () => {
-                    console.log('🔧 Destroying Node.js stream...');
-                    try {
-                        if (nodeStream.destroy) {
-                            nodeStream.destroy();
-                        }
-                        if (nodeStream.close) {
-                            nodeStream.close();
-                        }
-                        // Also try to remove all listeners to ensure cleanup
-                        if (nodeStream.removeAllListeners) {
-                            nodeStream.removeAllListeners();
-                        }
-                        console.log('✅ Node.js stream cleanup completed');
-                    } catch (error) {
-                        console.error('❌ Error during stream cleanup:', error);
-                    }
-                };
-
-                nodeStream.on('data', (chunk: Buffer) => {
-                    if (isCompleted) return;
-
-                    buffer += chunk.toString();
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop() || '';
-
-                    for (const line of lines) {
-                        if (line.startsWith('event: ')) {
-                            currentEventType = line.substring(7);
-                            continue;
-                        }
-
-                        if (line.startsWith('data: ')) {
-                            const data = line.substring(6);
-                            try {
-                                const parsedData = JSON.parse(data);
-                                processEvent(currentEventType, parsedData);
-                            } catch (e) {
-                                // Ignore JSON parsing errors for heartbeat or other non-JSON data
+                // Node.js stream
+                } else if (typeof (response.body as any).on === 'function') {
+                    const nodeStream = response.body as any;
+                    await new Promise<void>((res, rej) => {
+                        nodeStream.on('data', (chunk: Buffer) => {
+                            if (isCompleted) return;
+                            buffer += chunk.toString();
+                            const lines = buffer.split('\n');
+                            buffer = lines.pop() || '';
+                            for (const line of lines) {
+                                if (line.startsWith('event: ')) { currentEventType = line.substring(7); continue; }
+                                if (line.startsWith('data: ')) {
+                                    const data = line.substring(6);
+                                    try { processEvent(currentEventType, JSON.parse(data)); } catch {}
+                                }
                             }
-                        }
-                    }
-                });
-
-                nodeStream.on('end', () => {
-                    console.log('📡 SSE stream ended');
-                    if (!isCompleted) {
-                        resolve();
-                    }
-                });
-
-                nodeStream.on('error', (error: Error) => {
-                    if (!isCompleted) {
-                        console.error('❌ SSE stream error:', error);
-                        reject(error);
-                    }
-                });
-
-            } else {
-                // Fallback: try to use response.text() and parse manually
-                console.log('Using fallback text() approach');
-                response.text().then((text: string) => {
+                        });
+                        nodeStream.on('end', () => res());
+                        nodeStream.on('error', (e: Error) => rej(e));
+                    });
+                } else {
+                    // Fallback
+                    const text = await response.text();
                     console.log('📊 Received complete response:', text);
-                    resolve();
-                }).catch(reject);
+                }
+            } catch (e: any) {
+                // Only swallow aborts triggered by our own completion; otherwise reject so caller can see the error
+                if (e && e.name === 'AbortError' && isCompleted) {
+                    return;
+                }
+                if (!isCompleted) {
+                    return reject(e);
+                }
             }
+        };
 
-            // Set up the callback functions
-            addAliceCallback = async () => {
-                console.log('📝 Adding Alice\'s name to her pod (using INSERT DATA - safe, additive)...');
-                const response = await umaFetch('http://localhost:3000/alice/profile/card', {
-                    method: "PATCH",
-                    headers: {
-                        "Content-Type": "application/sparql-update"
-                    },
-                    body: `
+        // Set up the callback functions (use umaFetch so Solid auth applies)
+        addAliceCallback = async () => {
+            console.log('📝 Adding Alice\'s name to her pod (using INSERT DATA - safe, additive)...');
+            const response = await umaFetch('http://localhost:3000/alice/profile/card', {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/sparql-update"
+                },
+                body: `
                         PREFIX foaf: <http://xmlns.com/foaf/0.1/>
                         INSERT DATA {
                             <http://localhost:3000/alice/profile/card#me> foaf:name "Alice Smith" .
                         }
                     `
-                });
+            });
+            if (!response.ok) {
+                throw new Error(`Failed to add name: ${response.status} - ${await response.text()}`);
+            }
+            console.log('✅ Alice\'s name added successfully (existing data preserved)');
+        };
 
-                if (!response.ok) {
-                    throw new Error(`Failed to add name: ${response.status} - ${await response.text()}`);
-                }
-
-                console.log('✅ Alice\'s name added successfully (existing data preserved)');
-            };
-
-            removeAliceCallback = async () => {
-                console.log('🗑️ Removing Alice\'s name from her pod (using DELETE DATA - safe, only removes specific triple)...');
-                const response = await umaFetch('http://localhost:3000/alice/profile/card', {
-                    method: "PATCH",
-                    headers: {
-                        "Content-Type": "application/sparql-update"
-                    },
-                    body: `
+        removeAliceCallback = async () => {
+            console.log('🗑️ Removing Alice\'s name from her pod (using DELETE DATA - safe, only removes specific triple)...');
+            const response = await umaFetch('http://localhost:3000/alice/profile/card', {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/sparql-update"
+                },
+                body: `
                         PREFIX foaf: <http://xmlns.com/foaf/0.1/>
                         DELETE DATA {
                             <http://localhost:3000/alice/profile/card#me> foaf:name "Alice Smith" .
                         }
                     `
-                });
+            });
+            if (!response.ok) {
+                throw new Error(`Failed to remove name: ${response.status} - ${await response.text()}`);
+            }
+            console.log('✅ Alice\'s name removed successfully (other data preserved)');
+        };
 
-                if (!response.ok) {
-                    throw new Error(`Failed to remove name: ${response.status} - ${await response.text()}`);
+        try {
+            let { token, expiresAtMs, sessionId } = await getStreamToken(auth, actorUrl);
+            runStream(token);
+            while (!isCompleted) {
+                const refreshAt = expiresAtMs - 1100;
+                while (!isCompleted && Date.now() < refreshAt) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
                 }
-
-                console.log('✅ Alice\'s name removed successfully (other data preserved)');
-            };
-
-        }).catch(reject);
+                if (isCompleted) break;
+                console.log('🔁 Refreshing SSE stream session');
+                const start = process.hrtime();
+                ({ expiresAtMs } = await refreshStreamToken(auth, actorUrl, sessionId));
+                const end = process.hrtime(start);
+                console.log(`🔁 Refreshed SSE stream session (success in ${end[0]}s ${Math.round(end[1] / 1e6)}ms)`);
+            }
+        } catch (e) {
+            if (!isCompleted) return reject(e);
+        }
     });
 }
 
@@ -419,9 +350,9 @@ async function main() {
         // Step 3: Check current profile content
         await checkAliceProfile(umaFetch);
 
-        // Step 4: Connect to SSE and wait for the interactive sequence to complete
-        console.log('🔗 Setting up interactive SSE connection...');
-        await connectToSSE(sseUrl, umaFetch);
+        // Step 4: Connect to SSE with stream token flow
+        console.log('🔗 Setting up interactive SSE connection (with stream token management)...');
+        await connectToSSE(sseUrl, umaFetch, auth);
 
         // The connectToSSE promise will only resolve when the demo is complete
         console.log('\n🏁 Demo completed successfully!');
