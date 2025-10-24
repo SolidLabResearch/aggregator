@@ -1,0 +1,142 @@
+# ------------------------
+# 2️⃣ Service Account
+# ------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aggregator-sa
+  namespace: aggregator-ns
+# ServiceAccount is used to give the aggregator Pod credentials to access the Kubernetes API
+---
+# ------------------------
+# 3️⃣ Role
+# ------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aggregator-role
+  namespace: aggregator-ns
+rules:
+  - apiGroups: [""]  # "" indicates the core API group
+    resources: ["pods", "services"]  # The aggregator can manage Pods and Services
+    verbs: ["get", "list", "create", "delete", "watch"]  # Allowed actions on these resources
+---
+# ------------------------
+# 4️⃣ RoleBinding
+# ------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aggregator-rolebinding
+  namespace: aggregator-ns
+subjects:
+  - kind: ServiceAccount
+    name: aggregator-sa
+    namespace: aggregator-ns
+roleRef:
+  kind: Role
+  name: aggregator-role
+  apiGroup: rbac.authorization.k8s.io
+# RoleBinding attaches the Role to the aggregator ServiceAccount so it has permissions
+---
+# ------------------------
+# 5️⃣ Deployment
+# ------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aggregator
+  namespace: aggregator-ns
+spec:
+  replicas: 1  # Only one aggregator Pod for now
+  selector:
+    matchLabels:
+      app: aggregator
+  template:
+    metadata:
+      labels:
+        app: aggregator
+    spec:
+      serviceAccountName: aggregator-sa  # Use the ServiceAccount with RBAC permissions
+      containers:
+        - name: aggregator
+          image: aggregator
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 5000  # Aggregator HTTP server listens here
+          env:
+            # ------------------------
+            # Log level configuration
+            # ------------------------
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: log_level
+            # ------------------------
+            # WebID and credentials
+            # ------------------------
+            - name: WEB_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: web_id
+            - name: EMAIL
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: email
+            - name: PASSWORD
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: password
+            # ------------------------
+            # In-cluster configuration
+            # ------------------------
+            - name: AGGREGATOR_HOST
+              value: "aggregator.aggregator-ns.svc.cluster.local" # Internal DNS hostname for other Pods
+            - name: AGGREGATOR_PORT
+              value: "5000" # Internal port for in-cluster access
+            # ------------------------
+            # External configuration
+            # ------------------------
+            - name: AGGREGATOR_EXTERNAL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: aggregator_external_host
+            - name: AGGREGATOR_EXTERNAL_PORT
+              value: "30500"        # NodePort exposed externally
+            # ------------------------
+            # Authorization configuration
+            # ------------------------
+            - name: AS_ISSUER
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: as_issuer
+                  optional: true
+            # ------------------------
+            # Transformation configuration
+            # ------------------------
+            - name: TRANSFORMATION
+              value: "comunica"
+---
+# ------------------------
+# 6️⃣ Service
+# ------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: aggregator
+  namespace: aggregator-ns
+spec:
+  type: NodePort  # Exposes the service externally on a specific port
+  selector:
+    app: aggregator  # Targets Pods with this label
+  ports:
+    - port: 5000       # Internal port inside cluster
+      targetPort: 5000 # Container port
+      nodePort: 30500  # External port accessible via Minikube IP
+# Clients outside Minikube can reach the aggregator via http://<minikube-ip>:30500

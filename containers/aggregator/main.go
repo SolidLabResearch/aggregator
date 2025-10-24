@@ -3,86 +3,116 @@ package main
 import (
 	"aggregator/auth"
 	"aggregator/proxy"
-	"flag"
-	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/util/homedir"
-	"net/http"
-	"os"
-	"os/signal"
-	"path/filepath"
-	"strings"
-	"syscall"
+	"k8s.io/client-go/rest"
 )
 
+// Network configuration
 var Protocol = "http"
-var Host = "localhost"
-var ServerPort = "5000"
-var LogLevel = logrus.InfoLevel
+var InternalHost string
+var InternalPort string
+var ExternalHost string
+var ExternalPort string
+
+// OICD
+var webId string
+var email string
+var password string
+
+// Logging
+var LogLevel logrus.Level
 
 var Clientset *kubernetes.Clientset
 
 func main() {
-	// Define CLI flags for Solid OIDC configuration
-	webId := flag.String("webid", "", "WebID for Solid OIDC authentication")
-	email := flag.String("email", "", "Email for CSS account login")
-	password := flag.String("password", "", "Password for CSS account login")
-	logLevelPtr := flag.String("log-level", "info", "Logging verbosity (debug, info, warn, error)")
-	flag.Parse()
-
-	logLevelValue := strings.ToLower(*logLevelPtr)
-	parsedLevel, err := logrus.ParseLevel(logLevelValue)
+	// ------------------------
+	// Set up logging
+	// ------------------------
+	LogLevel, err := logrus.ParseLevel(strings.ToLower(os.Getenv("LOG_LEVEL")))
 	if err != nil {
-		parsedLevel = logrus.InfoLevel
+		LogLevel = logrus.InfoLevel
 	}
-	LogLevel = parsedLevel
 	logrus.SetLevel(LogLevel)
 	logrus.SetOutput(os.Stdout)
 
-	config, err := clientcmd.BuildConfigFromFlags("", filepath.Join(homedir.HomeDir(), ".kube", "config"))
-	if err != nil {
-		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to load Kubernetes config")
-		os.Exit(1)
-	}
-	Clientset, err = kubernetes.NewForConfig(config)
-	if err != nil {
-		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to create Kubernetes client")
-		os.Exit(1)
+	// ------------------------
+	// Read host and port from environment variables
+	// ------------------------
+	InternalHost = os.Getenv("AGGREGATOR_HOST")
+	InternalPort = os.Getenv("AGGREGATOR_PORT")
+
+	if InternalHost == "" || InternalPort == "" {
+		logrus.Fatal("Environment variables AGGREGATOR_HOST and AGGREGATOR_PORT must be set")
 	}
 
-	// Validate and warn about Solid OIDC configuration
-	if *webId == "" || *email == "" || *password == "" {
+	ExternalHost = os.Getenv("AGGREGATOR_EXTERNAL_HOST")
+	ExternalPort = os.Getenv("AGGREGATOR_EXTERNAL_PORT")
+
+	if ExternalHost == "" || ExternalPort == "" {
+		logrus.Fatal("Environment variables AGGREGATOR_EXTERNAL_HOST and AGGREGATOR_EXTERNAL_PORT must be set")
+	}
+
+	// ------------------------
+	// Set up OIDC
+	// ------------------------
+	webId = os.Getenv("WEB_ID")
+	email = os.Getenv("EMAIL")
+	password = os.Getenv("PASSWORD")
+
+	if webId == "" || email == "" || password == "" {
 		logrus.Warn("⚠️  WARNING: Solid OIDC configuration incomplete")
-		if *webId == "" {
-			logrus.Warn("⚠️  Missing --webid argument")
+		if webId == "" {
+			logrus.Warn("⚠️  Missing WEB_ID environment variable")
 		}
-		if *email == "" {
-			logrus.Warn("⚠️  Missing --email argument")
+		if email == "" {
+			logrus.Warn("⚠️  Missing EMAIL environment variable")
 		}
-		if *password == "" {
-			logrus.Warn("⚠️  Missing --password argument")
+		if password == "" {
+			logrus.Warn("⚠️  Missing PASSWORD environment variable")
 		}
 		logrus.Warn("⚠️  UMA proxy will run WITHOUT authentication - requests will be passed through as-is")
 	}
 
-	// Setup proxy with Solid OIDC configuration
+	// ------------------------
+	// Load in-cluster kubeConfig
+	// ------------------------
+	kubeConfig, err := rest.InClusterConfig()
+	if err != nil {
+		logrus.Fatalf("Failed to load in-cluster config: %v", err)
+	}
+
+	Clientset, err = kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		logrus.Fatalf("Failed to create Kubernetes client: %v", err)
+	}
+
+	// ------------------------
+	// Set up UMA proxy
+	// ------------------------
 	proxyConfig := proxy.ProxyConfig{
-		WebId:    *webId,
-		Email:    *email,
-		Password: *password,
-		LogLevel: logLevelValue,
+		WebId:    webId,
+		Email:    email,
+		Password: password,
+		LogLevel: LogLevel.String(),
 	}
 	proxy.SetupProxy(Clientset, proxyConfig)
 
+	// ------------------------
+	// Start HTTP server
+	// ------------------------
 	serverMux := http.NewServeMux()
-
 	go func() {
-		logrus.WithFields(logrus.Fields{"port": ServerPort}).Info("Server listening")
-		if err := http.ListenAndServe(":"+ServerPort, serverMux); err != nil {
+		logrus.WithFields(logrus.Fields{"port": InternalPort}).Info("Server listening")
+		if err := http.ListenAndServe(":"+InternalPort, serverMux); err != nil {
 			logrus.WithFields(logrus.Fields{"err": err}).Error("HTTP server failed")
 			os.Exit(1)
 		}
@@ -91,7 +121,7 @@ func main() {
 	InitializeKubernetes(serverMux)
 	startConfigurationEndpoint(serverMux)
 	SetupResourceRegistration()
-	InitAuthProxy(serverMux, fmt.Sprintf("%s://%s:%s", Protocol, Host, ServerPort))
+	// InitAuthProxy(serverMux, fmt.Sprintf("%s://%s:%s", Protocol, Host, ServerPort))
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)

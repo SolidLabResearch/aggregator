@@ -9,18 +9,31 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/golang-jwt/jwt/v4"
-	"github.com/sirupsen/logrus"
 	"io"
 	"math/big"
 	"net/http"
+	"os"
 	"runtime/debug"
 	"strings"
+
+	"github.com/golang-jwt/jwt/v4"
+	"github.com/sirupsen/logrus"
 )
 
-const AS_ISSUER = "http://localhost:4000/uma"
+// AS_ISSUER is read from environment variable
+var AS_ISSUER string
+var AS_DEFINED bool
+
+func init() {
+	AS_ISSUER, AS_DEFINED = os.LookupEnv("AS_ISSUER")
+}
 
 func AuthorizeRequest(response http.ResponseWriter, request *http.Request, extraPermissions []Permission) bool {
+	// ✅ If AS_ISSUER is not set, always authorize
+	if !AS_DEFINED {
+		return true
+	}
+
 	// check if Authorization header is present, if not create ticket
 	if request.Header.Get("Authorization") == "" {
 		logrus.WithFields(logrus.Fields{"method": request.Method, "path": request.URL.Path}).Warn("🔐 Authorization header missing")
@@ -132,14 +145,6 @@ func AuthorizeRequest(response http.ResponseWriter, request *http.Request, extra
 	return false
 }
 
-type UmaConfig struct {
-	jwksUri                      string
-	issuer                       string
-	permissionEndpoint           string
-	introspectionEndpoint        string
-	resourceRegistrationEndpoint string
-}
-
 type Permission struct {
 	ResourceID     string   `json:"resource_id"`
 	ResourceScopes []string `json:"resource_scopes"`
@@ -174,7 +179,7 @@ func fetchTicket(permissions map[string][]string, issuer string) (string, error)
 		return "", err
 	}
 
-	req, err := http.NewRequest("POST", config.permissionEndpoint, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", config.PermissionEndpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", err
 	}
@@ -208,7 +213,7 @@ func fetchTicket(permissions map[string][]string, issuer string) (string, error)
 			"error while retrieving UMA Ticket: Received status %d with message \"%s\" from '%s'",
 			resp.StatusCode,
 			bodyString,
-			config.permissionEndpoint,
+			config.PermissionEndpoint,
 		)
 	}
 
@@ -278,7 +283,7 @@ func verifyTicket(token string, validIssuers []string) ([]Permission, error) {
 	claims := &UmaClaims{}
 	parser := jwt.NewParser()
 	parsedToken, err := parser.ParseWithClaims(token, claims, func(t *jwt.Token) (interface{}, error) {
-		return fetchAndSelectKey(config.jwksUri, "TODO")
+		return fetchAndSelectKey(config.JwksUri, "TODO")
 
 		// Auth server doesn't have kid's so we just return the first key
 		/*
@@ -473,70 +478,6 @@ func decodeJwtPayload(tokenString string) (map[string]interface{}, error) {
 	return payload, nil
 }
 
-var REQUIRED_METADATA = []string{
-	"issuer",
-	"jwks_uri",
-	"permission_endpoint",
-	"introspection_endpoint",
-	"resource_registration_endpoint",
-}
-
-func fetchUmaConfig(issuer string) (UmaConfig, error) {
-	resp, err := http.Get(issuer + "/.well-known/uma2-configuration")
-	if err != nil {
-		return UmaConfig{}, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return UmaConfig{}, fmt.Errorf(
-			"unable to retrieve UMA Configuration for Authorization Server '%s' from '%s'",
-			issuer,
-			issuer+"/.well-known/uma2-configuration",
-		)
-	}
-
-	var configuration map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&configuration); err != nil {
-		return UmaConfig{}, err
-	}
-
-	var umaConfig UmaConfig
-	for _, value := range REQUIRED_METADATA {
-		val, ok := configuration[value]
-		if !ok {
-			return UmaConfig{}, fmt.Errorf(
-				"the Authorization Server Metadata of '%s' is missing attributes %s",
-				issuer,
-				value,
-			)
-		}
-		strVal, ok := val.(string)
-		if !ok {
-			return UmaConfig{}, fmt.Errorf(
-				"the Authorization Server Metadata of '%s' should have string attributes %s",
-				issuer,
-				value,
-			)
-		} else {
-			switch value {
-			case "issuer":
-				umaConfig.issuer = strVal
-			case "jwks_uri":
-				umaConfig.jwksUri = strVal
-			case "permission_endpoint":
-				umaConfig.permissionEndpoint = strVal
-			case "introspection_endpoint":
-				umaConfig.introspectionEndpoint = strVal
-			case "resource_registration_endpoint":
-				umaConfig.resourceRegistrationEndpoint = strVal
-			}
-		}
-	}
-
-	return umaConfig, nil
-}
-
 var idIndex = make(map[string]string)
 
 // ResourceScope enum-like type for UMA resource scopes
@@ -558,7 +499,7 @@ func CreateResource(resourceId string, resourceScopes []ResourceScope) error {
 	}
 
 	knownUmaId := idIndex[resourceId]
-	endpoint := config.resourceRegistrationEndpoint
+	endpoint := config.ResourceRegistrationEndpoint
 	method := "POST"
 	if knownUmaId != "" {
 		endpoint = endpoint + "/" + knownUmaId
@@ -650,7 +591,7 @@ func DeleteResource(resourceId string) {
 
 	req, err := http.NewRequest(
 		"DELETE",
-		config.resourceRegistrationEndpoint+"/"+authId,
+		config.ResourceRegistrationEndpoint+"/"+authId,
 		nil,
 	)
 	if err != nil {
@@ -694,7 +635,7 @@ func DeleteAllResources() {
 
 		req, err := http.NewRequest(
 			"DELETE",
-			config.resourceRegistrationEndpoint+authId,
+			config.ResourceRegistrationEndpoint+authId,
 			&bytes.Buffer{},
 		)
 		if err != nil {

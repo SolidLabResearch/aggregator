@@ -1,0 +1,16 @@
+# ------------------------
+# 🔹 ConfigMap
+# ------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aggregator-config
+  namespace: aggregator-ns
+data:
+  # Comment AS_ISSUER out if you do not need UMA Authorization
+  aggregator_external_host: "$MINIKUBE-IP"  # Set automatically during minikube-deploy
+  # as_issuer: "$UMA-IP"                    # Replace with your auth server if needed
+  web_id: "$WEB-ID"                         # Replace with your WebID
+  email: "$EMAIL"                           # Replace with your email
+  password: "$PASSWORD"                     # Replace with your password
+  log_level: "info"                         # Set log level (debug, info, warn, error)

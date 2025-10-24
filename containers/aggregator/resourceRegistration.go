@@ -5,15 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/sirupsen/logrus"
-	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"net"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/sirupsen/logrus"
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 const resourceSubscriptionPort = "4449"
@@ -147,7 +148,7 @@ func handleResourceRegistration(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"status":       "success",
 		"message":      fmt.Sprintf("Resource %s successfully", action),
-		"external_url": fmt.Sprintf("%s://%s:%s/%s%s", Protocol, Host, ServerPort, actorID, registration.Endpoint),
+		"external_url": fmt.Sprintf("%s://%s:%s/%s%s", Protocol, ExternalHost, ExternalPort, actorID, registration.Endpoint),
 		"actor_id":     actorID,
 	}
 
@@ -315,7 +316,7 @@ func registerResourceWithUMA(actorID string, registration *ResourceRegistration)
 	}
 
 	// Create the resource ID - this should match the external URL pattern
-	resourceID := fmt.Sprintf("%s://%s:%s/%s%s", Protocol, Host, ServerPort, actorID, registration.Endpoint)
+	resourceID := fmt.Sprintf("%s://%s:%s/%s%s", Protocol, ExternalHost, ExternalPort, actorID, registration.Endpoint)
 
 	// Register the resource with UMA
 	if err := auth.CreateResource(resourceID, resourceScopes); err != nil {

@@ -5,11 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"github.com/sirupsen/logrus"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/sirupsen/logrus"
 )
 
 type ConfigurationData struct {
@@ -39,7 +40,7 @@ func startConfigurationEndpoint(mux *http.ServeMux) {
 func (data ConfigurationData) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), resourceScopes []auth.ResourceScope) {
 	data.serveMux.HandleFunc(pattern, handler)
 	auth.CreateResource(
-		fmt.Sprintf("%s://%s:%s%s", Protocol, Host, ServerPort, pattern),
+		fmt.Sprintf("%s://%s:%s%s", Protocol, ExternalHost, ExternalPort, pattern),
 		resourceScopes,
 	)
 }
@@ -234,7 +235,7 @@ func (data ConfigurationData) deleteActor(response http.ResponseWriter, _ *http.
 	response.WriteHeader(http.StatusOK)
 
 	auth.DeleteResource(
-		fmt.Sprintf("%s://%s:%s/config/actors/%s", Protocol, Host, ServerPort, actor.Id),
+		fmt.Sprintf("%s://%s:%s/config/actors/%s", Protocol, ExternalHost, ExternalPort, actor.Id),
 	)
 }
 

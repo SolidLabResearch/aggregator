@@ -10,12 +10,13 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"github.com/sirupsen/logrus"
 	"io"
 	"math/big"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -116,7 +117,6 @@ func setPrivateKey(keyFilePath string) {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("Error writing RSA key to file")
 		return
 	}
-	return
 }
 
 // makeJWKFromRSAPrivateKey produces a Jwk containing the public portion
@@ -146,7 +146,7 @@ func makeJWKFromRSAPrivateKey(kid string) (Jwk, error) {
 func doSignedRequest(req *http.Request) (*http.Response, error) {
 	// 1) Put your domain in the Authorization header as cred="..."
 	//    The Node server uses that to fetch your JWK from JWKS
-	req.Header.Set("Authorization", fmt.Sprintf(`HttpSig cred=%q`, "http://localhost:5000"))
+	req.Header.Set("Authorization", fmt.Sprintf(`HttpSig cred=%q`, "http://localhost:5000")) // What is this hard-coded value?
 
 	label := "sig1"
 
