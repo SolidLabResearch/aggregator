@@ -1,4 +1,4 @@
-.PHONY: minikube-init minikube-start minikube-stop minikube-dashboard-start \
+.PHONY: minikube-init minikube-init-wsl minikube-start minikube-start-wsl minikube-stop minikube-dashboard-start \
 	containers-build containers-load containers-all \
 	minikube-generate-key-pair \
 	enable-localhost disable-localhost \
@@ -12,11 +12,16 @@
 
 # Initialize Minikube, build/load containers, generate keys, deploy YAML manifests, start dashboard
 minikube-init: minikube-start containers-all minikube-generate-key-pair minikube-dashboard-start
+minikube-init-wsl: minikube-start-wsl containers-all minikube-generate-key-pair minikube-dashboard-start
 
 # Start Minikube with Docker driver
 minikube-start:
 	@echo "🚀 Starting Minikube with Docker driver..."
 	@minikube start --driver=docker
+
+minikube-start-wsl:
+	@echo "🚀 Starting Minikube with Docker driver..."
+	@minikube start --driver=docker --ports=127.0.0.1:30500:30500
 
 # Stop and delete the Minikube cluster (clean up)
 minikube-stop:
@@ -36,24 +41,41 @@ minikube-dashboard-start:
 # Build Docker images
 containers-build:
 	@echo "🔨 Building Docker images for containers..."
-	@for dir in containers/*; do \
+	@if [ -n "$(CONTAINER)" ]; then \
+		dir="containers/$(CONTAINER)"; \
 		if [ -d "$$dir" ]; then \
-			name=$$(basename $$dir); \
-			echo "📦 Building $$name..."; \
-			docker build "$$dir" -t "$$name:latest"; \
+			echo "📦 Building $(CONTAINER)..."; \
+			docker build "$$dir" -t "$(CONTAINER):latest"; \
+		else \
+			echo "❌ Container $(CONTAINER) does not exist!"; \
+			exit 1; \
 		fi \
-	done
+	else \
+		for dir in containers/*; do \
+			if [ -d "$$dir" ]; then \
+				name=$$(basename $$dir); \
+				echo "📦 Building $$name..."; \
+				docker build "$$dir" -t "$$name:latest"; \
+			fi \
+		done \
+	fi
 
 # Load Docker images into Minikube
 containers-load:
 	@echo "📤 Loading container images into Minikube..."
-	@for dir in containers/*; do \
-		if [ -d "$$dir" ]; then \
-			name=$$(basename $$dir); \
-			echo "📥 Loading $$name into Minikube..."; \
-			minikube image load "$$name:latest"; \
-		fi \
-	done
+	@if [ -n "$(CONTAINER)" ]; then \
+		name="$(CONTAINER)"; \
+		echo "📥 Loading $$name into Minikube..."; \
+		minikube image load "$$name:latest"; \
+	else \
+		for dir in containers/*; do \
+			if [ -d "$$dir" ]; then \
+				name=$$(basename $$dir); \
+				echo "📥 Loading $$name into Minikube..."; \
+				minikube image load "$$name:latest"; \
+			fi \
+		done \
+	fi
 
 # Build and load all containers
 containers-all: containers-build containers-load
@@ -63,6 +85,18 @@ containers-all: containers-build containers-load
 # ------------------------
 
 minikube-deploy:
+	@echo "🔑 Generating temporary key pair for uma-proxy..."
+	@openssl genrsa -out uma-proxy.key 4096
+	@openssl req -x509 -new -nodes -key uma-proxy.key -sha256 -days 3650 -out uma-proxy.crt -subj "/CN=Aggregator MITM CA"
+	@echo "📄 Applying namespaces..."
+	@kubectl apply -f k8s/aggregator/aggregator-ns.yaml
+	@echo "📄 Applying resources..."
+	@export MINIKUBE_IP=$$(minikube ip); \
+	envsubst < k8s/aggregator/aggregator-config.yaml | kubectl apply -f -; \
+	kubectl apply -f k8s/aggregator/aggregator.yaml
+	@echo "✅ Resources deployed to Minikube"
+
+minikube-deploy-uma:
 	@echo "🔑 Generating temporary key pair for uma-proxy..."
 	@openssl genrsa -out uma-proxy.key 4096
 	@openssl req -x509 -new -nodes -key uma-proxy.key -sha256 -days 3650 -out uma-proxy.crt -subj "/CN=Aggregator MITM CA"
@@ -82,7 +116,6 @@ minikube-deploy:
 	@echo "🗑️ Cleaning up generated key pair files..."
 	@rm uma-proxy.crt uma-proxy.key
 	@echo "✅ Resources deployed to Minikube"
-
 # ------------------------
 # Cleanup Minikube deployment
 # ------------------------
@@ -101,12 +134,3 @@ minikube-clean:
 	@echo "🧹 Deleting uma-proxy namespace..."
 	@kubectl delete namespace uma-proxy-ns --ignore-not-found
 	@echo "✅ Cleanup complete."
-
-# ------------------------
-# Aggregator port-forward for WSL
-# ------------------------
-
-# Start port-forward
-expose-aggregator:
-	@echo "🚀 Port-forwarding aggregator to localhost:5000..."
-	@kubectl port-forward -n aggregator-ns deployment/aggregator 5000:5000

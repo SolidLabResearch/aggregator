@@ -2,7 +2,6 @@ package main
 
 import (
 	"aggregator/auth"
-	"aggregator/proxy"
 	"net/http"
 	"os"
 	"os/signal"
@@ -98,13 +97,14 @@ func main() {
 	// ------------------------
 	// Set up UMA proxy
 	// ------------------------
-	proxyConfig := proxy.ProxyConfig{
+	/* proxyConfig := proxy.ProxyConfig{
 		WebId:    webId,
 		Email:    email,
 		Password: password,
 		LogLevel: LogLevel.String(),
 	}
 	proxy.SetupProxy(Clientset, proxyConfig)
+	*/
 
 	// ------------------------
 	// Start HTTP server
@@ -128,42 +128,43 @@ func main() {
 
 	<-stop // wait for signal
 	logrus.Info("Shutting down gracefully...")
-	// remove all pods (including proxy?)
+
+	// ------------------------
+	// 2. Remove remaining pods
+	// ------------------------
 	pods, err := Clientset.CoreV1().Pods("default").List(context.Background(), metav1.ListOptions{})
 	if err != nil {
-		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to list pods during shutdown")
-		os.Exit(1)
+		logrus.Fatal(err)
 	}
-
 	for _, pod := range pods.Items {
 		err := Clientset.CoreV1().Pods(pod.Namespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{})
 		if err != nil {
-			logrus.WithFields(logrus.Fields{"namespace": pod.Namespace, "name": pod.Name, "err": err}).Error("Failed to delete pod")
+			logrus.Errorf("Failed to delete pod %s/%s: %v", pod.Namespace, pod.Name, err)
 		} else {
-			logrus.WithFields(logrus.Fields{"namespace": pod.Namespace, "name": pod.Name}).Info("Deleted pod")
+			logrus.Infof("Deleted pod: %s/%s", pod.Namespace, pod.Name)
 		}
 	}
 
+	// ------------------------
+	// 3. Remove remaining services
+	// ------------------------
 	services, err := Clientset.CoreV1().Services("default").List(context.Background(), metav1.ListOptions{})
 	if err != nil {
-		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to list services during shutdown")
-		os.Exit(1)
+		logrus.Fatal(err)
 	}
-
 	for _, svc := range services.Items {
-		// Skip the critical Kubernetes API service
 		if svc.Name == "kubernetes" {
 			continue
 		}
 		err := Clientset.CoreV1().Services(svc.Namespace).Delete(context.Background(), svc.Name, metav1.DeleteOptions{})
 		if err != nil {
-			logrus.WithFields(logrus.Fields{"namespace": svc.Namespace, "name": svc.Name, "err": err}).Error("Failed to delete service")
+			logrus.Errorf("Failed to delete service %s/%s: %v", svc.Namespace, svc.Name, err)
 		} else {
-			logrus.WithFields(logrus.Fields{"namespace": svc.Namespace, "name": svc.Name}).Info("Deleted service")
+			logrus.Infof("Deleted service: %s/%s", svc.Namespace, svc.Name)
 		}
 	}
 
-	logrus.Info("Cleanup complete. Exiting.")
+	logrus.Infof("Cleanup complete. Exiting.")
 
 	// let AS know that all resources need to be deleted
 	auth.DeleteAllResources()
