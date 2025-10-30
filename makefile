@@ -1,38 +1,45 @@
-.PHONY: minikube-init minikube-init-wsl minikube-start minikube-start-wsl minikube-stop minikube-dashboard-start \
+.PHONY: kind-init kind-start kind-stop kind-dashboard \
 	containers-build containers-load containers-all \
-	minikube-generate-key-pair \
+	kind-generate-key-pair \
 	enable-localhost disable-localhost \
-	minikube-deploy \
-	minikube-clean \
-	expose-aggregator close-aggregator
+	kind-deploy \
+	kind-clean
 
 # ------------------------
-# Minikube targets
+# Kind targets
 # ------------------------
 
-# Initialize Minikube, build/load containers, generate keys, deploy YAML manifests, start dashboard
-minikube-init: minikube-start containers-all minikube-generate-key-pair minikube-dashboard-start
-minikube-init-wsl: minikube-start-wsl containers-all minikube-generate-key-pair minikube-dashboard-start
+# Initialize kind cluster, build/load containers, generate keys, deploy YAML manifests
+kind-init: kind-start containers-all kind-generate-key-pair kind-dashboard
 
-# Start Minikube with Docker driver
-minikube-start:
-	@echo "🚀 Starting Minikube with Docker driver..."
-	@minikube start --driver=docker
+# Start kind cluster
+kind-start:
+	@echo "🚀 Creating kind cluster..."
+	@if ! kind get clusters | grep -q "aggregator"; then \
+		kind create cluster --name aggregator --config k8s/kind-config.yaml; \
+	else \
+		echo "Kind cluster 'aggregator' already exists."; \
+	fi
+	@echo "🚀 Configuring kubernetes dashboard"
+	@helm repo add kubernetes-dashboard https://kubernetes.github.io/dashboard/
+	@helm upgrade --install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard --create-namespace --namespace kubernetes-dashboard
+	@kubectl apply -f k8s/dashboard-admin.yaml
 
-minikube-start-wsl:
-	@echo "🚀 Starting Minikube with Docker driver..."
-	@minikube start --driver=docker --ports=127.0.0.1:30500:30500
+# Stop and delete kind cluster
+kind-stop:
+	@echo "🧹 Deleting kind cluster..."
+	@kind delete cluster --name aggregator
 
-# Stop and delete the Minikube cluster (clean up)
-minikube-stop:
-	@echo "🧹 Stopping and deleting Minikube..."
-	@minikube stop
-	@minikube delete
-
-# Deploy Minikube dashboard
-minikube-dashboard-start:
-	@echo "🚀 Starting kubectl proxy for Minikube dashboard..."
-	@minikube dashboard
+# Optional: dashboard (kubectl proxy)
+# Get token: kubectl get secret admin-user -n kubernetes-dashboard -o jsonpath="{.data.token}" | base64 -d
+kind-dashboard:
+	@echo "🚀 Starting kubectl proxy for Kubernetes dashboard..."
+	@kubectl wait --namespace kubernetes-dashboard \
+  	--for=condition=ready pod \
+  	--selector=app.kubernetes.io/instance=kubernetes-dashboard \
+  	--timeout=120s
+	@kubectl -n kubernetes-dashboard port-forward svc/kubernetes-dashboard-kong-proxy 8443:443
+	
 
 # ------------------------
 # Container targets
@@ -60,19 +67,19 @@ containers-build:
 		done \
 	fi
 
-# Load Docker images into Minikube
+# Load Docker images into kind
 containers-load:
-	@echo "📤 Loading container images into Minikube..."
+	@echo "📤 Loading container images into kind..."
 	@if [ -n "$(CONTAINER)" ]; then \
 		name="$(CONTAINER)"; \
-		echo "📥 Loading $$name into Minikube..."; \
-		minikube image load "$$name:latest"; \
+		echo "📥 Loading $$name into kind..."; \
+		kind load docker-image "$$name:latest" --name aggregator; \
 	else \
 		for dir in containers/*; do \
 			if [ -d "$$dir" ]; then \
 				name=$$(basename $$dir); \
-				echo "📥 Loading $$name into Minikube..."; \
-				minikube image load "$$name:latest"; \
+				echo "📥 Loading $$name into kind..."; \
+				kind load docker-image "$$name:latest" --name aggregator; \
 			fi \
 		done \
 	fi
@@ -83,54 +90,54 @@ containers-all: containers-build containers-load
 # ------------------------
 # Deploy YAML manifests with temporary key pair for uma-proxy
 # ------------------------
+kind-start-nginx:
+	@echo "📄 Deploying NGINX Ingress Controller..."
+	@kubectl apply -f https://kind.sigs.k8s.io/examples/ingress/deploy-ingress-nginx.yaml
 
-minikube-deploy:
-	@echo "🔑 Generating temporary key pair for uma-proxy..."
-	@openssl genrsa -out uma-proxy.key 4096
-	@openssl req -x509 -new -nodes -key uma-proxy.key -sha256 -days 3650 -out uma-proxy.crt -subj "/CN=Aggregator MITM CA"
-	@echo "📄 Applying namespaces..."
+	@echo "📄 Waiting for ingress controller to be ready..."
+	@kubectl wait --namespace ingress-nginx \
+	  --for=condition=ready pod \
+	  --selector=app.kubernetes.io/component=controller \
+	  --timeout=90s
+
+kind-deploy:
+	@echo "📄 Applying aggregator namespace..."
 	@kubectl apply -f k8s/aggregator/aggregator-ns.yaml
-	@echo "📄 Applying resources..."
-	@export MINIKUBE_IP=$$(minikube ip); \
-	envsubst < k8s/aggregator/aggregator-config.yaml | kubectl apply -f -; \
-	kubectl apply -f k8s/aggregator/aggregator.yaml
-	@echo "✅ Resources deployed to Minikube"
 
-minikube-deploy-uma:
-	@echo "🔑 Generating temporary key pair for uma-proxy..."
-	@openssl genrsa -out uma-proxy.key 4096
-	@openssl req -x509 -new -nodes -key uma-proxy.key -sha256 -days 3650 -out uma-proxy.crt -subj "/CN=Aggregator MITM CA"
-	@echo "📄 Applying namespaces..."
-	@kubectl apply -f k8s/uma-proxy-ns.yaml
-	@kubectl apply -f k8s/aggregator-ns.yaml
-	@echo "🔐 Creating Kubernetes secret for uma-proxy..."
-	@kubectl create secret generic uma-proxy-key-pair \
-		--from-file=uma-proxy.crt=uma-proxy.crt \
-		--from-file=uma-proxy.key=uma-proxy.key \
-		-n uma-proxy-ns --dry-run=client -o yaml | kubectl apply -f -
-	@echo "📄 Applying resources..."
-	@export MINIKUBE_IP=$$(minikube ip); \
-	envsubst < k8s/aggregator-config.yaml | kubectl apply -f -; \
-	kubectl apply -f k8s/uma-proxy.yaml; \
-	kubectl apply -f k8s/aggregator.yaml
-	@echo "🗑️ Cleaning up generated key pair files..."
-	@rm uma-proxy.crt uma-proxy.key
-	@echo "✅ Resources deployed to Minikube"
+	@echo "📄 Creating secret for ingress-uma..."
+	@kubectl -n aggregator-ns create secret generic ingress-uma-key \
+		--from-file=private_key.pem=k8s/aggregator/private_key.pem \
+		--dry-run=client -o yaml | kubectl apply -f -
+
+	@echo "📄 Applying aggregator ConfigMap..."
+	@kubectl apply -f k8s/aggregator/aggregator-config.yaml
+
+	@echo "📄 Applying aggregator deployment and service..."
+	@kubectl apply -f k8s/aggregator/aggregator.yaml
+
+	@echo "📄 Applying ingress-uma..."
+	@kubectl apply -f k8s/aggregator/ingress-uma.yaml
+
+	@echo "📄 Adding localhost entries for ingress hosts..."
+	@grep -qxF "127.0.0.1 aggregator.local" /etc/hosts || sudo -- sh -c "echo '127.0.0.1 aggregator.local' >> /etc/hosts"
+
+	@echo "✅ Resources deployed to kind"
+
 # ------------------------
-# Cleanup Minikube deployment
+# Cleanup kind deployment
 # ------------------------
 
-minikube-clean:
-	@echo "🧹 Deleting aggregator actor pods and services in aggregator-ns..."
-	@kubectl delete pods,services -n aggregator-ns --all --ignore-not-found
-	@echo "🧹 Deleting aggregator deployment, service account, role, rolebinding..."
-	@kubectl delete deployment,serviceaccount,role,rolebinding -n aggregator-ns --all --ignore-not-found
+kind-stop-nginx:
+	@echo "🧹 Deleting NGINX Ingress Controller..."
+	@kubectl delete ns ingress-nginx --ignore-not-found
+	@kubectl delete clusterrole ingress-nginx --ignore-not-found
+	@kubectl delete clusterrolebinding ingress-nginx --ignore-not-found
+
+kind-clean:
 	@echo "🧹 Deleting aggregator namespace..."
 	@kubectl delete namespace aggregator-ns --ignore-not-found
-	@echo "🧹 Deleting uma-proxy pod and service in uma-proxy-ns..."
-	@kubectl delete pods,services -n uma-proxy-ns --all --ignore-not-found
-	@echo "🧹 Deleting uma-proxy service account..."
-	@kubectl delete serviceaccount -n uma-proxy-ns uma-proxy-sa --ignore-not-found
-	@echo "🧹 Deleting uma-proxy namespace..."
-	@kubectl delete namespace uma-proxy-ns --ignore-not-found
-	@echo "✅ Cleanup complete."
+
+	@echo "🧹 Removing localhost entries..."
+	@sudo sed -i.bak '/aggregator\.local/d' /etc/hosts
+
+	@echo "✅ Cleanup complete"
