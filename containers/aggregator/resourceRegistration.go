@@ -148,7 +148,7 @@ func handleResourceRegistration(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"status":       "success",
 		"message":      fmt.Sprintf("Resource %s successfully", action),
-		"external_url": fmt.Sprintf("%s://%s:%s/%s%s", Protocol, ExternalHost, ExternalPort, actorID, registration.Endpoint),
+		"external_url": fmt.Sprintf("%s://%s/%s%s", Protocol, ExternalHost, actorID, registration.Endpoint),
 		"actor_id":     actorID,
 	}
 
@@ -316,7 +316,7 @@ func registerResourceWithUMA(actorID string, registration *ResourceRegistration)
 	}
 
 	// Create the resource ID - this should match the external URL pattern
-	resourceID := fmt.Sprintf("%s://%s:%s/%s%s", Protocol, ExternalHost, ExternalPort, actorID, registration.Endpoint)
+	resourceID := fmt.Sprintf("%s://%s/%s%s", Protocol, ExternalHost, actorID, registration.Endpoint)
 
 	// Register the resource with UMA
 	if err := auth.CreateResource(resourceID, resourceScopes); err != nil {

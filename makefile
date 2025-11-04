@@ -134,6 +134,10 @@ kind-stop-nginx:
 	@kubectl delete clusterrolebinding ingress-nginx --ignore-not-found
 
 kind-clean:
+	@echo "🧹 Deleting aggregator cluster-wide roles..."
+	@kubectl delete clusterrole aggregator-namespace-manager --ignore-not-found
+	@kubectl delete clusterrolebinding aggregator-namespace-manager-binding --ignore-not-found
+
 	@echo "🧹 Deleting aggregator namespace..."
 	@kubectl delete namespace aggregator-ns --ignore-not-found
 

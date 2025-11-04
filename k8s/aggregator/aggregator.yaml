@@ -1,54 +1,63 @@
-# ------------------------
-# 2️⃣ Service Account
-# ------------------------
+# ========================
+# 1 Service Account
+# ========================
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: aggregator-sa
   namespace: aggregator-ns
-# ServiceAccount is used to give the aggregator Pod credentials to access the Kubernetes API
 ---
-# ------------------------
-# 3️⃣ Role
-# ------------------------
+# ========================
+# 2 ClusterRole: namespace management
+# ========================
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
-  name: aggregator-role
-  namespace: aggregator-ns
+  name: aggregator-namespace-manager
 rules:
-  - apiGroups: [""]  # "" indicates the core API group
-    resources: ["pods", "services"]  # The aggregator can manage Pods and Services
-    verbs: ["get", "list", "create", "delete", "watch"]  # Allowed actions on these resources
+  # Namespace
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create", "delete", "watch"]
+  # Pod and Service
+  - apiGroups: [""]
+    resources: ["pods", "services"]
+    verbs: ["get", "list", "create", "delete", "watch"]
+  # Deployment
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "delete", "watch"]
+  # Ingress
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "create", "delete", "watch"]
 ---
-# ------------------------
-# 4️⃣ RoleBinding
-# ------------------------
+# ========================
+# 3 ClusterRoleBinding: grant namespace management cluster-wide
+# ========================
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRoleBinding
 metadata:
-  name: aggregator-rolebinding
-  namespace: aggregator-ns
+  name: aggregator-namespace-manager-binding
 subjects:
   - kind: ServiceAccount
     name: aggregator-sa
     namespace: aggregator-ns
 roleRef:
-  kind: Role
-  name: aggregator-role
+  kind: ClusterRole
+  name: aggregator-namespace-manager
   apiGroup: rbac.authorization.k8s.io
-# RoleBinding attaches the Role to the aggregator ServiceAccount so it has permissions
 ---
-# ------------------------
-# 5️⃣ Deployment
-# ------------------------
+# ========================
+# 5 Deployment
+# ========================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: aggregator
   namespace: aggregator-ns
 spec:
-  replicas: 1  # Only one aggregator Pod for now
+  replicas: 1
   selector:
     matchLabels:
       app: aggregator
@@ -57,86 +66,61 @@ spec:
       labels:
         app: aggregator
     spec:
-      serviceAccountName: aggregator-sa  # Use the ServiceAccount with RBAC permissions
+      serviceAccountName: aggregator-sa
       containers:
         - name: aggregator
           image: aggregator
           imagePullPolicy: Never
           ports:
-            - containerPort: 5000  # Aggregator HTTP server listens here
+            - containerPort: 5000
           env:
-            # ------------------------
-            # Log level configuration
-            # ------------------------
             - name: LOG_LEVEL
               valueFrom:
                 configMapKeyRef:
                   name: aggregator-config
                   key: log_level
-            # ------------------------
-            # WebID and credentials
-            # ------------------------
-            - name: WEB_ID
-              valueFrom:
-                configMapKeyRef:
-                  name: aggregator-config
-                  key: web_id
-            - name: EMAIL
-              valueFrom:
-                configMapKeyRef:
-                  name: aggregator-config
-                  key: email
-            - name: PASSWORD
-              valueFrom:
-                configMapKeyRef:
-                  name: aggregator-config
-                  key: password
-            # ------------------------
-            # In-cluster configuration
-            # ------------------------
             - name: AGGREGATOR_HOST
-              value: "aggregator.aggregator-ns.svc.cluster.local" # Internal DNS hostname for other Pods
+              value: "aggregator.aggregator-ns.svc.cluster.local"
             - name: AGGREGATOR_PORT
-              value: "5000" # Internal port for in-cluster access
-            # ------------------------
-            # External configuration
-            # ------------------------
+              value: "5000"
             - name: AGGREGATOR_EXTERNAL_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: aggregator-config
-                  key: aggregator_external_host
-            - name: AGGREGATOR_EXTERNAL_PORT
-              value: "30500"        # NodePort exposed externally
-            # ------------------------
-            # Authorization configuration
-            # ------------------------
-            - name: AS_ISSUER
-              valueFrom:
-                configMapKeyRef:
-                  name: aggregator-config
-                  key: as_issuer
-                  optional: true
-            # ------------------------
-            # Transformation configuration
-            # ------------------------
-            - name: TRANSFORMATION
-              value: "comunica"
+              value: "aggregator.local"
 ---
-# ------------------------
-# 6️⃣ Service
-# ------------------------
+# ========================
+# 6 Service: expose aggregator
+# ========================
 apiVersion: v1
 kind: Service
 metadata:
-  name: aggregator
+  name: aggregator-svc
   namespace: aggregator-ns
 spec:
-  type: NodePort  # Exposes the service externally on a specific port
+  type: ClusterIP
   selector:
-    app: aggregator  # Targets Pods with this label
+      app: aggregator
   ports:
-    - port: 5000       # Internal port inside cluster
-      targetPort: 5000 # Container port
-      nodePort: 30500  # External port accessible via Minikube IP
-# Clients outside Minikube can reach the aggregator via http://<minikube-ip>:30500
+    - port: 5000       
+      targetPort: 5000
+---
+# =======================
+# 7 Ingress
+# ========================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: aggregator-ingress
+  namespace: aggregator-ns
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: "aggregator.local"
+      http:
+        paths:
+          - path: "/"                     
+            pathType: Prefix
+            backend:
+              service:
+                name: aggregator-svc          
+                port:
+                  number: 5000            
+---

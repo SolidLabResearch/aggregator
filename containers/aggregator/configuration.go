@@ -1,9 +1,9 @@
 package main
 
 import (
-	"aggregator/auth"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,41 +17,55 @@ type ConfigurationData struct {
 	etagActors               int
 	etagTransformations      int
 	actors                   map[string]Actor
+	pipelines                map[string]Pipeline
 	availableTransformations string
 	serveMux                 *http.ServeMux
 }
 
+type ResourceScope string
+
+const (
+	ScopeRead   ResourceScope = "urn:example:css:modes:read"
+	ScopeAppend ResourceScope = "urn:example:css:modes:append"
+	ScopeCreate ResourceScope = "urn:example:css:modes:create"
+	ScopeDelete ResourceScope = "urn:example:css:modes:delete"
+	ScopeWrite  ResourceScope = "urn:example:css:modes:write"
+)
+
+var resourceScopesRead = []ResourceScope{ScopeRead}
+var resourceScopesReadDelete = []ResourceScope{ScopeRead, ScopeDelete}
+var resourceScopesReadCreate = []ResourceScope{ScopeRead, ScopeCreate}
+
 // /config/ => read => a get to retrieve all transformations & head to get etag of transformations
 // /config/actors/ => read, create => has get to retrieve all actors and their IDs, head to get etag, post to create a new actor
 // /config/actors/{id} => read, delete => has get to retrieve an actor with the given ID, head to get etag, delete to delete an actor with the given ID
-func startConfigurationEndpoint(mux *http.ServeMux) {
+func startConfigurationEndpoint(mux *http.ServeMux) *ConfigurationData {
 	configurationData := ConfigurationData{
 		etagActors:               0,
 		etagTransformations:      0,
 		actors:                   make(map[string]Actor),
+		pipelines:                make(map[string]Pipeline),
 		availableTransformations: hardcodedAvailableTransformations,
 		serveMux:                 mux,
 	}
 
 	configurationData.HandleFunc("/config", configurationData.HandleConfigurationEndpoint, resourceScopesRead)
 	configurationData.HandleFunc("/config/actors", configurationData.HandleActorsEndpoint, resourceScopesReadCreate)
+	configurationData.HandleFunc("/config/pipelines", configurationData.HandlePipelinesEndpoint, resourceScopesReadCreate)
+
+	return &configurationData
 }
 
-func (data ConfigurationData) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), resourceScopes []auth.ResourceScope) {
+func (data ConfigurationData) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), resourceScopes []ResourceScope) {
 	data.serveMux.HandleFunc(pattern, handler)
-	auth.CreateResource(
-		fmt.Sprintf("%s://%s:%s%s", Protocol, ExternalHost, ExternalPort, pattern),
-		resourceScopes,
-	)
+	// auth.CreateResource(
+	//	fmt.Sprintf("%s://%s:%s%s", Protocol, ExternalHost, ExternalPort, pattern),
+	//	resourceScopes,
+	//)
 }
 
 // HandleConfigurationEndpoint handles requests to the /config endpoint
 func (data ConfigurationData) HandleConfigurationEndpoint(response http.ResponseWriter, request *http.Request) {
-	// 1) Authorize request
-	if !auth.AuthorizeRequest(response, request, nil) {
-		return
-	}
-
 	switch request.Method {
 	case "HEAD":
 		data.headAvailableTransformations(response, request)
@@ -80,13 +94,94 @@ func (data ConfigurationData) getAvailableTransformations(response http.Response
 	}
 }
 
-// HandleActorsEndpoint handles requests to the /config/actors endpoint
-func (data ConfigurationData) HandleActorsEndpoint(response http.ResponseWriter, request *http.Request) {
-	// 1) Authorize request
-	if !auth.AuthorizeRequest(response, request, nil) {
+// HandleActorsEndpoint handles requests to the /config/pipelines endpoint
+func (data ConfigurationData) HandlePipelinesEndpoint(response http.ResponseWriter, request *http.Request) {
+	if request.URL.Path == "/config/pipelines" {
+		switch request.Method {
+		case "GET":
+			data.getPipelines(response, request)
+		case "POST":
+			data.postPipeline(response, request)
+		default:
+			http.Error(response, "Invalid request method", http.StatusMethodNotAllowed)
+		}
+		return
+	}
+}
+
+func (data ConfigurationData) getPipelines(w http.ResponseWriter, _ *http.Request) {
+	pipelineList := []Pipeline{}
+	for _, pipeline := range data.pipelines {
+		pipelineList = append(pipelineList, pipeline)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	err := json.NewEncoder(w).Encode(pipelineList)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to encode pipeline list")
+		http.Error(w, "Failed to serialize response", http.StatusInternalServerError)
+		return
+	}
+}
+
+type PipelineRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Owner       User   `json:"owner"`
+}
+
+type User struct {
+	WebID    string `json:"webid"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	ASURL    string `json:"as_url"`
+}
+
+func (data ConfigurationData) postPipeline(w http.ResponseWriter, r *http.Request) {
+	logrus.Info("Recieved request to register a pipeline")
+	// read request body
+	var request PipelineRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
+	// Check for existing pipeline
+	if _, exists := data.pipelines[request.Name]; exists {
+		http.Error(w, "Pipeline already exists for this user", http.StatusConflict)
+		return
+	}
+
+	// Set up the pipeline
+	pipeline, err := setupPipeline(request)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to set up pipeline: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Store pipeline
+	data.pipelines[request.Name] = *pipeline
+
+	// Return pipeline information to the client
+	w.Header().Set("Content-Type", "application/json")
+
+	responseBytes, err := json.Marshal(pipeline)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to marshal pipeline response")
+		http.Error(w, "Failed to serialize response", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	_, err = w.Write(responseBytes)
+	if err != nil {
+		logrus.WithError(err).Error("Error writing create pipeline response")
+		return
+	}
+}
+
+// HandleActorsEndpoint handles requests to the /config/actors endpoint
+func (data ConfigurationData) HandleActorsEndpoint(response http.ResponseWriter, request *http.Request) {
 	if request.URL.Path == "/config/actors" {
 		switch request.Method {
 		case "HEAD":
@@ -233,16 +328,7 @@ func (data ConfigurationData) deleteActor(response http.ResponseWriter, _ *http.
 
 	data.etagActors++
 	response.WriteHeader(http.StatusOK)
-
-	auth.DeleteResource(
-		fmt.Sprintf("%s://%s:%s/config/actors/%s", Protocol, ExternalHost, ExternalPort, actor.Id),
-	)
 }
-
-// Replace resourceScopes* slices with enum slices using auth.ResourceScope
-var resourceScopesRead = []auth.ResourceScope{auth.ScopeRead}
-var resourceScopesReadDelete = []auth.ResourceScope{auth.ScopeRead, auth.ScopeDelete}
-var resourceScopesReadCreate = []auth.ResourceScope{auth.ScopeRead, auth.ScopeCreate}
 
 /*
 const hardcodedAvailableTransformations = `
