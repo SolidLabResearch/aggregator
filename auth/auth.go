@@ -43,7 +43,7 @@ func AuthorizeRequest(response http.ResponseWriter, request *http.Request, extra
 		ticket, err := fetchTicket(ticketPermissions, AS_ISSUER)
 		if err != nil {
 			logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Error while retrieving ticket")
-			http.Error(response, "error while retrieving ticket", http.StatusUnauthorized)
+			http.Error(response, "error while retrieving ticket: "+err.Error(), http.StatusInternalServerError)
 			return false
 		}
 		if ticket == "" {
@@ -582,7 +582,7 @@ const (
 	ScopeContinuousDuplex ResourceScope = "urn:example:css:modes:continuous:duplex"
 )
 
-func CreateResource(resourceId string, resourceScopes []ResourceScope) error {
+func CreateResource(resourceId string, resourceScopes []ResourceScope, resourceRelations interface{}) error {
 	config, err := fetchUmaConfig(AS_ISSUER)
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("Error while retrieving UMA configuration")
@@ -593,7 +593,7 @@ func CreateResource(resourceId string, resourceScopes []ResourceScope) error {
 	endpoint := config.resourceRegistrationEndpoint
 	method := "POST"
 	if knownUmaId != "" {
-		endpoint = endpoint + "/" + knownUmaId
+		endpoint = endpoint + knownUmaId
 		method = "PUT"
 	}
 
@@ -606,6 +606,10 @@ func CreateResource(resourceId string, resourceScopes []ResourceScope) error {
 	description := map[string]interface{}{
 		"name":            resourceId,
 		"resource_scopes": scopeStrings,
+	}
+
+	if resourceRelations != nil {
+		description["resource_relations"] = resourceRelations
 	}
 
 	jsonData, err := json.Marshal(description)

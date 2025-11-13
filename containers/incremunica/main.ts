@@ -71,6 +71,10 @@ if (proxyUrl === undefined) {
   throw new Error('Environment variable PROXY_URL is not set. Please provide the URL of the proxy server.');
 }
 
+const registeredSources: Map<string, {
+  issuer: string;
+  derivation_resource_id: string;
+}> = new Map();
 // Create custom fetch function that uses the proxy's /fetch endpoint
 async function customFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const originalUrl = input.toString();
@@ -99,24 +103,42 @@ async function customFetch(input: RequestInfo | URL, init?: RequestInit): Promis
     configurable: false
   });
 
+  if (
+    !registeredSources.has(originalUrl) &&
+    response.headers.get("X-Derivation-Issuer") &&
+    response.headers.get("X-Derivation-Resource-Id")
+  ) {
+    registeredSources.set(originalUrl, {
+      issuer: response.headers.get("X-Derivation-Issuer")!,
+      derivation_resource_id: response.headers.get("X-Derivation-Resource-Id")!
+    });
+    await Promise.all([
+      patchEndpointSources("/"),
+      patchEndpointSources("/events")
+    ]);
+  }
+
   return response;
 }
 
 // Function to register an endpoint with the aggregator
 async function registerEndpointWithAggregator(endpoint: string, description: string, scopes: string[] = ["read"]): Promise<void> {
-  const registrationData = {
+  const registrationData: any = {
     pod_name: POD_NAME,
     pod_ip: POD_IP,
     port: SERVICE_PORT,
     endpoint: endpoint,
     scopes: scopes,
-    description: description
+    description: description,
   };
 
   try {
     console.log(`📝 Registering endpoint ${endpoint} with aggregator at ${REGISTRATION_URL}`);
     console.log(`   Pod: ${POD_NAME}, IP: ${POD_IP}, Port: ${SERVICE_PORT}`);
     console.log(`   Description: ${description}`);
+    if (registrationData.sources) {
+      console.log(`   Sources[${registrationData.sources.length}]: ${registrationData.sources.join(', ')}`);
+    }
 
     const response = await fetch(REGISTRATION_URL, {
       method: "POST",
@@ -138,6 +160,39 @@ async function registerEndpointWithAggregator(endpoint: string, description: str
     }
   } catch (error) {
     console.error(`❌ Error registering endpoint ${endpoint}:`, error);
+  }
+}
+
+async function patchEndpointSources(endpoint: string): Promise<boolean> {
+  const sources = [];
+  for (const [sourceUrl, sourceInfo] of registeredSources) {
+    sources.push({
+      issuer: sourceInfo.issuer,
+      derivation_resource_id: sourceInfo.derivation_resource_id
+    });
+  }
+  const payload = {
+    pod_name: POD_NAME,
+    endpoint: endpoint,
+    sources: sources,
+  };
+  try {
+    console.log(`✏️ Patching sources for ${endpoint} (n=${sources.length})`);
+    const res = await fetch(REGISTRATION_URL, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      console.error(`❌ Failed to patch sources: ${res.status} ${txt}`);
+      return false;
+    }
+    console.log(`✅ Sources updated for ${endpoint}`);
+    return true;
+  } catch (e) {
+    console.error(`❌ Error patching sources for ${endpoint}:`, e);
+    return false;
   }
 }
 
@@ -191,6 +246,51 @@ class UpToDateTimeout {
 }
 
 async function main() {
+  let server: http.Server;
+  await new Promise((resolve, reject) => {
+    server = http.createServer((req, res) => {
+      console.log(`Received request: ${req.method} ${req.url}`);
+      if (req.method === "GET" && req.url === "/") {
+        res.writeHead(200, { "Content-Type": "application/sparql-results+json" });
+        const sparqlJson = materializedViewToSparqlJson(materializedView);
+        res.end(JSON.stringify(sparqlJson, null, 2));
+      } else if (req.method === "GET" && req.url === "/events") {
+        // Handle SSE connection
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Headers": "Cache-Control"
+        });
+
+        sseManager.addConnection(res);
+
+        sseManager.sendToConnection(res, "init", materializedViewToSparqlJson(materializedView));
+        if (upToDateTimeout.isUpToDate()) {
+          sseManager.sendToConnection(res, "up-to-date", { timestamp: Date.now() });
+        }
+
+        req.on('close', () => {
+          sseManager.removeConnection(res);
+        });
+      } else {
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("Not found");
+      }
+    });
+
+    server.listen(8080, async () => {
+      console.log("SPARQL SELECT result server running at http://localhost:8080/");
+      console.log("Server-Sent Events available at http://localhost:8080/events");
+
+      // Register with the aggregator after server starts, include sources
+      await registerWithAggregator();
+
+      resolve(undefined);
+    });
+  });
+
   const pipelineDescription = process.env.PIPELINE_DESCRIPTION;
   if (pipelineDescription === undefined) {
     throw new Error('Environment variable PIPELINE_DESCRIPTION is not set. Please provide a valid pipeline description.');
@@ -357,47 +457,7 @@ SELECT ?queryString ?source ?endpoint ?variable WHERE {
     // Do not throw here to avoid crashing the server; keep running
   });
 
-  const server = http.createServer((req, res) => {
-    console.log(`Received request: ${req.method} ${req.url}`);
-    if (req.method === "GET" && req.url === "/") {
-      res.writeHead(200, { "Content-Type": "application/sparql-results+json" });
-      const sparqlJson = materializedViewToSparqlJson(materializedView);
-      res.end(JSON.stringify(sparqlJson, null, 2));
-    } else if (req.method === "GET" && req.url === "/events") {
-      // Handle SSE connection
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "Cache-Control"
-      });
-
-      sseManager.addConnection(res);
-
-      sseManager.sendToConnection(res, "init", materializedViewToSparqlJson(materializedView));
-      if (upToDateTimeout.isUpToDate()) {
-        sseManager.sendToConnection(res, "up-to-date", { timestamp: Date.now() });
-      }
-
-      req.on('close', () => {
-        sseManager.removeConnection(res);
-      });
-    } else {
-      res.writeHead(404, { "Content-Type": "text/plain" });
-      res.end("Not found");
-    }
-  });
-
-  await new Promise((resolve, reject) => {
-    server.listen(8080, async () => {
-      console.log("SPARQL SELECT result server running at http://localhost:8080/");
-      console.log("Server-Sent Events available at http://localhost:8080/events");
-
-      // Register with the aggregator after server starts
-      await registerWithAggregator()
-    });
-  });
+  await new Promise(resolve => server.on("close", resolve));
 }
 
 async function getSources(sourceTerms: any[]): Promise<string[]> {

@@ -2,10 +2,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -22,7 +18,6 @@ import (
 type SolidAuth struct {
 	webId        string
 	cssBaseURL   string
-	dpopKey      *ecdsa.PrivateKey
 	authString   string
 	accessToken  string
 	expiresAt    time.Time
@@ -67,11 +62,6 @@ func (sa *SolidAuth) Init(email, password string) error {
 	}
 
 	// Generate DPoP key pair
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return fmt.Errorf("failed to generate DPoP key: %w", err)
-	}
-	sa.dpopKey = key
 
 	// Step 1: Get controls from account endpoint
 	logrus.WithFields(logrus.Fields{"endpoint": sa.cssBaseURL + ".account/"}).Debug("🔑 Initializing client credentials for Solid OIDC")
@@ -196,17 +186,11 @@ func (sa *SolidAuth) refreshAccessToken() error {
 	sa.mu.Lock()
 	defer sa.mu.Unlock()
 
-	if sa.authString == "" || sa.dpopKey == nil {
+	if sa.authString == "" {
 		return fmt.Errorf("not initialized")
 	}
 
 	tokenURL := sa.cssBaseURL + ".oidc/token"
-
-	// Create DPoP header with the ORIGINAL URL (not redirected), because the server sees the original Host header
-	dpopHeader, err := sa.createDPoPHeader(tokenURL, "POST")
-	if err != nil {
-		return fmt.Errorf("failed to create DPoP header: %w", err)
-	}
 
 	req, err := createRequestWithRedirect("POST", tokenURL, bytes.NewReader([]byte("grant_type=client_credentials&scope=webid")))
 	if err != nil {
@@ -214,7 +198,6 @@ func (sa *SolidAuth) refreshAccessToken() error {
 	}
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(sa.authString)))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("DPoP", dpopHeader)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -271,79 +254,9 @@ func (sa *SolidAuth) CreateClaimToken(tokenEndpoint string) (string, error) {
 	accessToken := sa.accessToken
 	sa.mu.RUnlock()
 
-	if accessToken == "" || sa.dpopKey == nil {
+	if accessToken == "" {
 		return "", fmt.Errorf("not initialized")
 	}
 
-	dpopHeader, err := sa.createDPoPHeader(tokenEndpoint, "POST")
-	if err != nil {
-		return "", fmt.Errorf("failed to create DPoP header: %w", err)
-	}
-
-	claimToken := map[string]string{
-		"Authorization": "DPoP " + accessToken,
-		"DPoP":          dpopHeader,
-	}
-
-	claimTokenJSON, err := json.Marshal(claimToken)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal claim token: %w", err)
-	}
-
-	return string(claimTokenJSON), nil
-}
-
-// createDPoPHeader creates a DPoP header JWT
-func (sa *SolidAuth) createDPoPHeader(htu, htm string) (string, error) {
-	// Create JWK from public key
-	jwk := map[string]interface{}{
-		"kty": "EC",
-		"crv": "P-256",
-		"x":   base64.RawURLEncoding.EncodeToString(sa.dpopKey.PublicKey.X.Bytes()),
-		"y":   base64.RawURLEncoding.EncodeToString(sa.dpopKey.PublicKey.Y.Bytes()),
-	}
-
-	// Create header
-	header := map[string]interface{}{
-		"alg": "ES256",
-		"typ": "dpop+jwt",
-		"jwk": jwk,
-	}
-
-	// Create payload
-	payload := map[string]interface{}{
-		"htu": htu,
-		"htm": htm,
-		"jti": generateJTI(),
-		"iat": time.Now().Unix(),
-	}
-
-	// Encode header and payload
-	headerJSON, _ := json.Marshal(header)
-	payloadJSON, _ := json.Marshal(payload)
-
-	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
-	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
-
-	// Sign
-	message := headerB64 + "." + payloadB64
-	hash := sha256.Sum256([]byte(message))
-
-	r, s, err := ecdsa.Sign(rand.Reader, sa.dpopKey, hash[:])
-	if err != nil {
-		return "", err
-	}
-
-	// Encode signature
-	signature := append(r.Bytes(), s.Bytes()...)
-	signatureB64 := base64.RawURLEncoding.EncodeToString(signature)
-
-	return message + "." + signatureB64, nil
-}
-
-// generateJTI generates a random JTI for DPoP
-func generateJTI() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return base64.RawURLEncoding.EncodeToString(b)
+	return accessToken, nil
 }

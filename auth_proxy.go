@@ -60,6 +60,7 @@ func InitAuthProxy(mux *http.ServeMux, baseURL string) {
 	err := auth.CreateResource(
 		AuthProxyInstance.endpointUrl,
 		[]auth.ResourceScope{auth.ScopeCreate},
+		nil,
 	)
 	if err != nil {
 		panic(err)

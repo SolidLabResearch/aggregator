@@ -16,6 +16,11 @@ import (
 
 const resourceSubscriptionPort = "4449"
 
+type Source struct {
+	Issuer               string `json:"issuer"`
+	DerivationResourceID string `json:"derivation_resource_id"`
+}
+
 // ResourceRegistration represents the data sent by pods to register their endpoints
 type ResourceRegistration struct {
 	PodName     string               `json:"pod_name"`
@@ -24,6 +29,7 @@ type ResourceRegistration struct {
 	Endpoint    string               `json:"endpoint"`
 	Scopes      []auth.ResourceScope `json:"scopes"`
 	Description string               `json:"description"`
+	Sources     []Source             `json:"sources,omitempty"`
 }
 
 var registeredResources = make(map[string]*ResourceRegistration)
@@ -181,20 +187,69 @@ func handleResourceUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logrus.WithFields(logrus.Fields{"pod": actorID, "endpoint": updateInfo.Endpoint}).Info("📋 Processing update")
+	// Default endpoint to "/" if not specified for lookup
+	endpoint := updateInfo.Endpoint
+	if endpoint == "" {
+		endpoint = "/"
+	}
 
-	// Update the registration
-	resourceKey := fmt.Sprintf("%s%s", actorID, updateInfo.Endpoint)
-	if _, exists := registeredResources[resourceKey]; !exists {
-		logrus.WithFields(logrus.Fields{"endpoint": updateInfo.Endpoint, "pod": actorID}).Warn("❌ Resource not found for pod")
+	logrus.WithFields(logrus.Fields{"pod": actorID, "endpoint": endpoint}).Info("📋 Processing update")
+
+	// Update the registration (partial merge)
+	resourceKey := fmt.Sprintf("%s%s", actorID, endpoint)
+	existing, exists := registeredResources[resourceKey]
+	if !exists {
+		logrus.WithFields(logrus.Fields{"endpoint": endpoint, "pod": actorID}).Warn("❌ Resource not found for pod")
 		http.Error(w, "Resource not found", http.StatusNotFound)
 		return
 	}
 
-	// Update the resource registration
-	registeredResources[resourceKey] = &updateInfo
+	// Merge only provided non-zero fields
+	if updateInfo.PodIP != "" {
+		existing.PodIP = updateInfo.PodIP
+	}
+	if updateInfo.Port != 0 {
+		existing.Port = updateInfo.Port
+	}
+	if updateInfo.Endpoint != "" && updateInfo.Endpoint != existing.Endpoint {
+		// Re-key if endpoint changed
+		newKey := fmt.Sprintf("%s%s", actorID, updateInfo.Endpoint)
+		registeredResources[newKey] = existing
+		existing.Endpoint = updateInfo.Endpoint
+		delete(registeredResources, resourceKey)
+		resourceKey = newKey
+	}
+	if len(updateInfo.Scopes) > 0 {
+		existing.Scopes = updateInfo.Scopes
+		// Update streaming resource if relevant
+		externalUrl := fmt.Sprintf("%s://%s:%s/%s%s", Protocol, Host, ServerPort, actorID, existing.Endpoint)
+		for _, scope := range updateInfo.Scopes {
+			if scope == auth.ScopeContinuousRead || scope == auth.ScopeContinuousWrite || scope == auth.ScopeContinuousDuplex {
+				auth.AddStreamingResource(externalUrl, scope)
+			}
+		}
+	}
+	if updateInfo.Description != "" {
+		existing.Description = updateInfo.Description
+	}
+	if updateInfo.Sources != nil && len(updateInfo.Sources) > 0 {
+		existing.Sources = updateInfo.Sources
+	}
 
-	logrus.WithFields(logrus.Fields{"endpoint": updateInfo.Endpoint, "pod": actorID}).Info("✅ Resource updated")
+	// Update UMA resource to reflect new scopes and relations
+	resourceID := fmt.Sprintf("%s://%s:%s/%s%s", Protocol, Host, ServerPort, actorID, existing.Endpoint)
+	var resourceRelations interface{}
+	if len(existing.Sources) > 0 {
+		resourceRelations = map[string][]Source{
+			"prov:wasDerivedFrom": existing.Sources,
+		}
+	}
+	if err := auth.CreateResource(resourceID, existing.Scopes, resourceRelations); err != nil {
+		logrus.WithFields(logrus.Fields{"resource_id": resourceID, "err": err}).Error("❌ Failed to update UMA resource")
+		// Do not fail the update; continue
+	}
+
+	logrus.WithFields(logrus.Fields{"endpoint": existing.Endpoint, "pod": actorID}).Info("✅ Resource updated")
 
 	response := map[string]interface{}{
 		"status":  "success",
@@ -302,8 +357,16 @@ func registerResourceWithUMA(actorID string, registration *ResourceRegistration)
 	// Create the resource ID - this should match the external URL pattern
 	resourceID := fmt.Sprintf("%s://%s:%s/%s%s", Protocol, Host, ServerPort, actorID, registration.Endpoint)
 
-	// Register the resource with UMA
-	if err := auth.CreateResource(resourceID, registration.Scopes); err != nil {
+	// Build resource relations from sources if provided
+	var resourceRelations interface{}
+	if len(registration.Sources) > 0 {
+		resourceRelations = map[string][]Source{
+			"prov:wasDerivedFrom": registration.Sources,
+		}
+	}
+
+	// Register or update the resource with UMA
+	if err := auth.CreateResource(resourceID, registration.Scopes, resourceRelations); err != nil {
 		return fmt.Errorf("failed to create UMA resource: %v", err)
 	}
 

@@ -41,6 +41,7 @@ func (data ConfigurationData) HandleFunc(pattern string, handler func(http.Respo
 	auth.CreateResource(
 		fmt.Sprintf("%s://%s:%s%s", Protocol, Host, ServerPort, pattern),
 		resourceScopes,
+		nil,
 	)
 }
 

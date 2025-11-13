@@ -16,6 +16,7 @@ import (
 type claim struct {
 	GrantType        string `json:"grant_type"`
 	Ticket           string `json:"ticket"`
+	Scope            string `json:"scope"`
 	ClaimToken       string `json:"claim_token"`
 	ClaimTokenFormat string `json:"claim_token_format"`
 }
@@ -58,7 +59,6 @@ func Do(req *http.Request) (*http.Response, error) {
 	}
 	if unauthenticatedResp.StatusCode == http.StatusUnauthorized {
 		defer unauthenticatedResp.Body.Close()
-		logrus.WithFields(logrus.Fields{"WWW-Authenticate": unauthenticatedResp.Header.Get("WWW-Authenticate")}).Info("checking header")
 		asUri, ticket, err := getTicketInfo(unauthenticatedResp.Header.Get("WWW-Authenticate"))
 		if err != nil {
 			return nil, err
@@ -88,7 +88,6 @@ func Do(req *http.Request) (*http.Response, error) {
 
 		tokenEndpoint := uma2Config.TokenEndpoint
 
-		// Create claim with Solid OIDC
 		claimTokenFormat := "http://openid.net/specs/openid-connect-core-1_0.html#IDToken"
 		claimTokenStr, err := solidAuth.CreateClaimToken(tokenEndpoint)
 		if err != nil {
@@ -98,6 +97,7 @@ func Do(req *http.Request) (*http.Response, error) {
 		jsonBody, err := json.Marshal(claim{
 			GrantType:        "urn:ietf:params:oauth:grant-type:uma-ticket",
 			Ticket:           ticket,
+			Scope:            "urn:knows:uma:scopes:derivation-creation",
 			ClaimToken:       claimTokenStr,
 			ClaimTokenFormat: claimTokenFormat,
 		})
@@ -139,10 +139,20 @@ func Do(req *http.Request) (*http.Response, error) {
 		if !ok {
 			return nil, fmt.Errorf("token_type not found in response")
 		}
+		derivationResourceId, ok := asResponse["derivation_resource_id"]
+		// TODO if not present only the aggregator owner can access the derivation result
+		if !ok {
+			return nil, fmt.Errorf("derivation_resource_id not found in response")
+		}
 
-		// Use the raw access token, not the decoded version
 		req.Header.Set("Authorization", fmt.Sprintf("%s %s", tokenType, accessToken))
-		return client.Do(req)
+		authorizedResp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		authorizedResp.Header.Set("X-Derivation-Resource-Id", derivationResourceId)
+		authorizedResp.Header.Set("X-Derivation-Issuer", asUri)
+		return authorizedResp, nil
 	}
 	// If the response is not unauthorized, return it as is
 	logrus.Debug("No authorization needed")
@@ -151,36 +161,25 @@ func Do(req *http.Request) (*http.Response, error) {
 
 func getTicketInfo(headerString string) (string, string, error) {
 	header := strings.TrimPrefix(headerString, "UMA ")
-	header = strings.TrimSpace(header)
-
+	params := strings.Split(header, ", ")
 	var asUri string
 	var ticket string
-	parts := strings.Split(header, ", ")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if strings.Contains(part, "=") {
-			kv := strings.SplitN(part, "=", 2)
-			key := strings.TrimSpace(kv[0])
-			value := strings.Trim(strings.TrimSpace(kv[1]), `"`)
-
-			switch key {
-			case "as_uri":
-				asUri = value
-			case "ticket":
-				ticket = value
-			default:
-				logrus.WithFields(logrus.Fields{"key": key, "value": value}).Debug("Unknown UMA parameter")
-			}
+	for _, param := range params {
+		keyValue := strings.Split(param, "=")
+		if len(keyValue) != 2 {
+			return "", "", fmt.Errorf("invalid parameter: %s", param)
+		}
+		key := strings.ReplaceAll(keyValue[0], "\"", "")
+		value := strings.ReplaceAll(keyValue[1], "\"", "")
+		switch key {
+		case "as_uri":
+			asUri = value
+		case "ticket":
+			ticket = value
+		default:
+			logrus.WithFields(logrus.Fields{"header string": headerString, "key": key, "value": value}).Debug("Unknown UMA parameter")
 		}
 	}
-
-	if asUri == "" {
-		return "", "", fmt.Errorf("as_uri not found in WWW-Authenticate header")
-	}
-	if ticket == "" {
-		return "", "", fmt.Errorf("ticket not found in WWW-Authenticate header")
-	}
-
 	return asUri, ticket, nil
 }
 

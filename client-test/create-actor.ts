@@ -19,7 +19,7 @@ const PipelineDescription = `
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 _:execution a fno:Execution ;
     fno:executes trans:SPARQLEvaluation ;
-    trans:sources ( "http://localhost:3000/alice/profile/card"^^xsd:string ) ;
+    trans:sources ( "http://localhost:3000/alice/private/resource"^^xsd:string ) ;
     trans:queryString "SELECT * WHERE { ?s ?p ?o }" .
 `;
 
@@ -43,6 +43,19 @@ async function main() {
     console.log(`=== Solid OIDC authentication initialized successfully\n`);
 
     const umaFetch = auth.createUMAFetch();
+
+    console.log(`=== Creating private resource at http://localhost:3000/alice/private/resource.txt`);
+    const tokenResponse = await umaFetch("http://localhost:3000/alice/private/resource", {
+        method: 'PUT',
+        headers: {
+            'content-type': 'text/turtle'
+        },
+        body: '<> a <http://www.w3.org/2002/07/owl#Thing> .',
+    })
+    console.log('Create private resource status =', tokenResponse.status)
+    if (tokenResponse.status < 200 || tokenResponse.status >= 300) {
+        throw new Error(`Failed to create upstream resource, status ${tokenResponse.status}`)
+    }
 
     console.log(`=== Requesting pipeline at ${pipelineEndpoint} with body:\n`);
     console.log(PipelineDescription);

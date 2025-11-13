@@ -9,6 +9,7 @@ import (
 	"golang.org/x/net/context"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
 	"net/http"
@@ -16,7 +17,9 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 )
 
 var Protocol = "http"
@@ -26,13 +29,34 @@ var LogLevel = logrus.InfoLevel
 
 var Clientset *kubernetes.Clientset
 
+// getEnv returns the value of the environment variable if set (and non-empty), otherwise the fallback.
+func getEnv(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// getEnvFirst returns the first non-empty environment variable value among keys, otherwise the fallback.
+func getEnvFirst(keys []string, fallback string) string {
+	for _, k := range keys {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v
+		}
+	}
+	return fallback
+}
+
 func main() {
-	// Define CLI flags for Solid OIDC configuration
-	webId := flag.String("webid", "", "WebID for Solid OIDC authentication")
-	email := flag.String("email", "", "Email for CSS account login")
-	password := flag.String("password", "", "Password for CSS account login")
-	logLevelPtr := flag.String("log-level", "info", "Logging verbosity (debug, info, warn, error)")
+	webId := flag.String("webid", getEnv("WEBID", ""), "WebID for Solid OIDC authentication")
+	email := flag.String("email", getEnv("EMAIL", ""), "Email for CSS account login")
+	password := flag.String("password", getEnv("PASSWORD", ""), "Password for CSS account login")
+	logLevelPtr := flag.String("log-level", getEnv("LOG_LEVEL", "info"), "Logging verbosity (debug, info, warn, error)")
 	flag.Parse()
+
+	Protocol = getEnv("PROTOCOL", Protocol)
+	Host = getEnv("HOST", Host)
+	ServerPort = getEnvFirst([]string{"PORT", "SERVER_PORT"}, ServerPort)
 
 	logLevelValue := strings.ToLower(*logLevelPtr)
 	parsedLevel, err := logrus.ParseLevel(logLevelValue)
@@ -43,14 +67,26 @@ func main() {
 	logrus.SetLevel(LogLevel)
 	logrus.SetOutput(os.Stdout)
 
-	config, err := clientcmd.BuildConfigFromFlags("", filepath.Join(homedir.HomeDir(), ".kube", "config"))
-	if err != nil {
-		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to load Kubernetes config")
+	// Initialize Kubernetes client: try in-cluster, then KUBECONFIG; if neither works, exit with error
+	var kubeCfg *rest.Config
+	var kubeErr error
+	if strings.TrimSpace(os.Getenv("KUBERNETES_SERVICE_HOST")) != "" || strings.TrimSpace(os.Getenv("IN_CLUSTER")) == "1" {
+		kubeCfg, kubeErr = rest.InClusterConfig()
+		if kubeErr != nil {
+			logrus.WithError(kubeErr).Warn("In-cluster Kubernetes config not available; falling back to KUBECONFIG")
+		}
+	}
+	if kubeCfg == nil {
+		kubeconfigPath := getEnv("KUBECONFIG", filepath.Join(homedir.HomeDir(), ".kube", "config"))
+		kubeCfg, kubeErr = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	}
+	if kubeCfg == nil || kubeErr != nil {
+		logrus.WithError(kubeErr).Error("No Kubernetes configuration found. Set KUBECONFIG, mount your kubeconfig into the container, or run in-cluster.")
 		os.Exit(1)
 	}
-	Clientset, err = kubernetes.NewForConfig(config)
+	Clientset, err = kubernetes.NewForConfig(kubeCfg)
 	if err != nil {
-		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to create Kubernetes client")
+		logrus.WithError(err).Error("Failed to create Kubernetes client")
 		os.Exit(1)
 	}
 
@@ -58,13 +94,13 @@ func main() {
 	if *webId == "" || *email == "" || *password == "" {
 		logrus.Warn("⚠️  WARNING: Solid OIDC configuration incomplete")
 		if *webId == "" {
-			logrus.Warn("⚠️  Missing --webid argument")
+			logrus.Warn("⚠️  Missing webid (set --webid or WEBID)")
 		}
 		if *email == "" {
-			logrus.Warn("⚠️  Missing --email argument")
+			logrus.Warn("⚠️  Missing email (set --email or EMAIL)")
 		}
 		if *password == "" {
-			logrus.Warn("⚠️  Missing --password argument")
+			logrus.Warn("⚠️  Missing password (set --password or PASSWORD)")
 		}
 		logrus.Warn("⚠️  UMA proxy will run WITHOUT authentication - requests will be passed through as-is")
 	}
@@ -105,34 +141,51 @@ func main() {
 		os.Exit(1)
 	}
 
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 30)
 	for _, pod := range pods.Items {
-		err := Clientset.CoreV1().Pods(pod.Namespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{})
-		if err != nil {
-			logrus.WithFields(logrus.Fields{"namespace": pod.Namespace, "name": pod.Name, "err": err}).Error("Failed to delete pod")
-		} else {
-			logrus.WithFields(logrus.Fields{"namespace": pod.Namespace, "name": pod.Name}).Info("Deleted pod")
-		}
+		p := pod
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			err := Clientset.CoreV1().Pods(p.Namespace).Delete(ctx, p.Name, metav1.DeleteOptions{})
+			if err != nil {
+				logrus.WithFields(logrus.Fields{"namespace": p.Namespace, "name": p.Name, "err": err}).Error("Failed to delete pod")
+			} else {
+				logrus.WithFields(logrus.Fields{"namespace": p.Namespace, "name": p.Name}).Info("Deleted pod")
+			}
+		}()
 	}
-
 	services, err := Clientset.CoreV1().Services("default").List(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to list services during shutdown")
 		os.Exit(1)
 	}
-
 	for _, svc := range services.Items {
 		if svc.Name == "kubernetes" {
 			continue
 		}
-		err := Clientset.CoreV1().Services(svc.Namespace).Delete(context.Background(), svc.Name, metav1.DeleteOptions{})
-		if err != nil {
-			logrus.WithFields(logrus.Fields{"namespace": svc.Namespace, "name": svc.Name, "err": err}).Error("Failed to delete service")
-		} else {
-			logrus.WithFields(logrus.Fields{"namespace": svc.Namespace, "name": svc.Name}).Info("Deleted service")
-		}
+		s := svc // capture loop var
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			err := Clientset.CoreV1().Services(s.Namespace).Delete(ctx, s.Name, metav1.DeleteOptions{})
+			if err != nil {
+				logrus.WithFields(logrus.Fields{"namespace": s.Namespace, "name": s.Name, "err": err}).Error("Failed to delete service")
+			} else {
+				logrus.WithFields(logrus.Fields{"namespace": s.Namespace, "name": s.Name}).Info("Deleted service")
+			}
+		}()
 	}
-
-	logrus.Info("Cleanup complete. Exiting.")
-
 	auth.DeleteAllResources()
+	wg.Wait()
+	logrus.Info("Cleanup complete. Exiting.")
 }

@@ -6,56 +6,65 @@ An aggregator using uma: https://github.com/SolidLabResearch/user-managed-access
 This project requires a kubernetes cluster and a running uma server.
 
 ### Kubernetes Cluster
-install a kubernetes cluster with minikube:
+Install KinD (Kubernetes in Docker):
 ```bash
-curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-sudo install minikube-linux-amd64 /usr/local/bin/minikube
+# For AMD64 / x86_64
+[ $(uname -m) = x86_64 ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64
+# For ARM64
+[ $(uname -m) = aarch64 ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-arm64
+chmod +x ./kind
+sudo mv ./kind /usr/local/bin/kind
 ```
 
-when minikube is installed, initialize it:
+Initialize a local KinD cluster and prepare images/secrets:
 ```bash
-make minikube-init
+make kubernettes-init
 ```
-This will start the minikube cluster, build all the containers, and load them into the minikube cluster.
-To only build or load the containers without starting the cluster, you can run:
+This will ensure the KinD cluster exists, build all the containers, and load them into the KinD cluster, then create the UMA proxy key-pair secret and deploy the Kubernetes Dashboard.
+
+To build or load containers without touching the cluster, run:
 ```bash
-make containers-build # Build the containers
-make containers-load # Load the containers into the minikube cluster
-make containers-all # Build and load the containers
+make containers-build   # Build the containers
+make containers-load    # Load the containers into the KinD cluster
+make containers-all     # Build and load the containers
 ```
-It is also possible to specify a certain container to build, load, or both by using the `name` parameter. For example, to build and load only the aggregator container, you can run:
+You can target a specific container with the `name` variable. For example, to build and load only the uma-proxy container:
 ```bash
 make containers-all name=uma-proxy
 ```
-And to start or stop the minikube cluster, you can run:
+To start or delete the KinD cluster explicitly:
 ```bash
-make minikube-start
-make minikube-clean
+make kubernettes-start
+make kubernettes-clean
+```
+Optionally, choose a different cluster name:
+```bash
+make kubernettes-start KIND_CLUSTER=my-cluster
 ```
 
-### uma Server
-To install the uma server, you first need to clone the uma repository:
+### UMA Server
+To install the UMA server, first clone the repository:
 ```bash
 git clone https://github.com/SolidLabResearch/user-managed-access
 cd user-managed-access/packages/uma
 ```
-Make sure you have node.js and npm installed with a version of at least 20.0.0, and run `corepack enable`.
-Then install the dependencies:
+Make sure you have Node.js and npm installed (>= 20.0.0), and run `corepack enable`.
+Then install dependencies:
 ```bash
 yarn install
 ```
-Finally, the uma server can be started with:
+Start the UMA server:
 ```bash
 yarn start
 ```
 
 ### Run the Aggregator
-To run the aggregator, you can use the following command:
+To run the aggregator locally:
 ```bash
 make run
 ```
 
 ### Demo
-An easy way to test the aggregator is by running `node client-test create-actor.js` to create an actor.
-Do make sure the uma server is running before you do this, and that it has the correct policies so you can access the correct endpoints.
-After that, you can run `node client-test get-actor.js` to retrieve the info on the actor you just created and its results.
+An easy way to test the aggregator is by running `node client-test/create-actor.js` to create an actor.
+Ensure the UMA server is running and has policies configured so you can access the appropriate endpoints.
+Then run `node client-test/get-actor.js` to retrieve details on the created actor and its results.

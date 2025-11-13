@@ -1,13 +1,11 @@
 import { fetch } from 'cross-fetch';
-import { createDpopHeader, generateDpopKeyPair, KeyPair } from "@inrupt/solid-client-authn-core";
 
 const DEFAULT_UMA_ISSUER = 'http://localhost:4000/uma';
 
 /**
- * Solid OIDC authenticated fetcher with DPoP support
+ * Solid OIDC authenticated fetcher
  */
 export class SolidOIDCAuth {
-    private dpopKey: KeyPair | undefined;
     private authString: string | undefined;
     private accessToken: string | undefined;
     private expiresAt: number | undefined;
@@ -15,9 +13,6 @@ export class SolidOIDCAuth {
     constructor(private webId: string, private cssBaseURL: string) {}
 
     async init(email: string, password: string) {
-        // Generate DPoP key pair
-        this.dpopKey = await generateDpopKeyPair();
-
         // Step 1: Get controls from account endpoint
         let indexResponse = await fetch(`${this.cssBaseURL}/.account/`);
         let controls = (await indexResponse.json()).controls;
@@ -60,7 +55,7 @@ export class SolidOIDCAuth {
     }
 
     private async refreshAccessToken() {
-        if (!this.authString || !this.dpopKey) {
+        if (!this.authString) {
             throw new Error('Not initialized');
         }
 
@@ -70,8 +65,7 @@ export class SolidOIDCAuth {
             method: 'POST',
             headers: {
                 authorization: `Basic ${Buffer.from(this.authString).toString('base64')}`,
-                'content-type': 'application/x-www-form-urlencoded',
-                dpop: await createDpopHeader(tokenURL, 'POST', this.dpopKey),
+                'content-type': 'application/x-www-form-urlencoded'
             },
             body: 'grant_type=client_credentials&scope=webid',
         });
@@ -87,17 +81,14 @@ export class SolidOIDCAuth {
         }
     }
 
-    private async createClaimToken(tokenEndpoint: string): Promise<string> {
+    private async createClaimToken(): Promise<string> {
         await this.ensureValidToken();
 
-        if (!this.accessToken || !this.dpopKey) {
+        if (!this.accessToken) {
             throw new Error('Not initialized');
         }
 
-        return JSON.stringify({
-            'Authorization': 'DPoP ' + this.accessToken,
-            'DPoP': await createDpopHeader(tokenEndpoint, 'POST', this.dpopKey)
-        });
+        return this.accessToken
     }
 
     private parseAuthenticateHeader(headers: Headers): { tokenEndpoint: string; ticket: string, serviceEndpoint: string | undefined } {
@@ -131,55 +122,52 @@ export class SolidOIDCAuth {
                 return noTokenResponse;
             }
 
-            // Get UMA ticket
             const {tokenEndpoint, ticket} = this.parseAuthenticateHeader(noTokenResponse.headers);
 
-            // Create claim with Solid OIDC
-            const claimToken = await this.createClaimToken(tokenEndpoint);
-
-            const content = {
-                grant_type: 'urn:ietf:params:oauth:grant-type:uma-ticket',
-                ticket,
-                claim_token: claimToken,
-                claim_token_format: 'http://openid.net/specs/openid-connect-core-1_0.html#IDToken',
-            };
-
-            // Request RPT from authorization server
-            const asRequestResponse = await fetch(tokenEndpoint, {
-                method: "POST",
-                headers: {
-                    "content-type": "application/json"
-                },
-                body: JSON.stringify(content),
-            });
-
-            if (asRequestResponse.status !== 200) {
-                return asRequestResponse;
+            const {token, tokenType, error} = await this.fetchAccessToken(tokenEndpoint, ticket);
+            if (error) {
+                throw error;
             }
 
-            const asResponse = await asRequestResponse.json();
-
-            // Add RPT to request headers
             const headers = new Headers(init.headers);
-            headers.set('Authorization', `${asResponse.token_type} ${asResponse.access_token}`);
+            headers.set('Authorization', `${tokenType} ${token}`);
 
             // Retry request with RPT
             return fetch(url, {...init, headers});
         }
     }
 
-    async redeemUmaTicket(ticket: string, tokenEndpoint?: string): Promise<string> {
-        const resolvedEndpoint = tokenEndpoint ?? `${DEFAULT_UMA_ISSUER}/token`;
-        const claimToken = await this.createClaimToken(resolvedEndpoint);
+    async fetchAccessToken(
+      tokenEndpoint: string,
+      request: string | { resource_id: string, resource_scopes: string[] }[],
+      claims?: Record<string, any>[]
+    ): Promise<{token?: string, tokenType?: string, error?: Error}> {
+        let content: any;
+        if (claims) {
+            content = {
+                grant_type: 'urn:ietf:params:oauth:grant-type:uma-ticket',
+                claim_tokens: claims
+            };
+        } else {
+            const claimToken = await this.createClaimToken();
+            content = {
+                grant_type: 'urn:ietf:params:oauth:grant-type:uma-ticket',
+                claim_token: claimToken,
+                claim_token_format: 'http://openid.net/specs/openid-connect-core-1_0.html#IDToken',
+            };
+            claims = [{
+                claim_token: claimToken,
+                claim_token_format: 'http://openid.net/specs/openid-connect-core-1_0.html#IDToken'
+            }];
+        }
 
-        const content = {
-            grant_type: 'urn:ietf:params:oauth:grant-type:uma-ticket',
-            ticket,
-            claim_token: claimToken,
-            claim_token_format: 'http://openid.net/specs/openid-connect-core-1_0.html#IDToken',
-        };
+        if (typeof request === 'string') {
+            content.ticket = request;
+        } else {
+            content.permissions = request;
+        }
 
-        const response = await fetch(resolvedEndpoint, {
+        const asRequestResponse = await fetch(tokenEndpoint, {
             method: "POST",
             headers: {
                 "content-type": "application/json"
@@ -187,38 +175,50 @@ export class SolidOIDCAuth {
             body: JSON.stringify(content),
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to redeem UMA ticket: ${response.status} - ${await response.text()}`);
+        if (asRequestResponse.status === 403) {
+            const asRequestResponseJson = await asRequestResponse.json();
+            claims = await this.gatherClaims(claims, asRequestResponseJson.required_claims);
+            return this.fetchAccessToken(tokenEndpoint, asRequestResponseJson.ticket, claims);
         }
 
-        const body = await response.json();
-        return `${body.token_type} ${body.access_token}`;
+        if (asRequestResponse.status !== 200) {
+            return {error: new Error(`Failed to fetch access token, error: ${await asRequestResponse.text()}`), token: undefined, tokenType: undefined};
+        }
+
+        const asResponse = await asRequestResponse.json();
+        return {token: asResponse.access_token, tokenType: asResponse.token_type, error: undefined};
     }
 
-    async redeemUmaRequest(permissions: { resource_id: string, resource_scopes: string[] }[], tokenEndpoint?: string): Promise<string> {
-        const resolvedEndpoint = tokenEndpoint ?? `${DEFAULT_UMA_ISSUER}/token`;
-        const claimToken = await this.createClaimToken(resolvedEndpoint);
-
-        const content = {
-            permissions,
-            claim_token: claimToken,
-            claim_token_format: 'http://openid.net/specs/openid-connect-core-1_0.html#IDToken',
-        };
-
-        const response = await fetch(resolvedEndpoint, {
-            method: "POST",
-            headers: {
-                "content-type": "application/json"
-            },
-            body: JSON.stringify(content),
-        });
-
-        if (!response.ok) {
-            throw new Error(`Failed to redeem UMA request: ${response.status} - ${await response.text()}`);
+    async gatherClaims(claims: Record<string, any>[], requiredClaims: any[]): Promise<Record<string, any>[]> {
+        for (const requiredClaim of requiredClaims) {
+            switch (requiredClaim["claim_token_format"]) {
+                case "http://openid.net/specs/openid-connect-core-1_0.html#IDToken":
+                    claims.push({
+                        claim_token: await this.createClaimToken(),
+                        claim_token_format: 'http://openid.net/specs/openid-connect-core-1_0.html#IDToken'
+                    });
+                    break;
+                case "urn:ietf:params:oauth:token-type:access_token":
+                    const {token, error} = await this.fetchAccessToken(
+                      requiredClaim.details.issuer + "/token",
+                      [{
+                          resource_id: requiredClaim.details.resource_id,
+                          resource_scopes: requiredClaim.details.resource_scopes
+                      }]
+                    );
+                    if (error) {
+                        throw error;
+                    }
+                    claims.push({
+                        claim_token: token,
+                        claim_token_format: 'urn:ietf:params:oauth:token-type:access_token'
+                    });
+                    break;
+                default:
+                    throw new Error(`Unsupported claim token format: ${requiredClaim["claim_token_format"]}`);
+            }
         }
-
-        const body = await response.json();
-        return `${body.token_type} ${body.access_token}`;
+        return claims;
     }
 
     async getUmaAuthorizationHeader(url: string, method: string = 'GET'): Promise<{token: string | undefined, serviceEndpoint: string | undefined}> {
@@ -233,7 +233,7 @@ export class SolidOIDCAuth {
             throw new Error(`Unexpected response while obtaining UMA ticket: ${initialResponse.status} - ${await initialResponse.text()}`);
         }
 
-        const token = await this.redeemUmaTicket(ticket, tokenEndpoint);
+        const { token } = await this.fetchAccessToken(ticket, tokenEndpoint);
         return {token, serviceEndpoint};
     }
 }
