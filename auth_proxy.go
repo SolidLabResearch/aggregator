@@ -71,10 +71,9 @@ func InitAuthProxy(mux *http.ServeMux, baseURL string) {
 func setCORSProxy(w http.ResponseWriter) {
 	h := w.Header()
 	h.Set("Access-Control-Allow-Origin", "*")
-	h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, HEAD, OPTIONS")
-	h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Origin, Cache-Control, X-Requested-With, If-None-Match, Last-Event-ID")
-	h.Set("Access-Control-Expose-Headers", "ETag, Link")
-	h.Set("Access-Control-Max-Age", "600")
+	h.Set("Access-Control-Allow-Methods", "*")
+	h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+	h.Set("Access-Control-Expose-Headers", "*")
 }
 
 // HandleAllRequests is the main request handler that implements the UMA flow

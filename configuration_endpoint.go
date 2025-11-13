@@ -49,10 +49,9 @@ func (data ConfigurationData) HandleFunc(pattern string, handler func(http.Respo
 func setCORS(w http.ResponseWriter) {
 	h := w.Header()
 	h.Set("Access-Control-Allow-Origin", "*")
-	h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, HEAD, OPTIONS")
-	h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Origin, Cache-Control, X-Requested-With, If-None-Match, Last-Event-ID")
-	h.Set("Access-Control-Expose-Headers", "ETag, Link")
-	h.Set("Access-Control-Max-Age", "600")
+	h.Set("Access-Control-Allow-Methods", "*")
+	h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+	h.Set("Access-Control-Expose-Headers", "*")
 }
 
 // HandleConfigurationEndpoint handles requests to the /config endpoint
