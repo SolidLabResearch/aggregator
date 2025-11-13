@@ -9,7 +9,7 @@
     "skipLibCheck": true,                 // Faster builds
     "noImplicitAny": true,                // Catch unsafe `any` usage
     "resolveJsonModule": true,            // Allow importing JSON
-    "types": ["node"]
+    "types": ["node", "jest"]
   },
   "exclude": ["node_modules", "dist"]
 }

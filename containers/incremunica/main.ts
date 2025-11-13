@@ -1,16 +1,17 @@
 import { QueryEngine } from '@comunica/query-sparql';
 import { QueryEngine as QueryEngineInc } from '@incremunica/query-sparql-incremental';
-import { isAddition } from '@incremunica/user-tools';
-import { Store, Parser, DataFactory } from 'n3';
+import { isAddition, QuerySourceIterator } from '@incremunica/user-tools';
+import { Store, Parser } from 'n3';
 import http from "http";
 import { URL } from "url";
 import {EventEmitter} from "node:events";
+import { logger } from './logger';
 
 class SSEConnectionManager {
   private connections: Map<http.ServerResponse, NodeJS.Timeout> = new Map();
 
   addConnection(res: http.ServerResponse): void {
-    console.log('New SSE connection established');
+    logger.info('New SSE connection established');
     const heartbeat = setInterval(() => {
       this.sendToConnection(res, "heartbeat", { timestamp: Date.now() });
     }, 30000);
@@ -21,7 +22,7 @@ class SSEConnectionManager {
   }
 
   removeConnection(res: http.ServerResponse): boolean {
-    console.log('SSE connection closed');
+    logger.info('SSE connection closed');
     const heartbeat = this.connections.get(res);
     if (heartbeat) {
       clearInterval(heartbeat);
@@ -30,7 +31,7 @@ class SSEConnectionManager {
   }
 
   broadcast(event: string, data?: any): void {
-    console.log(`Broadcasting event: ${event}`);
+    logger.debug({ event }, 'Broadcasting event');
     let message = `event: ${event}\n`
     if (data) {
       message += `data: ${JSON.stringify(data)}\n`;
@@ -46,7 +47,7 @@ class SSEConnectionManager {
   }
 
   sendToConnection(res: http.ServerResponse, event: string, data?: any): void {
-    console.log(`Sending event to connection: ${event}`);
+    logger.debug({ event }, 'Sending event to connection');
     let message = `event: ${event}\n`
     if (data) {
       message += `data: ${JSON.stringify(data)}\n`;
@@ -67,8 +68,9 @@ const POD_IP = process.env.POD_IP || "127.0.0.1";
 const SERVICE_PORT = 8080;
 
 const proxyUrl = process.env.http_proxy || process.env.HTTP_PROXY;
-if (proxyUrl === undefined) {
-  throw new Error('Environment variable PROXY_URL is not set. Please provide the URL of the proxy server.');
+// Only enforce proxy presence when executing the main program, not on import for tests.
+if (require.main === module && proxyUrl === undefined) {
+  logger.warn('[incremunica] PROXY_URL (http_proxy/HTTP_PROXY) not set, falling back to direct fetch.');
 }
 
 const registeredSources: Map<string, {
@@ -78,6 +80,12 @@ const registeredSources: Map<string, {
 // Create custom fetch function that uses the proxy's /fetch endpoint
 async function customFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const originalUrl = input.toString();
+
+  // If no proxy configured, fall back to direct fetch.
+  if (!proxyUrl) {
+    logger.trace({ url: originalUrl }, 'Direct fetch (no proxy)');
+    return fetch(input as any, init);
+  }
 
   // Prepare the request payload for the proxy
   const fetchRequest = {
@@ -133,39 +141,28 @@ async function registerEndpointWithAggregator(endpoint: string, description: str
   };
 
   try {
-    console.log(`📝 Registering endpoint ${endpoint} with aggregator at ${REGISTRATION_URL}`);
-    console.log(`   Pod: ${POD_NAME}, IP: ${POD_IP}, Port: ${SERVICE_PORT}`);
-    console.log(`   Description: ${description}`);
-    if (registrationData.sources) {
-      console.log(`   Sources[${registrationData.sources.length}]: ${registrationData.sources.join(', ')}`);
-    }
-
+    logger.info({ endpoint, scopes, description }, 'Registering endpoint');
     const response = await fetch(REGISTRATION_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(registrationData)
     });
-
     if (response.ok) {
       const result = await response.json();
-      console.log(`✅ Successfully registered endpoint ${endpoint}:`);
-      console.log(`   External URL: ${result.external_url}`);
-      console.log(`   Actor ID: ${result.actor_id}`);
+      logger.info({ endpoint, external_url: result.external_url, actor_id: result.actor_id }, 'Endpoint registered');
       return result.actor_id;
     } else {
       const errorText = await response.text();
-      console.error(`❌ Failed to register endpoint ${endpoint}: ${response.status} - ${errorText}`);
+      logger.error({ endpoint, status: response.status, errorText }, 'Failed registering endpoint');
     }
   } catch (error) {
-    console.error(`❌ Error registering endpoint ${endpoint}:`, error);
+    logger.error({ endpoint, error }, 'Error registering endpoint');
   }
 }
 
 async function patchEndpointSources(endpoint: string): Promise<boolean> {
   const sources = [];
-  for (const [sourceUrl, sourceInfo] of registeredSources) {
+  for (const [, sourceInfo] of registeredSources) {
     sources.push({
       issuer: sourceInfo.issuer,
       derivation_resource_id: sourceInfo.derivation_resource_id
@@ -177,7 +174,7 @@ async function patchEndpointSources(endpoint: string): Promise<boolean> {
     sources: sources,
   };
   try {
-    console.log(`✏️ Patching sources for ${endpoint} (n=${sources.length})`);
+    logger.debug({ endpoint, count: sources.length }, 'Patching sources');
     const res = await fetch(REGISTRATION_URL, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -185,20 +182,20 @@ async function patchEndpointSources(endpoint: string): Promise<boolean> {
     });
     if (!res.ok) {
       const txt = await res.text();
-      console.error(`❌ Failed to patch sources: ${res.status} ${txt}`);
+      logger.error({ endpoint, status: res.status, txt }, 'Patch sources failed');
       return false;
     }
-    console.log(`✅ Sources updated for ${endpoint}`);
+    logger.info({ endpoint, count: sources.length }, 'Sources patched');
     return true;
   } catch (e) {
-    console.error(`❌ Error patching sources for ${endpoint}:`, e);
+    logger.error({ endpoint, error: e }, 'Error patching sources');
     return false;
   }
 }
 
 // Function to register all endpoints with the aggregator
 async function registerWithAggregator(): Promise<void> {
-  console.log('🌐 Registering all endpoints with aggregator...');
+  logger.info('Registering all endpoints with aggregator');
 
   // Register the main SPARQL results endpoint
   await registerEndpointWithAggregator(
@@ -214,7 +211,7 @@ async function registerWithAggregator(): Promise<void> {
     ["urn:example:css:modes:continuous:read"]
   );
 
-  console.log('✅ All endpoints registered with aggregator');
+  logger.info('All endpoints registered with aggregator');
 }
 
 class UpToDateTimeout {
@@ -232,7 +229,7 @@ class UpToDateTimeout {
 
   reset(): void {
     if (this.timeout) {
-      this.timeout.close();
+      clearTimeout(this.timeout as any);
     }
     this.timeout = setTimeout(() => {
       this.timeout = undefined;
@@ -247,9 +244,9 @@ class UpToDateTimeout {
 
 async function main() {
   let server: http.Server;
-  await new Promise((resolve, reject) => {
+  await new Promise((resolve) => {
     server = http.createServer((req, res) => {
-      console.log(`Received request: ${req.method} ${req.url}`);
+      logger.info({ method: req.method, url: req.url }, 'Incoming request');
       if (req.method === "GET" && req.url === "/") {
         res.writeHead(200, { "Content-Type": "application/sparql-results+json" });
         const sparqlJson = materializedViewToSparqlJson(materializedView);
@@ -281,8 +278,8 @@ async function main() {
     });
 
     server.listen(8080, async () => {
-      console.log("SPARQL SELECT result server running at http://localhost:8080/");
-      console.log("Server-Sent Events available at http://localhost:8080/events");
+      logger.info('SPARQL SELECT result server running at http://localhost:8080/');
+      logger.info('Server-Sent Events available at http://localhost:8080/events');
 
       // Register with the aggregator after server starts, include sources
       await registerWithAggregator();
@@ -295,7 +292,7 @@ async function main() {
   if (pipelineDescription === undefined) {
     throw new Error('Environment variable PIPELINE_DESCRIPTION is not set. Please provide a valid pipeline description.');
   }
-  console.log(pipelineDescription)
+  logger.debug({ pipelineDescriptionLength: pipelineDescription.length }, 'Parsing pipeline description')
   const pipelineParsingEngine = new QueryEngine();
   const pipelineDescriptionStore = new Store();
   const parser = new Parser();
@@ -402,15 +399,12 @@ SELECT ?queryString ?source ?endpoint ?variable WHERE {
   );
   queryInfoStream.destroy();
 
-  const sources = await getSources(queryInfo.sources);
-  if (sources.length === 0) {
-    throw new Error('No valid sources found in the pipeline description.');
-  }
+  const sourceIterator = await getSources(queryInfo.sources);
 
   const queryEngine = new QueryEngineInc();
   const bindingsStream = await queryEngine.queryBindings(queryInfo.query, {
     // @ts-ignore
-    sources: sources,
+    sources: [sourceIterator],
     fetch: customFetch,
     deferredEvaluationTrigger: new EventEmitter(),
   });
@@ -449,63 +443,154 @@ SELECT ?queryString ?source ?endpoint ?variable WHERE {
     }
   });
   bindingsStream.on('end', () => {
-    console.log('Query execution finished.');
+    logger.info('Query execution finished');
   });
   bindingsStream.on('error', (error) => {
-    // Log original error and wrap in a new Error with message
-    console.error('Error during query execution:', error);
-    // Do not throw here to avoid crashing the server; keep running
+    logger.error({ error }, 'Error during query execution');
   });
 
   await new Promise(resolve => server.on("close", resolve));
 }
 
-async function getSources(sourceTerms: any[]): Promise<string[]> {
-  const sources: Set<string> = new Set();
-  const promises: Promise<string[]>[] = [];
+async function getSources(sourceTerms: any[], pollIntervalMs: number = 5000): Promise<QuerySourceIterator> {
+  // Collect static sources and dynamic endpoint descriptors
+  const staticSources: Set<string> = new Set();
+  const dynamicEndpoints: { endpoint: string; variables: string[] }[] = [];
 
   for (const term of sourceTerms ?? []) {
-    if (!term) {
-      continue;
-    }
-
+    if (!term) continue;
     if (term.endpoint) {
       const vars = Array.isArray(term.variables) ? term.variables : [];
-      console.log(`Interpreted dynamic SPARQL source: endpoint=${term.endpoint}, variables=[${vars.join(", ")}]`);
-      promises.push(customFetch(term.endpoint).then(response => {
-        if (!response.ok) {
-          throw new Error(`Failed to fetch from SPARQL endpoint ${term.endpoint}: ${response.status} ${response.statusText}`);
-        }
-        return response.json()
-      }).then((json): string[] => {
-        const endpointSources: string[] = [];
-        json.results.bindings.forEach((binding: any) => {
-          endpointSources.push(...collectSourcesFromBindingObject(binding, vars));
-        });
-        console.log(`Collected ${endpointSources.length} sources from endpoint ${term.endpoint}`);
-        return endpointSources;
-      }));
+      logger.debug({ endpoint: term.endpoint, variables: vars }, 'Dynamic SPARQL source interpreted');
+      dynamicEndpoints.push({ endpoint: term.endpoint, variables: vars });
       continue;
     }
-
     const staticValue = getSourceValue(term);
     if (staticValue !== undefined) {
-      console.log(`Interpreted static source: ${staticValue}`);
-      sources.add(staticValue);
+      logger.debug({ source: staticValue }, 'Static source interpreted');
+      staticSources.add(staticValue);
     } else {
-      console.warn(`Unable to interpret source term ${JSON.stringify(term)}`);
+      logger.warn({ term }, 'Unable to interpret source term');
     }
   }
 
-  let awaitedSources = await Promise.all(promises);
-  for (const awaitedSourceList of awaitedSources) {
-    for (const source of awaitedSourceList) {
-      sources.add(source);
+  async function fetchEndpointSources(descriptor: { endpoint: string; variables: string[] }): Promise<string[]> {
+    try {
+      const response = await customFetch(descriptor.endpoint);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch from SPARQL endpoint ${descriptor.endpoint}: ${response.status} ${response.statusText}`);
+      }
+      const json = await response.json();
+      const endpointSources: string[] = [];
+      if (json?.results?.bindings && Array.isArray(json.results.bindings)) {
+        json.results.bindings.forEach((binding: any) => {
+          endpointSources.push(...collectSourcesFromBindingObject(binding, descriptor.variables));
+        });
+      }
+      logger.info({ count: endpointSources.length, endpoint: descriptor.endpoint }, 'Sources collected from endpoint');
+      return endpointSources;
+    } catch (e) {
+      logger.error({ endpoint: descriptor.endpoint, error: e }, 'Dynamic sources fetch error');
+      return [];
     }
   }
-  console.log(`Total sources collected: ${sources.size}`);
 
-  return [...sources];
+  // Initial dynamic source collection
+  const initialDynamicSourcesLists = await Promise.all(dynamicEndpoints.map(d => fetchEndpointSources(d)));
+  const initialDynamicCombined: string[] = [];
+  for (const list of initialDynamicSourcesLists) {
+    for (const s of list) initialDynamicCombined.push(s);
+  }
+
+  // Dynamic refcounts across all dynamic endpoints
+  const dynamicRefCounts: Map<string, number> = new Map();
+  initialDynamicSourcesLists.forEach(list => {
+    for (const s of list) {
+      dynamicRefCounts.set(s, (dynamicRefCounts.get(s) ?? 0) + 1);
+    }
+  });
+
+  logger.info({ static: staticSources.size, dynamicSeed: initialDynamicCombined.length }, 'Initial sources collected');
+
+  // Create iterator with only static seed sources
+  const querySourceIterator = new QuerySourceIterator({
+    seedSources: [...staticSources],
+    distinct: true,
+  });
+
+  // Add initial dynamic sources explicitly so removals emit events
+  for (const [source] of dynamicRefCounts.entries()) {
+    if (!staticSources.has(source)) {
+      try {
+        querySourceIterator.addSource(source);
+        logger.debug({ source }, 'Initial dynamic source added');
+      } catch (e) {
+        logger.error({ source, error: e }, 'Failed adding initial dynamic source');
+      }
+    }
+  }
+
+  // Track previous per endpoint for diffing
+  const previousPerEndpoint: Map<string, Set<string>> = new Map();
+  dynamicEndpoints.forEach((d, idx) => {
+    previousPerEndpoint.set(d.endpoint, new Set(initialDynamicSourcesLists[idx]));
+  });
+
+  if (dynamicEndpoints.length > 0) {
+    logger.info({ intervalMs: pollIntervalMs, endpoints: dynamicEndpoints.length }, 'Starting dynamic endpoint polling');
+  }
+
+  const pollingIntervals: NodeJS.Timeout[] = dynamicEndpoints.map(descriptor => {
+    return setInterval(async () => {
+      const newList = await fetchEndpointSources(descriptor);
+      const newSet = new Set(newList);
+      const prevSet = previousPerEndpoint.get(descriptor.endpoint) || new Set<string>();
+
+      // Additions
+      for (const value of newSet) {
+        if (!prevSet.has(value)) {
+          try {
+            const prevCount = dynamicRefCounts.get(value) ?? 0;
+            dynamicRefCounts.set(value, prevCount + 1);
+            if (prevCount === 0 && !staticSources.has(value)) {
+              querySourceIterator.addSource(value);
+              logger.debug({ source: value, endpoint: descriptor.endpoint }, 'Dynamic source added');
+            }
+          } catch (e) {
+            logger.error({ source: value, error: e }, 'Failed adding source');
+          }
+        }
+      }
+
+      // Removals
+      for (const value of prevSet) {
+        if (!newSet.has(value)) {
+          try {
+            const prevCount = dynamicRefCounts.get(value) ?? 0;
+            const nextCount = Math.max(0, prevCount - 1);
+            dynamicRefCounts.set(value, nextCount);
+            if (nextCount === 0 && !staticSources.has(value)) {
+              querySourceIterator.removeSource(value);
+              logger.debug({ source: value, endpoint: descriptor.endpoint }, 'Dynamic source removed');
+            }
+          } catch (e) {
+            logger.error({ source: value, error: e }, 'Failed removing source');
+          }
+        }
+      }
+
+      previousPerEndpoint.set(descriptor.endpoint, newSet);
+    }, pollIntervalMs);
+  });
+
+  const clearPolling = () => {
+    pollingIntervals.forEach(i => { try { clearInterval(i); } catch { /* ignore */ } });
+  };
+  process.on('exit', clearPolling);
+  process.on('SIGINT', () => { clearPolling(); process.exit(0); });
+  process.on('SIGTERM', () => { clearPolling(); process.exit(0); });
+
+  return querySourceIterator;
 }
 
 function getSourceValue(term: any): string | undefined {
@@ -525,7 +610,7 @@ function collectSourcesFromBindingObject(bindingObject: any, variables: string[]
 
   const sourceValues: string[] = [];
   const variableNames = variables.length > 0 ? variables : Object.keys(bindingObject);
-  const namesNormalized = variableNames.map(v => typeof v === 'string' && v.startsWith('?') ? v.slice(1) : v);
+  const namesNormalized = variableNames.map(v => v.startsWith('?') ? v.slice(1) : v);
 
   for (const variableName of namesNormalized) {
     const binding = bindingObject[variableName];
@@ -617,12 +702,16 @@ function bindingToSparqlJson(bindings: any) {
   };
 }
 
-main()
-  .then(() => {
-    console.error('Error: Incremunica client closed.');
-    process.exit(1);
-  })
-  .catch((error) => {
-    console.error('Error starting Incremunica client:', error);
-    process.exit(1);
-  });
+export { getSources, getSourceValue, collectSourcesFromBindingObject, SSEConnectionManager, UpToDateTimeout, materializedViewToSparqlJson, bindingToSparqlJson, logger, customFetch };
+
+if (require.main === module) {
+  main()
+    .then(() => {
+      logger.error('Error: Incremunica client closed.');
+      process.exit(1);
+    })
+    .catch((error) => {
+      logger.error({ error }, 'Error starting Incremunica client');
+      process.exit(1);
+    });
+}

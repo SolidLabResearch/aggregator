@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "scripts": {
     "build": "tsc",
-    "start": "node main.js"
+    "start": "node main.js",
+    "test": "jest --runInBand"
   },
   "dependencies": {
     "@comunica/actor-context-preprocess-convert-shortcuts": "4.1.0",
@@ -200,10 +201,14 @@
     "@comunica/query-sparql": "4.1.0",
     "@incremunica/query-sparql-incremental": "2.2.4",
     "@incremunica/user-tools": "2.2.4",
-    "n3": "^1.26.0"
+    "n3": "^1.26.0",
+    "pino": "^9.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.10",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "@types/jest": "^29.5.11"
   }
 }
