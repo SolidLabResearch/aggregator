@@ -63,7 +63,7 @@ func AuthorizeRequest(response http.ResponseWriter, request *http.Request, extra
 	permission, err := VerifyTicket(request.Header.Get("Authorization"), []string{"http://localhost:4000/uma"})
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Error while verifying ticket")
-		response.WriteHeader(http.StatusBadRequest)
+		response.WriteHeader(http.StatusUnauthorized)
 		return false
 	}
 
