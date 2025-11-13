@@ -45,24 +45,39 @@ func (data ConfigurationData) HandleFunc(pattern string, handler func(http.Respo
 	)
 }
 
+// setCORS adds permissive CORS headers (allow all origins)
+func setCORS(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("Access-Control-Allow-Origin", "*")
+	h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, HEAD, OPTIONS")
+	h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Origin, Cache-Control, X-Requested-With, If-None-Match, Last-Event-ID")
+	h.Set("Access-Control-Expose-Headers", "ETag, Link")
+	h.Set("Access-Control-Max-Age", "600")
+}
+
 // HandleConfigurationEndpoint handles requests to the /config endpoint
 func (data ConfigurationData) HandleConfigurationEndpoint(response http.ResponseWriter, request *http.Request) {
+	setCORS(response)
+	if request.Method == http.MethodOptions { // Preflight
+		response.WriteHeader(http.StatusNoContent)
+		return
+	}
 	// 1) Authorize request
 	if !auth.AuthorizeRequest(response, request, nil) {
 		return
 	}
 
 	switch request.Method {
-	case "HEAD":
+	case http.MethodHead:
 		data.headAvailableTransformations(response, request)
-	case "GET":
+	case http.MethodGet:
 		data.getAvailableTransformations(response, request)
 	default:
 		http.Error(response, "Invalid request method", http.StatusMethodNotAllowed)
 	}
 }
 
-// getAvailableTransformations GET config/transformations retrieves all available transformations
+// headAvailableTransformations HEAD config returns ETag/header info
 func (data ConfigurationData) headAvailableTransformations(response http.ResponseWriter, _ *http.Request) {
 	header := response.Header()
 	header.Set("ETag", strconv.Itoa(data.etagTransformations))
@@ -82,6 +97,11 @@ func (data ConfigurationData) getAvailableTransformations(response http.Response
 
 // HandleActorsEndpoint handles requests to the /config/actors endpoint
 func (data ConfigurationData) HandleActorsEndpoint(response http.ResponseWriter, request *http.Request) {
+	setCORS(response)
+	if request.Method == http.MethodOptions { // Preflight
+		response.WriteHeader(http.StatusNoContent)
+		return
+	}
 	// 1) Authorize request
 	if !auth.AuthorizeRequest(response, request, nil) {
 		return
@@ -89,11 +109,11 @@ func (data ConfigurationData) HandleActorsEndpoint(response http.ResponseWriter,
 
 	if request.URL.Path == "/config/actors" {
 		switch request.Method {
-		case "HEAD":
+		case http.MethodHead:
 			data.headActors(response, request)
-		case "GET":
+		case http.MethodGet:
 			data.getActors(response, request)
-		case "POST":
+		case http.MethodPost:
 			data.createActor(response, request)
 		default:
 			http.Error(response, "Invalid request method", http.StatusMethodNotAllowed)
@@ -102,7 +122,7 @@ func (data ConfigurationData) HandleActorsEndpoint(response http.ResponseWriter,
 	}
 }
 
-// headActors config mainly returns the ETag header
+// headActors HEAD returns ETag header for actors collection
 func (data ConfigurationData) headActors(response http.ResponseWriter, _ *http.Request) {
 	header := response.Header()
 	header.Set("Content-Type", "application/json")
@@ -115,7 +135,6 @@ func (data ConfigurationData) getActors(response http.ResponseWriter, _ *http.Re
 	header := response.Header()
 	header.Set("Content-Type", "application/json")
 	header.Set("ETag", strconv.Itoa(data.etagActors))
-	// TODO not sure yet how this should be returned
 	actors := "{\"actors\":["
 	ids := []string{}
 	for _, actor := range data.actors {
@@ -130,11 +149,7 @@ func (data ConfigurationData) getActors(response http.ResponseWriter, _ *http.Re
 }
 
 // createActor creates a new actor
-// Should we need to set limitations on these transformations? => like what if we only allow 1 source or don't allow a certain SPARQL query? => 405
-// What if we only allow one single pipeline that can be instantiated? => I guess return 405?
-// What if the transformation takes to long to execute => return 202 but then when the user tries to get the results, we return 404 with extra information that the transformation is still running/canceled?
 func (data ConfigurationData) createActor(response http.ResponseWriter, request *http.Request) {
-	// 2) get transformation and sources from request body
 	pipelineDescription, err := io.ReadAll(request.Body)
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to read pipeline description")
@@ -145,7 +160,6 @@ func (data ConfigurationData) createActor(response http.ResponseWriter, request 
 	logrus.WithFields(logrus.Fields{"pipeline_description": string(pipelineDescription)}).Debug("Transformation received")
 
 	actor, err := createActor(string(pipelineDescription))
-
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to create an actor")
 		http.Error(response, "Failed to create the actor", http.StatusInternalServerError)
@@ -153,12 +167,10 @@ func (data ConfigurationData) createActor(response http.ResponseWriter, request 
 	}
 
 	data.actors[actor.Id] = actor
-	data.etagActors++ // TODO maybe hash the actors to get a unique etag
+	data.etagActors++
 
-	// TODO the descriptions need to have the pipelineDescription
 	data.HandleFunc(fmt.Sprintf("/config/actors/%s", actor.Id), data.HandleActorEndpoint, resourceScopesReadDelete)
 
-	// 5) return the endpoint to the client
 	header := response.Header()
 	header.Set("Content-Type", "application/json")
 	response.WriteHeader(http.StatusCreated)
@@ -171,7 +183,11 @@ func (data ConfigurationData) createActor(response http.ResponseWriter, request 
 
 // HandleActorEndpoint handles requests to the /config/actors/{id} endpoint
 func (data ConfigurationData) HandleActorEndpoint(response http.ResponseWriter, request *http.Request) {
-	// 2) get id from request
+	setCORS(response)
+	if request.Method == http.MethodOptions {
+		response.WriteHeader(http.StatusNoContent)
+		return
+	}
 	parts := strings.Split(request.URL.Path, "/")
 	if len(parts) < 4 || parts[3] == "" {
 		http.Error(response, "Invalid request path", http.StatusBadRequest)
@@ -184,11 +200,11 @@ func (data ConfigurationData) HandleActorEndpoint(response http.ResponseWriter, 
 	}
 
 	switch request.Method {
-	case "HEAD":
+	case http.MethodHead:
 		data.headActor(response, request, actor)
-	case "GET":
+	case http.MethodGet:
 		data.getActor(response, request, actor)
-	case "DELETE":
+	case http.MethodDelete:
 		data.deleteActor(response, request, actor)
 	default:
 		http.Error(response, "Invalid request method", http.StatusMethodNotAllowed)
@@ -204,7 +220,6 @@ func generateActorETag(marshaledData string) string {
 // headActor HEAD config/actors/{id} returns the ETag header for the actor with the given ID
 func (data ConfigurationData) headActor(response http.ResponseWriter, request *http.Request, actor Actor) {
 	logrus.WithFields(logrus.Fields{"actor_id": actor.Id}).Debug("Request head for actor")
-
 	header := response.Header()
 	header.Set("Content-Type", "application/json")
 	header.Set("ETag", generateActorETag(actor.marshalActor()))
@@ -213,7 +228,6 @@ func (data ConfigurationData) headActor(response http.ResponseWriter, request *h
 
 func (data ConfigurationData) getActor(response http.ResponseWriter, request *http.Request, actor Actor) {
 	logrus.WithFields(logrus.Fields{"actor_id": actor.Id}).Info("Request get for actor")
-
 	marshaledData := actor.marshalActor()
 	header := response.Header()
 	header.Set("Content-Type", "application/json")
@@ -224,13 +238,11 @@ func (data ConfigurationData) getActor(response http.ResponseWriter, request *ht
 	}
 }
 
-// DELETE config deletes an actor with the given ID
+// deleteActor DELETE config/actors/{id} deletes an actor with the given ID
 func (data ConfigurationData) deleteActor(response http.ResponseWriter, _ *http.Request, actor Actor) {
 	logrus.WithFields(logrus.Fields{"actor_id": actor.Id}).Info("Request to delete transformation")
-
 	actor.Stop()
 	delete(data.actors, actor.Id)
-
 	data.etagActors++
 	response.WriteHeader(http.StatusOK)
 

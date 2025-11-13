@@ -67,8 +67,23 @@ func InitAuthProxy(mux *http.ServeMux, baseURL string) {
 	}
 }
 
+// setCORSProxy adds CORS headers for actor (proxied) responses & token service
+func setCORSProxy(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("Access-Control-Allow-Origin", "*")
+	h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, HEAD, OPTIONS")
+	h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Origin, Cache-Control, X-Requested-With, If-None-Match, Last-Event-ID")
+	h.Set("Access-Control-Expose-Headers", "ETag, Link")
+	h.Set("Access-Control-Max-Age", "600")
+}
+
 // HandleAllRequests is the main request handler that implements the UMA flow
 func (ap *AuthProxy) HandleAllRequests(w http.ResponseWriter, r *http.Request) {
+	setCORSProxy(w)
+	if r.Method == http.MethodOptions { // Preflight for any actor resource
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	fullUrl := fmt.Sprintf("%s%s", ap.baseURL, r.URL.Path)
 	logrus.WithFields(logrus.Fields{
 		"method": r.Method,
@@ -76,7 +91,6 @@ func (ap *AuthProxy) HandleAllRequests(w http.ResponseWriter, r *http.Request) {
 	}).Debug("🔍 Processing request")
 
 	streamResource, isStream := auth.IsStreamingResource(fullUrl)
-
 	if isStream {
 		ap.handleStreamRequest(w, r, streamResource)
 		return
@@ -179,33 +193,32 @@ func (ap *AuthProxy) handleRegularRequest(w http.ResponseWriter, r *http.Request
 
 // serviceTokenEndpoint handles the /service/tokens endpoint
 func (ap *AuthProxy) serviceTokenEndpoint(w http.ResponseWriter, r *http.Request) {
+	setCORSProxy(w)
+	if r.Method == http.MethodOptions { // Preflight for tokens endpoint
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
 	logrus.Debug("🎫 Service token endpoint called")
-
 	var request serviceTokenRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	request.normalize()
-
 	if request.ResourceURL == "" {
 		http.Error(w, "resource_url is required", http.StatusBadRequest)
 		return
 	}
-
 	streamResource, isStream := auth.IsStreamingResource(request.ResourceURL)
 	var extraPermissions []auth.Permission
 	if isStream {
-		extraPermissions = []auth.Permission{
-			{ResourceID: request.ResourceURL, ResourceScopes: []string{string(streamResource.Scope)}},
-		}
+		extraPermissions = []auth.Permission{{ResourceID: request.ResourceURL, ResourceScopes: []string{string(streamResource.Scope)}}}
 	}
-	logrus.WithFields(logrus.Fields{"ExtraPermissionsAmount": len(extraPermissions), "ResourceID": request.ResourceURL, "ResourceScopes": extraPermissions[0].ResourceScopes}).Debug("setting extraPermissions")
+	logrus.WithFields(logrus.Fields{"ExtraPermissionsAmount": len(extraPermissions), "ResourceID": request.ResourceURL}).Debug("setting extraPermissions")
 	if !auth.AuthorizeRequest(w, r, extraPermissions) {
 		return
 	}
@@ -213,14 +226,12 @@ func (ap *AuthProxy) serviceTokenEndpoint(w http.ResponseWriter, r *http.Request
 		http.Error(w, "Resource is not a streaming resource", http.StatusBadRequest)
 		return
 	}
-
 	if request.SessionID != "" {
 		if err := ap.refreshStreamToken(w, r, request); err != nil {
 			ap.writeStreamError(w, err)
 		}
 		return
 	}
-
 	if err := ap.createStreamToken(w, r, request, streamResource); err != nil {
 		ap.writeStreamError(w, err)
 		return
@@ -570,12 +581,18 @@ func (ap *AuthProxy) proxyToBackend(w http.ResponseWriter, r *http.Request, regi
 		ExpectContinueTimeout: 1 * time.Second,
 		DisableCompression:    true,
 	}
-	if addServiceLink {
-		serviceLink := fmt.Sprintf("<%s>; rel=\"service-token-endpoint\"", ap.endpointUrl)
-		proxy.ModifyResponse = func(res *http.Response) error {
+	serviceLink := fmt.Sprintf("<%s>; rel=\"service-token-endpoint\"", ap.endpointUrl)
+	proxy.ModifyResponse = func(res *http.Response) error {
+		// Ensure CORS headers present on proxied actor responses
+		res.Header.Set("Access-Control-Allow-Origin", "*")
+		res.Header.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, HEAD, OPTIONS")
+		res.Header.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Origin, Cache-Control, X-Requested-With, If-None-Match, Last-Event-ID")
+		res.Header.Set("Access-Control-Expose-Headers", "ETag, Link")
+		res.Header.Set("Access-Control-Max-Age", "600")
+		if addServiceLink {
 			res.Header.Add("Link", serviceLink)
-			return nil
 		}
+		return nil
 	}
 	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
 		if isContextCanceledError(err) {
@@ -697,6 +714,10 @@ func normalizeRelativePath(path string) string {
 
 func (ap *AuthProxy) addServiceTokenLinkHeader(w http.ResponseWriter) {
 	w.Header().Add("Link", fmt.Sprintf("<%s>; rel=\"service-token-endpoint\"", ap.endpointUrl))
+	// Also ensure CORS headers remain (some reverse proxy flows may overwrite)
+	if w.Header().Get("Access-Control-Allow-Origin") == "" {
+		setCORSProxy(w)
+	}
 }
 
 // resolveServiceTarget tries to resolve id-<actorID>-service NodePort endpoint as nodeIP:nodePort
