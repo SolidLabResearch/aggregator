@@ -155,6 +155,7 @@ func FetchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	originalHost := originalURL.Host
+	originalURLStr := fetchReq.URL
 
 	// Redirect localhost URLs to host machine
 	fetchReq.URL = redirectLocalhostURL(fetchReq.URL)
@@ -183,8 +184,7 @@ func FetchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// If we redirected a localhost URL, set the Host header to the original localhost value
-	redirectedURL, _ := url.Parse(fetchReq.URL)
-	if redirectedURL.Hostname() == "host.minikube.internal" && (originalHost == "localhost:3000" || strings.HasPrefix(originalHost, "localhost:")) {
+	if fetchReq.URL != originalURLStr && strings.HasPrefix(originalHost, "localhost") {
 		req.Host = originalHost
 		logrus.WithFields(logrus.Fields{"original_host": originalHost}).Debug("🔧 Setting Host header to original value")
 	}
@@ -375,39 +375,104 @@ func generateCert(host string) ([]byte, []byte, error) {
 	return certPEM, keyPEM, nil
 }
 
-// getHostIP returns the host machine IP address for localhost redirection
-func getHostIP() string {
-	// Try to get host IP from environment variable first
-	if hostIP := os.Getenv("HOST_IP"); hostIP != "" {
-		logrus.WithFields(logrus.Fields{"host_ip": hostIP}).Info("Using HOST_IP from environment")
-		return hostIP
+// hostCandidateOK checks if a hostname/IP resolves (if needed) and optionally accepts TCP connections on port with a short timeout.
+func hostCandidateOK(host string, port string) bool {
+	// Quick DNS check for hostnames
+	if net.ParseIP(host) == nil {
+		if _, err := net.LookupIP(host); err != nil {
+			return false
+		}
 	}
-
-	// In minikube, try host.minikube.internal first
-	logrus.Info("No HOST_IP set, trying host.minikube.internal")
-	return "host.minikube.internal"
+	// If we have a port, try a very short TCP dial to ensure reachability
+	if strings.TrimSpace(port) != "" {
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 300*time.Millisecond)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+	}
+	return true
 }
 
-// redirectLocalhostURL converts localhost URLs to host machine IP
+// getReachableHostForLocal returns a host alias or IP on which the given port appears reachable from this container.
+// Preference order: env overrides -> host.docker.internal -> host.containers.internal -> common docker bridges.
+func getReachableHostForLocal(port string) string {
+	// 1) Environment overrides
+	for _, key := range []string{"HOST_IP", "KIND_NODE_IP", "NODE_IP", "KUBERNETES_NODE_IP"} {
+		val := strings.TrimSpace(os.Getenv(key))
+		if val != "" && hostCandidateOK(val, port) {
+			logrus.WithFields(logrus.Fields{"host": val, "source": key}).Info("Using host override for localhost redirection")
+			return val
+		}
+	}
+
+	// 2) Well-known hostnames in containerized envs
+	for _, cand := range []string{"host.docker.internal", "host.containers.internal"} {
+		if hostCandidateOK(cand, port) {
+			logrus.WithFields(logrus.Fields{"host": cand}).Info("Using container host alias for localhost redirection")
+			return cand
+		}
+	}
+
+	// 3) Common Docker bridge gateways
+	for _, ip := range []string{"172.17.0.1", "172.18.0.1"} {
+		if hostCandidateOK(ip, port) {
+			logrus.WithFields(logrus.Fields{"host": ip}).Info("Using Docker bridge gateway for localhost redirection")
+			return ip
+		}
+	}
+
+	// 4) Fallback to host.docker.internal without probing (may still work if DNS provided externally)
+	return "host.docker.internal"
+}
+
+// redirectLocalhostURL converts localhost URLs and known host aliases to a host/IP reachable from this container
 func redirectLocalhostURL(originalURL string) string {
 	parsedURL, err := url.Parse(originalURL)
 	if err != nil {
 		return originalURL
 	}
 
-	// Check if it's a localhost URL
-	if parsedURL.Hostname() == "localhost" || parsedURL.Hostname() == "127.0.0.1" {
-		hostIP := getHostIP()
-		parsedURL.Host = fmt.Sprintf("%s:%s", hostIP, parsedURL.Port())
+	hostname := parsedURL.Hostname()
+	// Determine target port (empty means default for scheme)
+	port := parsedURL.Port()
+	if port == "" {
+		if strings.EqualFold(parsedURL.Scheme, "https") {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+
+	// Localhost handling
+	if hostname == "localhost" || hostname == "127.0.0.1" {
+		cand := getReachableHostForLocal(port)
+		parsedURL.Host = net.JoinHostPort(cand, port)
 		redirectedURL := parsedURL.String()
 		logrus.WithFields(logrus.Fields{"original_url": originalURL, "redirected_url": redirectedURL}).Debug("🔄 Redirecting localhost URL")
 		return redirectedURL
 	}
 
+	// Known host aliases that might not resolve inside kind/Linux
+	if hostname == "host.docker.internal" || hostname == "host.containers.internal" || hostname == "docker.for.mac.host.internal" || hostname == "docker.for.win.localhost" {
+		if hostCandidateOK(hostname, port) {
+			// Alias works, no change
+			return originalURL
+		}
+		// Pick an alternative reachable host
+		cand := getReachableHostForLocal(port)
+		if cand != hostname {
+			parsedURL.Host = net.JoinHostPort(cand, port)
+			redirectedURL := parsedURL.String()
+			logrus.WithFields(logrus.Fields{"original_url": originalURL, "redirected_url": redirectedURL}).Info("🔄 Remapping host alias to reachable host for kind/docker")
+			return redirectedURL
+		}
+	}
+
 	return originalURL
 }
 
-// createRequestWithRedirect creates an HTTP request with localhost URL redirection and Host header preservation
+// createRequestWithRedirect creates an HTTP request with URL reachability normalization and Host header preservation
 func createRequestWithRedirect(method, urlStr string, body io.Reader) (*http.Request, error) {
 	redirectedURL := redirectLocalhostURL(urlStr)
 

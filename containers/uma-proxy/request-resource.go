@@ -41,7 +41,7 @@ func Do(req *http.Request) (*http.Response, error) {
 		req.URL = newURL
 
 		// If we redirected a localhost URL, preserve the original Host header
-		if newURL.Hostname() == "host.minikube.internal" && (originalHost == "localhost:3000" || strings.HasPrefix(originalHost, "localhost:")) {
+		if strings.HasPrefix(originalHost, "localhost") || strings.HasPrefix(originalHost, "127.0.0.1") {
 			req.Host = originalHost
 			logrus.WithFields(logrus.Fields{"original_host": originalHost}).Debug("🔧 Setting Host header to original value")
 		}

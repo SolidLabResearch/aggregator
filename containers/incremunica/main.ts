@@ -62,7 +62,38 @@ class SSEConnectionManager {
 }
 
 // Resource registration configuration
-const REGISTRATION_URL = "http://192.168.49.1:4449/register";
+// Build a list of candidate aggregator registration URLs. Do not perform any network I/O here.
+function resolveRegistrationCandidates(): string[] {
+  const fromEnv = process.env.AGGREGATOR_URL || process.env.REGISTRATION_URL;
+  if (fromEnv && typeof fromEnv === 'string' && fromEnv.trim().length > 0) {
+    return [normalizeBaseUrl(fromEnv)];
+  }
+  const inK8s = !!process.env.KUBERNETES_SERVICE_HOST || !!process.env.KUBERNETES_SERVICE_PORT;
+  if (inK8s) {
+    // Prefer in-cluster Service DNS, then Docker host name, then Docker bridge gateway.
+    return [
+      'http://aggregator-registration:4449/',
+      'http://host.docker.internal:4449/',
+      'http://172.17.0.1:4449/'
+    ];
+  }
+  // Local default when running outside Kubernetes.
+  return ['http://127.0.0.1:4449/'];
+}
+
+function normalizeBaseUrl(base: string): string {
+  // Ensure it has protocol and trailing slash
+  let url = base.trim();
+  if (!/^https?:\/\//i.test(url)) {
+    url = `http://${url}`;
+  }
+  if (!url.endsWith('/')) url += '/';
+  return url;
+}
+
+const REGISTRATION_CANDIDATES = resolveRegistrationCandidates();
+let lastSuccessfulRegistrationUrl: string | undefined;
+
 const POD_NAME = process.env.HOSTNAME || "incremunica-pod";
 const POD_IP = process.env.POD_IP || "127.0.0.1";
 const SERVICE_PORT = 8080;
@@ -129,6 +160,45 @@ async function customFetch(input: RequestInfo | URL, init?: RequestInit): Promis
   return response;
 }
 
+// Small helper: do a fetch with a timeout
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+// Try registration against multiple candidates until one succeeds (network-level). Keep the last successful URL for subsequent calls.
+async function fetchRegistration(method: 'POST' | 'PATCH' | 'PUT' | 'DELETE', body: any, timeoutMs = 2500): Promise<Response | null> {
+  const payload = JSON.stringify(body ?? {});
+  const headers = { 'Content-Type': 'application/json' } as any;
+  const candidates = lastSuccessfulRegistrationUrl ? [ lastSuccessfulRegistrationUrl, ...REGISTRATION_CANDIDATES.filter(c => c !== lastSuccessfulRegistrationUrl) ] : REGISTRATION_CANDIDATES;
+
+  for (const base of candidates) {
+    const url = base; // registration handler matches all paths; root is sufficient
+    try {
+      logger.debug({ url, method }, 'Attempting aggregator registration');
+      const res = await fetchWithTimeout(url, { method, headers, body: payload }, timeoutMs);
+      // If we reached a server, return it regardless of status (caller decides). Cache base.
+      lastSuccessfulRegistrationUrl = base;
+      if (res.ok) {
+        logger.info({ url: base }, 'Aggregator registration endpoint selected');
+      } else {
+        logger.warn({ url: base, status: res.status }, 'Aggregator registration responded with non-OK');
+      }
+      return res;
+    } catch (err: any) {
+      const msg = typeof err?.message === 'string' ? err.message : String(err);
+      logger.warn({ url, err: msg }, 'Registration attempt failed');
+      continue;
+    }
+  }
+  return null;
+}
+
 // Function to register an endpoint with the aggregator
 async function registerEndpointWithAggregator(endpoint: string, description: string, scopes: string[] = ["read"]): Promise<void> {
   const registrationData: any = {
@@ -142,11 +212,11 @@ async function registerEndpointWithAggregator(endpoint: string, description: str
 
   try {
     logger.info({ endpoint, scopes, description }, 'Registering endpoint');
-    const response = await fetch(REGISTRATION_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(registrationData)
-    });
+    const response = await fetchRegistration("POST", registrationData);
+    if (!response) {
+      logger.error({ endpoint }, 'Failed registering endpoint: no aggregator reachable');
+      return;
+    }
     if (response.ok) {
       const result = await response.json();
       logger.info({ endpoint, external_url: result.external_url, actor_id: result.actor_id }, 'Endpoint registered');
@@ -156,7 +226,7 @@ async function registerEndpointWithAggregator(endpoint: string, description: str
       logger.error({ endpoint, status: response.status, errorText }, 'Failed registering endpoint');
     }
   } catch (error) {
-    logger.error({ endpoint, error }, 'Error registering endpoint');
+    logger.error({ endpoint, error: (error as any)?.toString?.() ?? String(error) }, 'Error registering endpoint');
   }
 }
 
@@ -175,11 +245,11 @@ async function patchEndpointSources(endpoint: string): Promise<boolean> {
   };
   try {
     logger.debug({ endpoint, count: sources.length }, 'Patching sources');
-    const res = await fetch(REGISTRATION_URL, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const res = await fetchRegistration("PATCH", payload);
+    if (!res) {
+      logger.error({ endpoint }, 'Patch sources failed: no aggregator reachable');
+      return false;
+    }
     if (!res.ok) {
       const txt = await res.text();
       logger.error({ endpoint, status: res.status, txt }, 'Patch sources failed');

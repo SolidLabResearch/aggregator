@@ -789,8 +789,7 @@ func resolveTargetHost(podIP string, port int) string {
 			// Allow explicit override for host reachability
 			host = env
 		} else {
-			// Fallback commonly available in minikube/docker (only if HOST_IP not set)
-			host = "host.minikube.internal"
+			host = "host.docker.internal"
 		}
 	}
 	return fmt.Sprintf("%s:%d", host, port)
