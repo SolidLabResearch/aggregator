@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,16 +12,144 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type claim struct {
-	GrantType        string `json:"grant_type"`
-	Ticket           string `json:"ticket"`
-	Scope            string `json:"scope"`
+var client = &http.Client{} // restored global HTTP client
+var solidAuth *SolidAuth    // restored global SolidAuth instance
+
+type claimToken struct {
 	ClaimToken       string `json:"claim_token"`
 	ClaimTokenFormat string `json:"claim_token_format"`
 }
 
-var client = &http.Client{}
-var solidAuth *SolidAuth // Global auth instance
+type permission struct {
+	ResourceID     string   `json:"resource_id"`
+	ResourceScopes []string `json:"resource_scopes"`
+}
+
+type requiredClaim struct {
+	ClaimTokenFormat string `json:"claim_token_format"`
+	Details          struct {
+		Issuer         string   `json:"issuer"`
+		ResourceID     string   `json:"resource_id"`
+		ResourceScopes []string `json:"resource_scopes"`
+	} `json:"details"`
+}
+
+// fetchAccessToken performs UMA token acquisition with recursive claim gathering on 403.
+// Returns access token, token type, and optional derivation resource id.
+func fetchAccessToken(tokenEndpoint string, request interface{}, claims []claimToken) (string, string, string, error) {
+	// Initialize with single ID token claim if none provided.
+	if claims == nil || len(claims) == 0 {
+		idTok, err := solidAuth.CreateClaimToken()
+		if err != nil {
+			return "", "", "", fmt.Errorf("failed to create initial claim token: %w", err)
+		}
+		claims = []claimToken{{
+			ClaimToken:       idTok,
+			ClaimTokenFormat: "http://openid.net/specs/openid-connect-core-1_0.html#IDToken",
+		}}
+	}
+
+	body := map[string]any{
+		"grant_type": "urn:ietf:params:oauth:grant-type:uma-ticket",
+		"scope":      "urn:knows:uma:scopes:derivation-creation",
+	}
+
+	// Single vs multi claim representation to mimic reference implementation.
+	if len(claims) == 1 {
+		body["claim_token"] = claims[0].ClaimToken
+		body["claim_token_format"] = claims[0].ClaimTokenFormat
+	} else {
+		body["claim_tokens"] = claims
+	}
+
+	switch v := request.(type) {
+	case string: // ticket
+		body["ticket"] = v
+	case []permission:
+		body["permissions"] = v
+	default:
+		return "", "", "", fmt.Errorf("unsupported request type for fetchAccessToken: %T", request)
+	}
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	tokenReq, err := createRequestWithRedirect("POST", tokenEndpoint, bytes.NewReader(payload))
+	if err != nil {
+		return "", "", "", err
+	}
+	tokenReq.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(tokenReq)
+	if err != nil {
+		return "", "", "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	logrus.WithFields(logrus.Fields{"status_code": resp.StatusCode, "endpoint": tokenEndpoint}).Debug("UMA token endpoint response")
+
+	// 403 -> gather required claims then recurse.
+	if resp.StatusCode == http.StatusForbidden {
+		var forbidden struct {
+			Ticket         string          `json:"ticket"`
+			RequiredClaims []requiredClaim `json:"required_claims"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&forbidden); err != nil {
+			return "", "", "", fmt.Errorf("failed to decode forbidden response: %w", err)
+		}
+		updatedClaims, err := gatherClaims(claims, forbidden.RequiredClaims)
+		if err != nil {
+			return "", "", "", err
+		}
+		return fetchAccessToken(tokenEndpoint, forbidden.Ticket, updatedClaims)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return "", "", "", fmt.Errorf("failed to fetch access token: status %d body %s", resp.StatusCode, string(b))
+	}
+
+	var okResp struct {
+		AccessToken          string `json:"access_token"`
+		TokenType            string `json:"token_type"`
+		DerivationResourceID string `json:"derivation_resource_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&okResp); err != nil {
+		return "", "", "", fmt.Errorf("failed to decode token response: %w", err)
+	}
+
+	if okResp.AccessToken == "" || okResp.TokenType == "" {
+		return "", "", "", fmt.Errorf("incomplete token response")
+	}
+	// Attach resource id via header in caller after function returns.
+	return okResp.AccessToken, okResp.TokenType, okResp.DerivationResourceID, nil
+}
+
+// gatherClaims augments the claims slice based on server-required claims.
+func gatherClaims(existing []claimToken, required []requiredClaim) ([]claimToken, error) {
+	claims := existing
+	for _, rc := range required {
+		switch rc.ClaimTokenFormat {
+		case "http://openid.net/specs/openid-connect-core-1_0.html#IDToken":
+			idTok, err := solidAuth.CreateClaimToken()
+			if err != nil {
+				return nil, err
+			}
+			claims = append(claims, claimToken{ClaimToken: idTok, ClaimTokenFormat: rc.ClaimTokenFormat})
+		case "urn:ietf:params:oauth:token-type:access_token":
+			// Obtain nested access token using permissions.
+			perm := []permission{{ResourceID: rc.Details.ResourceID, ResourceScopes: rc.Details.ResourceScopes}}
+			at, _, _, err := fetchAccessToken(rc.Details.Issuer+"/token", perm, nil)
+			if err != nil {
+				return nil, err
+			}
+			claims = append(claims, claimToken{ClaimToken: at, ClaimTokenFormat: rc.ClaimTokenFormat})
+		default:
+			return nil, fmt.Errorf("unsupported claim token format: %s", rc.ClaimTokenFormat)
+		}
+	}
+	return claims, nil
+}
 
 func Do(req *http.Request) (*http.Response, error) {
 	// Redirect localhost URLs to host machine
@@ -58,7 +185,7 @@ func Do(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	if unauthenticatedResp.StatusCode == http.StatusUnauthorized {
-		defer unauthenticatedResp.Body.Close()
+		defer func() { _ = unauthenticatedResp.Body.Close() }()
 		asUri, ticket, err := getTicketInfo(unauthenticatedResp.Header.Get("WWW-Authenticate"))
 		if err != nil {
 			return nil, err
@@ -73,7 +200,7 @@ func Do(req *http.Request) (*http.Response, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to get UMA2 configuration: %w", err)
 		}
-		defer uma2ConfigResponse.Body.Close()
+		defer func() { _ = uma2ConfigResponse.Body.Close() }()
 
 		if uma2ConfigResponse.StatusCode != http.StatusOK {
 			return unauthenticatedResp, nil
@@ -88,61 +215,9 @@ func Do(req *http.Request) (*http.Response, error) {
 
 		tokenEndpoint := uma2Config.TokenEndpoint
 
-		claimTokenFormat := "http://openid.net/specs/openid-connect-core-1_0.html#IDToken"
-		claimTokenStr, err := solidAuth.CreateClaimToken(tokenEndpoint)
-		if err != nil {
-			return nil, fmt.Errorf("⚠️ Failed to create Solid OIDC claim: %v", err)
-		}
-
-		jsonBody, err := json.Marshal(claim{
-			GrantType:        "urn:ietf:params:oauth:grant-type:uma-ticket",
-			Ticket:           ticket,
-			Scope:            "urn:knows:uma:scopes:derivation-creation",
-			ClaimToken:       claimTokenStr,
-			ClaimTokenFormat: claimTokenFormat,
-		})
+		accessToken, tokenType, derivationResourceId, err := fetchAccessToken(tokenEndpoint, ticket, nil)
 		if err != nil {
 			return nil, err
-		}
-
-		tokenReq, err := createRequestWithRedirect("POST", tokenEndpoint, bytes.NewReader(jsonBody))
-		if err != nil {
-			return nil, err
-		}
-		tokenReq.Header.Set("Content-Type", "application/json")
-		resp, err := client.Do(tokenReq)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-		logrus.WithFields(logrus.Fields{"status_code": resp.StatusCode}).Debug("Received response from token endpoint")
-		if resp.StatusCode != http.StatusOK {
-			logrus.WithFields(logrus.Fields{"url": req.URL.String()}).Warn("Unauthorized to access resource")
-			return &http.Response{
-				StatusCode: http.StatusUnauthorized,
-				Status:     http.StatusText(http.StatusUnauthorized),
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader("")),
-			}, nil
-		}
-		var asResponse map[string]string
-		err = json.NewDecoder(resp.Body).Decode(&asResponse)
-		if err != nil {
-			return nil, err
-		}
-
-		accessToken, ok := asResponse["access_token"]
-		if !ok {
-			return nil, fmt.Errorf("access_token not found in response")
-		}
-		tokenType, ok := asResponse["token_type"]
-		if !ok {
-			return nil, fmt.Errorf("token_type not found in response")
-		}
-		derivationResourceId, ok := asResponse["derivation_resource_id"]
-		// TODO if not present only the aggregator owner can access the derivation result
-		if !ok {
-			return nil, fmt.Errorf("derivation_resource_id not found in response")
 		}
 
 		req.Header.Set("Authorization", fmt.Sprintf("%s %s", tokenType, accessToken))
@@ -150,8 +225,11 @@ func Do(req *http.Request) (*http.Response, error) {
 		if err != nil {
 			return nil, err
 		}
-		authorizedResp.Header.Set("X-Derivation-Resource-Id", derivationResourceId)
-		authorizedResp.Header.Set("X-Derivation-Issuer", asUri)
+		// Derivation headers may not be available now; skip if absent.
+		if derivationResourceId != "" {
+			authorizedResp.Header.Set("X-Derivation-Resource-Id", derivationResourceId)
+			authorizedResp.Header.Set("X-Derivation-Issuer", asUri)
+		}
 		return authorizedResp, nil
 	}
 	// If the response is not unauthorized, return it as is
@@ -181,24 +259,4 @@ func getTicketInfo(headerString string) (string, string, error) {
 		}
 	}
 	return asUri, ticket, nil
-}
-
-func parseJwt(token string) (map[string]interface{}, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return nil, fmt.Errorf("invalid token format")
-	}
-
-	decoded, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return nil, err
-	}
-
-	var payload map[string]interface{}
-	err = json.Unmarshal(decoded, &payload)
-	if err != nil {
-		return nil, err
-	}
-
-	return payload, nil
 }

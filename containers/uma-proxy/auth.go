@@ -48,20 +48,32 @@ func (sa *SolidAuth) Init(email, password string) error {
 
 	stream, errChan := rdfgo.Parse(resp.Body, rdfgo.ParserOptions{Format: "application/n-triples", BaseIRI: sa.webId})
 
-	for quad := range stream {
-		if quad.GetPredicate().GetValue() == "http://www.w3.org/ns/solid/terms#oidcIssuer" {
-			sa.cssBaseURL = quad.GetObject().GetValue()
-			break
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		for quad := range stream {
+			if quad.GetPredicate().GetValue() == "http://www.w3.org/ns/solid/terms#oidcIssuer" {
+				sa.cssBaseURL = quad.GetObject().GetValue()
+			}
 		}
-	}
-	if err := <-errChan; err != nil {
+		defer wg.Done()
+	}()
+	err = nil
+	go func() {
+		err = <-errChan
+		if err != nil {
+			defer wg.Done()
+		}
+		defer wg.Done()
+	}()
+	wg.Wait()
+	if err != nil {
 		return fmt.Errorf("failed to parse WebID profile: %w", err)
 	}
 	if sa.cssBaseURL == "" {
 		return fmt.Errorf("OIDC issuer not found in WebID profile")
 	}
-
-	// Generate DPoP key pair
+	logrus.Info("✅ OIDC issuer found: " + sa.cssBaseURL)
 
 	// Step 1: Get controls from account endpoint
 	logrus.WithFields(logrus.Fields{"endpoint": sa.cssBaseURL + ".account/"}).Debug("🔑 Initializing client credentials for Solid OIDC")
@@ -249,7 +261,7 @@ func (sa *SolidAuth) GetAccessToken() string {
 }
 
 // CreateClaimToken creates a claim token with DPoP for UMA flow
-func (sa *SolidAuth) CreateClaimToken(tokenEndpoint string) (string, error) {
+func (sa *SolidAuth) CreateClaimToken() (string, error) {
 	sa.mu.RLock()
 	accessToken := sa.accessToken
 	sa.mu.RUnlock()
