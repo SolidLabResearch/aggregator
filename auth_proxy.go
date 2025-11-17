@@ -79,6 +79,7 @@ func setCORSProxy(w http.ResponseWriter) {
 // HandleAllRequests is the main request handler that implements the UMA flow
 func (ap *AuthProxy) HandleAllRequests(w http.ResponseWriter, r *http.Request) {
 	setCORSProxy(w)
+
 	if r.Method == http.MethodOptions { // Preflight for any actor resource
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -582,12 +583,6 @@ func (ap *AuthProxy) proxyToBackend(w http.ResponseWriter, r *http.Request, regi
 	}
 	serviceLink := fmt.Sprintf("<%s>; rel=\"service-token-endpoint\"", ap.endpointUrl)
 	proxy.ModifyResponse = func(res *http.Response) error {
-		// Ensure CORS headers present on proxied actor responses
-		res.Header.Set("Access-Control-Allow-Origin", "*")
-		res.Header.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, HEAD, OPTIONS")
-		res.Header.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Origin, Cache-Control, X-Requested-With, If-None-Match, Last-Event-ID")
-		res.Header.Set("Access-Control-Expose-Headers", "ETag, Link")
-		res.Header.Set("Access-Control-Max-Age", "600")
 		if addServiceLink {
 			res.Header.Add("Link", serviceLink)
 		}
@@ -606,6 +601,7 @@ func (ap *AuthProxy) proxyToBackend(w http.ResponseWriter, r *http.Request, regi
 			"target": targetHost,
 			"path":   relPath,
 		}).Error("Reverse proxy error")
+		setCORSProxy(rw)
 		rw.WriteHeader(http.StatusBadGateway)
 	}
 

@@ -142,6 +142,11 @@ async function customFetch(input: RequestInfo | URL, init?: RequestInit): Promis
     configurable: false
   });
 
+  logger.info({
+    has: registeredSources.has(originalUrl),
+    Issuer: response.headers.get("X-Derivation-Issuer"),
+    ResourceId: response.headers.get("X-Derivation-Resource-Id")
+  }, 'fetch');
   if (
     !registeredSources.has(originalUrl) &&
     response.headers.get("X-Derivation-Issuer") &&
@@ -313,6 +318,7 @@ class UpToDateTimeout {
 }
 
 async function main() {
+  const materializedView: Map<string,{bindings: any, count: number}> = new Map();
   let server: http.Server;
   await new Promise((resolve) => {
     server = http.createServer((req, res) => {
@@ -326,9 +332,7 @@ async function main() {
         res.writeHead(200, {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
-          "Connection": "keep-alive",
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Headers": "Cache-Control"
+          "Connection": "keep-alive"
         });
 
         sseManager.addConnection(res);
@@ -476,10 +480,8 @@ SELECT ?queryString ?source ?endpoint ?variable WHERE {
     // @ts-ignore
     sources: [sourceIterator],
     fetch: customFetch,
-    deferredEvaluationTrigger: new EventEmitter(),
+    //deferredEvaluationTrigger: new EventEmitter(),
   });
-
-  const materializedView: Map<string,{bindings: any, count: number}> = new Map();
 
   // Create SSE manager for broadcasting updates
   const sseManager = new SSEConnectionManager();

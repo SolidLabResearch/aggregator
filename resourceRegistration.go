@@ -93,7 +93,14 @@ func handleResourceRegistration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logrus.WithFields(logrus.Fields{"pod": actorID, "pod_ip": registration.PodIP, "port": registration.Port, "endpoint": registration.Endpoint, "scopes": registration.Scopes}).Info("📋 Processing registration")
+	logrus.WithFields(logrus.Fields{
+		"pod":         actorID,
+		"pod_ip":      registration.PodIP,
+		"port":        registration.Port,
+		"endpoint":    registration.Endpoint,
+		"scopes":      registration.Scopes,
+		"description": registration.Description,
+	}).Info("📋 Processing registration")
 
 	// Default endpoint to "/" if not specified
 	if registration.Endpoint == "" {

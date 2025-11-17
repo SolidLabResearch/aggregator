@@ -71,7 +71,7 @@ func createActor(pipelineDescription string) (Actor, error) {
 					},
 				},
 			},
-			RestartPolicy: v1.RestartPolicyNever,
+			RestartPolicy: v1.RestartPolicyOnFailure,
 		},
 	}
 

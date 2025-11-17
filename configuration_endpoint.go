@@ -34,6 +34,8 @@ func startConfigurationEndpoint(mux *http.ServeMux) {
 
 	configurationData.HandleFunc("/config", configurationData.HandleConfigurationEndpoint, resourceScopesRead)
 	configurationData.HandleFunc("/config/actors", configurationData.HandleActorsEndpoint, resourceScopesReadCreate)
+	// Catch-all handler for /config/actors/* paths (including non-existent actors)
+	configurationData.HandleFunc("/config/actors/", configurationData.HandleActorEndpoint, resourceScopesReadDelete)
 }
 
 func (data ConfigurationData) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), resourceScopes []auth.ResourceScope) {
@@ -168,8 +170,18 @@ func (data ConfigurationData) createActor(response http.ResponseWriter, request 
 	data.actors[actor.Id] = actor
 	data.etagActors++
 
-	data.HandleFunc(fmt.Sprintf("/config/actors/%s", actor.Id), data.HandleActorEndpoint, resourceScopesReadDelete)
-
+	err = auth.CreateResource(
+		fmt.Sprintf("%s://%s:%s%s", Protocol, Host, ServerPort, fmt.Sprintf("/config/actors/%s", actor.Id)),
+		resourceScopesReadDelete,
+		nil,
+	)
+	if err != nil {
+		logrus.WithFields(logrus.Fields{
+			"err":      err,
+			"resource": fmt.Sprintf("%s://%s:%s%s", Protocol, Host, ServerPort, fmt.Sprintf("/config/actors/%s", actor.Id)),
+		}).Info("Failed to create resource for actor config endpoint")
+		return
+	}
 	header := response.Header()
 	header.Set("Content-Type", "application/json")
 	response.WriteHeader(http.StatusCreated)
@@ -195,6 +207,10 @@ func (data ConfigurationData) HandleActorEndpoint(response http.ResponseWriter, 
 	actor, ok := data.actors[parts[3]]
 	if !ok {
 		http.Error(response, "Actor with id "+parts[3]+" not found", http.StatusNotFound)
+		return
+	}
+
+	if !auth.AuthorizeRequest(response, request, nil) {
 		return
 	}
 
