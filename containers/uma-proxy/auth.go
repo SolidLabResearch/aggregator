@@ -16,19 +16,28 @@ import (
 
 // SolidAuth manages client credentials and access tokens for Solid OIDC
 type SolidAuth struct {
-	webId        string
-	cssBaseURL   string
-	authString   string
-	accessToken  string
-	expiresAt    time.Time
-	mu           sync.RWMutex
-	refreshTimer *time.Timer
+	webId               string
+	cssBaseURL          string
+	authString          string
+	accessToken         string
+	expiresAt           time.Time
+	mu                  sync.RWMutex
+	refreshTimer        *time.Timer
+	umaPermissionTokens map[string]UmaTokenEntry
+}
+
+// UmaTokenEntry represents a cached UMA permission token
+type UmaTokenEntry struct {
+	TokenType   string
+	AccessToken string
+	ExpiresAt   time.Time
 }
 
 // NewSolidAuth creates a new SolidAuth instance
 func NewSolidAuth(webId string) *SolidAuth {
 	return &SolidAuth{
-		webId: webId,
+		webId:               webId,
+		umaPermissionTokens: make(map[string]UmaTokenEntry),
 	}
 }
 
@@ -271,4 +280,51 @@ func (sa *SolidAuth) CreateClaimToken() (string, error) {
 	}
 
 	return accessToken, nil
+}
+
+// buildUmaKey builds the cache key for UMA permission tokens
+func (sa *SolidAuth) buildUmaKey(method, resourceURL string) string {
+	return method + " " + resourceURL
+}
+
+// getUmaToken retrieves a cached UMA token if present and valid
+func (sa *SolidAuth) getUmaToken(method, resourceURL string) (tokenType, accessToken string, ok bool) {
+	sa.mu.Lock()
+	defer sa.mu.Unlock()
+	entry, exists := sa.umaPermissionTokens[sa.buildUmaKey(method, resourceURL)]
+	if !exists {
+		return "", "", false
+	}
+	if !entry.ExpiresAt.IsZero() && time.Now().After(entry.ExpiresAt) {
+		delete(sa.umaPermissionTokens, sa.buildUmaKey(method, resourceURL))
+		return "", "", false
+	}
+	return entry.TokenType, entry.AccessToken, true
+}
+
+// storeUmaToken stores a UMA token in the cache
+func (sa *SolidAuth) storeUmaToken(method, resourceURL, tokenType, accessToken string, expiresIn int) {
+	sa.mu.Lock()
+	defer sa.mu.Unlock()
+	var expiresAt time.Time
+	if expiresIn > 0 {
+		expiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
+	}
+	sa.umaPermissionTokens[sa.buildUmaKey(method, resourceURL)] = UmaTokenEntry{TokenType: tokenType, AccessToken: accessToken, ExpiresAt: expiresAt}
+}
+
+// deleteUmaToken removes a UMA token from the cache
+func (sa *SolidAuth) deleteUmaToken(method, resourceURL string) {
+	sa.mu.Lock()
+	defer sa.mu.Unlock()
+	delete(sa.umaPermissionTokens, sa.buildUmaKey(method, resourceURL))
+}
+
+// clearUmaCache clears UMA permission token cache
+func (sa *SolidAuth) clearUmaCache() {
+	sa.mu.Lock()
+	defer sa.mu.Unlock()
+	for k := range sa.umaPermissionTokens {
+		delete(sa.umaPermissionTokens, k)
+	}
 }

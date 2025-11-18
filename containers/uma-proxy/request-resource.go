@@ -35,13 +35,13 @@ type requiredClaim struct {
 }
 
 // fetchAccessToken performs UMA token acquisition with recursive claim gathering on 403.
-// Returns access token, token type, and optional derivation resource id.
-func fetchAccessToken(tokenEndpoint string, request interface{}, claims []claimToken) (string, string, string, error) {
+// Returns access token, token type, optional derivation resource id, and expires_in.
+func fetchAccessToken(tokenEndpoint string, request interface{}, claims []claimToken) (string, string, string, int, error) {
 	// Initialize with single ID token claim if none provided.
 	if claims == nil || len(claims) == 0 {
 		idTok, err := solidAuth.CreateClaimToken()
 		if err != nil {
-			return "", "", "", fmt.Errorf("failed to create initial claim token: %w", err)
+			return "", "", "", 0, fmt.Errorf("failed to create initial claim token: %w", err)
 		}
 		claims = []claimToken{{
 			ClaimToken:       idTok,
@@ -68,22 +68,22 @@ func fetchAccessToken(tokenEndpoint string, request interface{}, claims []claimT
 	case []permission:
 		body["permissions"] = v
 	default:
-		return "", "", "", fmt.Errorf("unsupported request type for fetchAccessToken: %T", request)
+		return "", "", "", 0, fmt.Errorf("unsupported request type for fetchAccessToken: %T", request)
 	}
 
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", 0, err
 	}
 
 	tokenReq, err := createRequestWithRedirect("POST", tokenEndpoint, bytes.NewReader(payload))
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", 0, err
 	}
 	tokenReq.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(tokenReq)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	logrus.WithFields(logrus.Fields{"status_code": resp.StatusCode, "endpoint": tokenEndpoint}).Debug("UMA token endpoint response")
@@ -95,34 +95,34 @@ func fetchAccessToken(tokenEndpoint string, request interface{}, claims []claimT
 			RequiredClaims []requiredClaim `json:"required_claims"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&forbidden); err != nil {
-			return "", "", "", fmt.Errorf("failed to decode forbidden response: %w", err)
+			return "", "", "", 0, fmt.Errorf("failed to decode forbidden response: %w", err)
 		}
 		updatedClaims, err := gatherClaims(claims, forbidden.RequiredClaims)
 		if err != nil {
-			return "", "", "", err
+			return "", "", "", 0, err
 		}
 		return fetchAccessToken(tokenEndpoint, forbidden.Ticket, updatedClaims)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		return "", "", "", fmt.Errorf("failed to fetch access token: status %d body %s", resp.StatusCode, string(b))
+		return "", "", "", 0, fmt.Errorf("failed to fetch access token: status %d body %s", resp.StatusCode, string(b))
 	}
 
 	var okResp struct {
 		AccessToken          string `json:"access_token"`
 		TokenType            string `json:"token_type"`
 		DerivationResourceID string `json:"derivation_resource_id"`
+		ExpiresIn            int    `json:"expires_in"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&okResp); err != nil {
-		return "", "", "", fmt.Errorf("failed to decode token response: %w", err)
+		return "", "", "", 0, fmt.Errorf("failed to decode token response: %w", err)
 	}
 
 	if okResp.AccessToken == "" || okResp.TokenType == "" {
-		return "", "", "", fmt.Errorf("incomplete token response")
+		return "", "", "", 0, fmt.Errorf("incomplete token response")
 	}
-	// Attach resource id via header in caller after function returns.
-	return okResp.AccessToken, okResp.TokenType, okResp.DerivationResourceID, nil
+	return okResp.AccessToken, okResp.TokenType, okResp.DerivationResourceID, okResp.ExpiresIn, nil
 }
 
 // gatherClaims augments the claims slice based on server-required claims.
@@ -139,7 +139,7 @@ func gatherClaims(existing []claimToken, required []requiredClaim) ([]claimToken
 		case "urn:ietf:params:oauth:token-type:access_token":
 			// Obtain nested access token using permissions.
 			perm := []permission{{ResourceID: rc.Details.ResourceID, ResourceScopes: rc.Details.ResourceScopes}}
-			at, _, _, err := fetchAccessToken(rc.Details.Issuer+"/token", perm, nil)
+			at, _, _, _, err := fetchAccessToken(rc.Details.Issuer+"/token", perm, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -178,8 +178,28 @@ func Do(req *http.Request) (*http.Response, error) {
 	if solidAuth == nil {
 		return client.Do(req)
 	}
-
-	// Do UMA flow with authentication
+	// Attempt to use cached UMA token first
+	method := req.Method
+	resourceURL := req.URL.String()
+	if tokenType, accessToken, ok := solidAuth.getUmaToken(method, resourceURL); ok {
+		logrus.WithFields(logrus.Fields{"url": resourceURL}).Debug("Using cached UMA token")
+		req.Header.Set("Authorization", fmt.Sprintf("%s %s", tokenType, accessToken))
+		cachedResp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if cachedResp.StatusCode != http.StatusUnauthorized {
+			return cachedResp, nil
+		}
+		// Cached token failed; remove and proceed unauthenticated.
+		solidAuth.deleteUmaToken(method, resourceURL)
+		logrus.WithFields(logrus.Fields{"url": resourceURL}).Info("Cached UMA token unauthorized, retrying without token")
+	}
+	// Clear any Authorization header set by failed cached attempt
+	if req.Header.Get("Authorization") != "" {
+		req.Header.Del("Authorization")
+	}
+	// Perform unauthenticated request
 	unauthenticatedResp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -215,11 +235,12 @@ func Do(req *http.Request) (*http.Response, error) {
 
 		tokenEndpoint := uma2Config.TokenEndpoint
 
-		accessToken, tokenType, derivationResourceId, err := fetchAccessToken(tokenEndpoint, ticket, nil)
+		accessToken, tokenType, derivationResourceId, expiresIn, err := fetchAccessToken(tokenEndpoint, ticket, nil)
 		if err != nil {
 			return nil, err
 		}
-
+		// Store in cache before retry
+		solidAuth.storeUmaToken(method, resourceURL, tokenType, accessToken, expiresIn)
 		req.Header.Set("Authorization", fmt.Sprintf("%s %s", tokenType, accessToken))
 		authorizedResp, err := client.Do(req)
 		if err != nil {
