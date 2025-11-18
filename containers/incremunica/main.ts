@@ -320,11 +320,13 @@ class UpToDateTimeout {
 async function main() {
   const materializedView: Map<string,{bindings: any, count: number}> = new Map();
   let server: http.Server;
+  const deferredEvaluationTrigger = new EventEmitter();
   await new Promise((resolve) => {
     server = http.createServer((req, res) => {
       logger.info({ method: req.method, url: req.url }, 'Incoming request');
       if (req.method === "GET" && req.url === "/") {
         res.writeHead(200, { "Content-Type": "application/sparql-results+json" });
+        deferredEvaluationTrigger.emit("update");
         const sparqlJson = materializedViewToSparqlJson(materializedView);
         res.end(JSON.stringify(sparqlJson, null, 2));
       } else if (req.method === "GET" && req.url === "/events") {
@@ -334,6 +336,9 @@ async function main() {
           "Cache-Control": "no-cache",
           "Connection": "keep-alive"
         });
+        const timeout = setInterval(() => {
+          deferredEvaluationTrigger.emit("update");
+        }, 1000);
 
         sseManager.addConnection(res);
 
@@ -343,6 +348,7 @@ async function main() {
         }
 
         req.on('close', () => {
+          timeout.close();
           sseManager.removeConnection(res);
         });
       } else {
@@ -480,7 +486,7 @@ SELECT ?queryString ?source ?endpoint ?variable WHERE {
     // @ts-ignore
     sources: [sourceIterator],
     fetch: customFetch,
-    //deferredEvaluationTrigger: new EventEmitter(),
+    deferredEvaluationTrigger: deferredEvaluationTrigger,
   });
 
   // Create SSE manager for broadcasting updates
