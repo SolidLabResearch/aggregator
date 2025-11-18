@@ -31,7 +31,7 @@ func registerResource(id, issuer string) error {
 	}
 
 	resp, err := http.Post(
-		"http://ingress-uma.aggregator-ns.svc.cluster.local/resources",
+		"http://ingress-uma.aggregator-app.svc.cluster.local/resources",
 		"application/json",
 		bytes.NewReader(jsonBody),
 	)

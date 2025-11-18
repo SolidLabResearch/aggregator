@@ -43,7 +43,7 @@ func InitSigning(mux *http.ServeMux, keyFilePath string, extHost string) {
 		_ = json.NewEncoder(w).Encode(myJWKS)
 	})
 
-	CredURI = "http://" + extHost + "/.well-known/jwks.json#" + keyID
+	CredURI = "http://" + extHost + "/uma"
 }
 
 // loadOrGenerateKey loads the RSA private key from disk or generates a new one.

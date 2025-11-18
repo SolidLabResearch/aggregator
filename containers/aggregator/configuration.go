@@ -5,329 +5,319 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
-	"strings"
 
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
-type ConfigurationData struct {
-	etagActors               int
-	etagTransformations      int
-	actors                   map[string]Actor
-	pipelines                map[string]Pipeline
-	availableTransformations string
-	serveMux                 *http.ServeMux
+type AdminConfigData struct {
+	etagTransformations int
+	transformations     string
 }
 
-type ResourceScope string
+func initAdminConfiguration(mux *http.ServeMux) {
+	config := AdminConfigData{
+		etagTransformations: 0,
+		transformations:     hardcodedAvailableTransformations,
+	}
+	mux.HandleFunc("/config", config.HandleConfigurationEndpoint)
+}
 
-const (
-	ScopeRead   ResourceScope = "urn:example:css:modes:read"
-	ScopeAppend ResourceScope = "urn:example:css:modes:append"
-	ScopeCreate ResourceScope = "urn:example:css:modes:create"
-	ScopeDelete ResourceScope = "urn:example:css:modes:delete"
-	ScopeWrite  ResourceScope = "urn:example:css:modes:write"
-)
+// HandleConfigurationEndpoint handles requests to the /config endpoint
+func (config AdminConfigData) HandleConfigurationEndpoint(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "HEAD":
+		config.headAvailableTransformations(w, r)
+	case "GET":
+		config.getAvailableTransformations(w, r)
+	default:
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+	}
+}
 
-var resourceScopesRead = []ResourceScope{ScopeRead}
-var resourceScopesReadDelete = []ResourceScope{ScopeRead, ScopeDelete}
-var resourceScopesReadCreate = []ResourceScope{ScopeRead, ScopeCreate}
+// getAvailableTransformations HEAD config/ retrieves all available transformations
+func (config *AdminConfigData) headAvailableTransformations(w http.ResponseWriter, _ *http.Request) {
+	header := w.Header()
+	header.Set("ETag", strconv.Itoa(config.etagTransformations))
+	header.Set("Content-Type", "text/turtle")
+}
 
-// /config/ => read => a get to retrieve all transformations & head to get etag of transformations
-// /config/actors/ => read, create => has get to retrieve all actors and their IDs, head to get etag, post to create a new actor
-// /config/actors/{id} => read, delete => has get to retrieve an actor with the given ID, head to get etag, delete to delete an actor with the given ID
-func startConfigurationEndpoint(mux *http.ServeMux) *ConfigurationData {
-	configurationData := ConfigurationData{
-		etagActors:               0,
-		etagTransformations:      0,
-		actors:                   make(map[string]Actor),
-		pipelines:                make(map[string]Pipeline),
-		availableTransformations: hardcodedAvailableTransformations,
-		serveMux:                 mux,
+// getAvailableTransformations GET config/ retrieves all available transformations
+func (config *AdminConfigData) getAvailableTransformations(w http.ResponseWriter, _ *http.Request) {
+	header := w.Header()
+	header.Set("ETag", strconv.Itoa(config.etagTransformations))
+	header.Set("Content-Type", "text/turtle")
+	_, err := w.Write([]byte(config.transformations))
+	if err != nil {
+		http.Error(w, "error when writing body", http.StatusInternalServerError)
+	}
+}
+
+type UserConfigData struct {
+	owner               User
+	etagActors          int
+	etagTransformations int
+	actors              map[string]Actor
+	eventHub            *EventHub
+	serveMux            *http.ServeMux
+}
+
+func initUserConfiguration(mux *http.ServeMux, user User) {
+	config := UserConfigData{
+		owner:               user,
+		etagActors:          0,
+		etagTransformations: 0,
+		actors:              make(map[string]Actor),
+		eventHub:            NewEventHub(),
+		serveMux:            mux,
 	}
 
-	configurationData.HandleFunc("/config", configurationData.HandleConfigurationEndpoint, resourceScopesRead)
-	configurationData.HandleFunc("/config/actors", configurationData.HandleActorsEndpoint, resourceScopesReadCreate)
-	configurationData.HandleFunc("/config/pipelines", configurationData.HandlePipelinesEndpoint, resourceScopesReadCreate)
-
-	return &configurationData
+	config.HandleFunc(fmt.Sprintf("/config/%s", user.Namespace), config.HandleActorsEndpoint, []Scope{Read, Create})
 }
 
-func (data ConfigurationData) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), resourceScopes []ResourceScope) {
-	data.serveMux.HandleFunc(pattern, handler)
+func (config *UserConfigData) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), scopes []Scope) {
+	config.serveMux.HandleFunc(pattern, handler)
 	// auth.CreateResource(
 	//	fmt.Sprintf("%s://%s:%s%s", Protocol, ExternalHost, ExternalPort, pattern),
 	//	resourceScopes,
 	//)
 }
 
-// HandleConfigurationEndpoint handles requests to the /config endpoint
-func (data ConfigurationData) HandleConfigurationEndpoint(response http.ResponseWriter, request *http.Request) {
-	switch request.Method {
+// HandleActorsEndpoint handles requests to the /config/actors endpoint
+func (config *UserConfigData) HandleActorsEndpoint(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
 	case "HEAD":
-		data.headAvailableTransformations(response, request)
+		config.headActors(w, r)
 	case "GET":
-		data.getAvailableTransformations(response, request)
+		config.getActors(w, r)
+	case "POST":
+		config.postActor(w, r)
 	default:
-		http.Error(response, "Invalid request method", http.StatusMethodNotAllowed)
-	}
-}
-
-// getAvailableTransformations GET config/transformations retrieves all available transformations
-func (data ConfigurationData) headAvailableTransformations(response http.ResponseWriter, _ *http.Request) {
-	header := response.Header()
-	header.Set("ETag", strconv.Itoa(data.etagTransformations))
-	header.Set("Content-Type", "text/turtle")
-}
-
-// getAvailableTransformations GET config/transformations retrieves all available transformations
-func (data ConfigurationData) getAvailableTransformations(response http.ResponseWriter, _ *http.Request) {
-	header := response.Header()
-	header.Set("ETag", strconv.Itoa(data.etagTransformations))
-	header.Set("Content-Type", "text/turtle")
-	_, err := response.Write([]byte(data.availableTransformations))
-	if err != nil {
-		http.Error(response, "error when writing body", http.StatusInternalServerError)
-	}
-}
-
-// HandleActorsEndpoint handles requests to the /config/pipelines endpoint
-func (data ConfigurationData) HandlePipelinesEndpoint(response http.ResponseWriter, request *http.Request) {
-	if request.URL.Path == "/config/pipelines" {
-		switch request.Method {
-		case "GET":
-			data.getPipelines(response, request)
-		case "POST":
-			data.postPipeline(response, request)
-		default:
-			http.Error(response, "Invalid request method", http.StatusMethodNotAllowed)
-		}
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
 }
 
-func (data ConfigurationData) getPipelines(w http.ResponseWriter, _ *http.Request) {
-	pipelineList := []Pipeline{}
-	for _, pipeline := range data.pipelines {
-		pipelineList = append(pipelineList, pipeline)
+func (config *UserConfigData) headActors(w http.ResponseWriter, _ *http.Request) {
+	header := w.Header()
+	header.Set("Content-Type", "application/json")
+	header.Set("ETag", strconv.Itoa(config.etagActors))
+	w.WriteHeader(http.StatusOK)
+}
+
+func (config *UserConfigData) getActors(w http.ResponseWriter, _ *http.Request) {
+	actorList := []Actor{}
+	for _, actor := range config.actors {
+		actorList = append(actorList, actor)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w).Encode(pipelineList)
+	w.Header().Set("ETag", strconv.Itoa(config.etagActors))
+	err := json.NewEncoder(w).Encode(actorList)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to encode pipeline list")
+		logrus.WithError(err).Error("Failed to encode actor list")
 		http.Error(w, "Failed to serialize response", http.StatusInternalServerError)
 		return
 	}
 }
 
-type PipelineRequest struct {
-	Name        string `json:"name"`
+type ActorRequest struct {
+	Id          string `json:"id"`
 	Description string `json:"description"`
 	Owner       User   `json:"owner"`
 }
 
-type User struct {
-	WebID    string `json:"webid"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	ASURL    string `json:"as_url"`
-}
-
-func (data ConfigurationData) postPipeline(w http.ResponseWriter, r *http.Request) {
-	logrus.Info("Recieved request to register a pipeline")
+func (config *UserConfigData) postActor(w http.ResponseWriter, r *http.Request) {
+	logrus.Info("Recieved request to register a actor")
 	// read request body
-	var request PipelineRequest
+	var request ActorRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// Check for existing pipeline
-	if _, exists := data.pipelines[request.Name]; exists {
-		http.Error(w, "Pipeline already exists for this user", http.StatusConflict)
+	// add request metadata
+	request.Owner = config.owner
+	if request.Id == "" {
+		request.Id = uuid.NewString()
+	}
+
+	if _, exists := config.actors[request.Id]; exists {
+		http.Error(w, "Actor id already registered for user", http.StatusConflict)
 		return
 	}
 
-	// Set up the pipeline
-	pipeline, err := setupPipeline(request)
+	// create actor
+	actor, err := createActor(request)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to set up pipeline: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to set up actor: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Store pipeline
-	data.pipelines[request.Name] = *pipeline
+	// Store actor
+	config.actors[request.Id] = *actor
+	config.etagActors++
 
-	// Return pipeline information to the client
+	// Create config and status endpoints
+	config.HandleFunc(fmt.Sprintf("/config/actors/%s/%s", actor.namespace, actor.id), config.HandleActorEndpoint, []Scope{Read})
+	config.HandleFunc(fmt.Sprintf("/config/actors/%s/%s/status", actor.namespace, actor.id), config.HandleStatusEndpoint, []Scope{Read})
+
+	// Start watching deployments for readiness
+	config.eventHub.WatchActorDeployments(actor)
+
+	// Return actor information to the client
 	w.Header().Set("Content-Type", "application/json")
 
-	responseBytes, err := json.Marshal(pipeline)
+	responseBytes, err := json.Marshal(actor)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to marshal pipeline response")
+		logrus.WithError(err).Error("Failed to marshal actor response")
 		http.Error(w, "Failed to serialize response", http.StatusInternalServerError)
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(http.StatusAccepted)
 	_, err = w.Write(responseBytes)
 	if err != nil {
-		logrus.WithError(err).Error("Error writing create pipeline response")
+		logrus.WithError(err).Error("Error writing create actor response")
 		return
 	}
 }
 
-// HandleActorsEndpoint handles requests to the /config/actors endpoint
-func (data ConfigurationData) HandleActorsEndpoint(response http.ResponseWriter, request *http.Request) {
-	if request.URL.Path == "/config/actors" {
-		switch request.Method {
-		case "HEAD":
-			data.headActors(response, request)
-		case "GET":
-			data.getActors(response, request)
-		case "POST":
-			data.createActor(response, request)
-		default:
-			http.Error(response, "Invalid request method", http.StatusMethodNotAllowed)
-		}
-		return
-	}
-}
-
-// headActors config mainly returns the ETag header
-func (data ConfigurationData) headActors(response http.ResponseWriter, _ *http.Request) {
-	header := response.Header()
-	header.Set("Content-Type", "application/json")
-	header.Set("ETag", strconv.Itoa(data.etagActors))
-	response.WriteHeader(http.StatusOK)
-}
-
-// getActors GET config retrieves all actors and their IDs
-func (data ConfigurationData) getActors(response http.ResponseWriter, _ *http.Request) {
-	header := response.Header()
-	header.Set("Content-Type", "application/json")
-	header.Set("ETag", strconv.Itoa(data.etagActors))
-	// TODO not sure yet how this should be returned
-	actors := "{\"actors\":["
-	ids := []string{}
-	for _, actor := range data.actors {
-		ids = append(ids, "\""+actor.Id+"\"")
-	}
-	actors += strings.Join(ids, ",")
-	actors += "]}"
-	_, err := response.Write([]byte(actors))
+// SSE endpoint: /config/actors/<namespace>/<id>/status
+func (config *UserConfigData) HandleStatusEndpoint(w http.ResponseWriter, r *http.Request) {
+	// Parse namespace and actor ID from the URL
+	var namespace, actorID string
+	_, err := fmt.Sscanf(r.URL.Path, "/config/actors/%s/%s/status", &namespace, &actorID)
 	if err != nil {
-		http.Error(response, "error when writing body", http.StatusInternalServerError)
-	}
-}
-
-// createActor creates a new actor
-// Should we need to set limitations on these transformations? => like what if we only allow 1 source or don't allow a certain SPARQL query? => 405
-// What if we only allow one single pipeline that can be instantiated? => I guess return 405?
-// What if the transformation takes to long to execute => return 202 but then when the user tries to get the results, we return 404 with extra information that the transformation is still running/canceled?
-func (data ConfigurationData) createActor(response http.ResponseWriter, request *http.Request) {
-	// 2) get transformation and sources from request body
-	pipelineDescription, err := io.ReadAll(request.Body)
-	if err != nil {
-		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to read pipeline description")
-		http.Error(response, "Invalid request payload", http.StatusBadRequest)
-		return
-	}
-	defer request.Body.Close()
-	logrus.WithFields(logrus.Fields{"pipeline_description": string(pipelineDescription)}).Debug("Transformation received")
-
-	actor, err := createActor(string(pipelineDescription))
-
-	if err != nil {
-		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to create an actor")
-		http.Error(response, "Failed to create the actor", http.StatusInternalServerError)
+		http.Error(w, "Invalid actor path", http.StatusBadRequest)
 		return
 	}
 
-	data.actors[actor.Id] = actor
-	data.etagActors++ // TODO maybe hash the actors to get a unique etag
-
-	// TODO the descriptions need to have the pipelineDescription
-	data.HandleFunc(fmt.Sprintf("/config/actors/%s", actor.Id), data.HandleActorEndpoint, resourceScopesReadDelete)
-
-	// 5) return the endpoint to the client
-	header := response.Header()
-	header.Set("Content-Type", "application/json")
-	response.WriteHeader(http.StatusCreated)
-	_, err = response.Write([]byte(actor.marshalActor()))
-	if err != nil {
-		logrus.WithFields(logrus.Fields{"err": err}).Error("Error writing create actor response")
-		return
-	}
-}
-
-// HandleActorEndpoint handles requests to the /config/actors/{id} endpoint
-func (data ConfigurationData) HandleActorEndpoint(response http.ResponseWriter, request *http.Request) {
-	// 2) get id from request
-	parts := strings.Split(request.URL.Path, "/")
-	if len(parts) < 4 || parts[3] == "" {
-		http.Error(response, "Invalid request path", http.StatusBadRequest)
-		return
-	}
-	actor, ok := data.actors[parts[3]]
+	actor, ok := config.actors[actorID]
 	if !ok {
-		http.Error(response, "Actor with id "+parts[3]+" not found", http.StatusNotFound)
+		http.Error(w, "Actor not found", http.StatusNotFound)
 		return
 	}
 
-	switch request.Method {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	// Subscribe to event updates
+	eventCh := config.eventHub.Subscribe(actor.id)
+	defer config.eventHub.Unsubscribe(actor.id, eventCh)
+
+	// Initial message: connected
+	fmt.Fprintf(w, "data: %s\n\n", `{"type":"info","message":"Connected to actor status stream"}`)
+	flusher.Flush()
+
+	// Main loop: stream events
+	for {
+		select {
+		case event := <-eventCh:
+			payload, _ := json.Marshal(event)
+			fmt.Fprintf(w, "data: %s\n\n", payload)
+			flusher.Flush()
+
+			if event.Type == "complete" || event.Type == "error" {
+				return
+			}
+
+		case <-r.Context().Done():
+			// Client disconnected
+			return
+		}
+	}
+}
+
+// HandleActorEndpoint handles requests to the /config/actors/<namespace>/<id> endpoint
+func (config *UserConfigData) HandleActorEndpoint(w http.ResponseWriter, r *http.Request) {
+	var namespace, id string
+	_, err := fmt.Sscanf(r.URL.Path, "/config/actors/%s/%s", &namespace, &id)
+	if err != nil {
+		http.Error(w, "Invalid actor path", http.StatusBadRequest)
+		return
+	}
+
+	actor, ok := config.actors[id]
+	if !ok {
+		http.Error(w, "Actor not found", http.StatusNotFound)
+		return
+	}
+
+	switch r.Method {
 	case "HEAD":
-		data.headActor(response, request, actor)
+		config.headActor(w, r, actor)
 	case "GET":
-		data.getActor(response, request, actor)
+		config.getActor(w, r, actor)
 	case "DELETE":
-		data.deleteActor(response, request, actor)
+		config.deleteActor(w, r, actor)
 	default:
-		http.Error(response, "Invalid request method", http.StatusMethodNotAllowed)
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 	}
 }
 
 // generateActorETag generates a consistent ETag based on the marshaled actor data
-func generateActorETag(marshaledData string) string {
-	hash := sha256.Sum256([]byte(marshaledData))
+func generateActorETag(marshaledData []byte) string {
+	hash := sha256.Sum256(marshaledData)
 	return hex.EncodeToString(hash[:8]) // Use first 8 bytes for a shorter ETag
 }
 
-// headActor HEAD config/actors/{id} returns the ETag header for the actor with the given ID
-func (data ConfigurationData) headActor(response http.ResponseWriter, request *http.Request, actor Actor) {
-	logrus.WithFields(logrus.Fields{"actor_id": actor.Id}).Debug("Request head for actor")
+// headActor HEAD config/actors/<namespace>/<id> returns the ETag header for the actor with the given ID
+func (config *UserConfigData) headActor(w http.ResponseWriter, _ *http.Request, actor Actor) {
+	logrus.WithFields(logrus.Fields{"actor_id": actor.id}).Debug("Request HEAD for actor")
 
-	header := response.Header()
-	header.Set("Content-Type", "application/json")
-	header.Set("ETag", generateActorETag(actor.marshalActor()))
-	response.WriteHeader(http.StatusOK)
-}
+	marshaledData, err := json.Marshal(&actor)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to marshal actor for HEAD request")
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 
-func (data ConfigurationData) getActor(response http.ResponseWriter, request *http.Request, actor Actor) {
-	logrus.WithFields(logrus.Fields{"actor_id": actor.Id}).Info("Request get for actor")
-
-	marshaledData := actor.marshalActor()
-	header := response.Header()
+	header := w.Header()
 	header.Set("Content-Type", "application/json")
 	header.Set("ETag", generateActorETag(marshaledData))
-	_, err := response.Write([]byte(marshaledData))
+	w.WriteHeader(http.StatusOK)
+}
+
+// getActor GET config/actors/<namespace>/<id> returns the full actor JSON with ETag
+func (config *UserConfigData) getActor(w http.ResponseWriter, _ *http.Request, actor Actor) {
+	logrus.WithFields(logrus.Fields{"actor_id": actor.id}).Info("Request GET for actor")
+
+	marshaledData, err := json.Marshal(&actor)
 	if err != nil {
-		http.Error(response, "error when writing body", http.StatusInternalServerError)
+		logrus.WithError(err).Error("Failed to marshal actor for GET request")
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	header := w.Header()
+	header.Set("Content-Type", "application/json")
+	header.Set("ETag", generateActorETag(marshaledData))
+
+	_, err = w.Write(marshaledData)
+	if err != nil {
+		logrus.WithError(err).Error("Error writing actor response body")
 	}
 }
 
 // DELETE config deletes an actor with the given ID
-func (data ConfigurationData) deleteActor(response http.ResponseWriter, _ *http.Request, actor Actor) {
-	logrus.WithFields(logrus.Fields{"actor_id": actor.Id}).Info("Request to delete transformation")
+func (config *UserConfigData) deleteActor(w http.ResponseWriter, _ *http.Request, actor Actor) {
+	logrus.WithFields(logrus.Fields{"actor_id": actor.id}).Info("Request to delete transformation")
 
 	actor.Stop()
-	delete(data.actors, actor.Id)
+	delete(config.actors, actor.id)
 
-	data.etagActors++
-	response.WriteHeader(http.StatusOK)
+	config.etagActors++
+	w.WriteHeader(http.StatusOK)
 }
 
 /*

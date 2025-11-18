@@ -3,7 +3,8 @@
 	kind-generate-key-pair \
 	enable-localhost disable-localhost \
 	kind-deploy \
-	kind-clean
+	kind-clean \
+	enable-wsl
 
 # ------------------------
 # Kind targets
@@ -44,6 +45,8 @@ kind-dashboard:
 # ------------------------
 # Container targets
 # ------------------------
+
+# add CONTAINER=<container name> to handle a specific container
 
 # Build Docker images
 containers-build:
@@ -90,33 +93,51 @@ containers-all: containers-build containers-load
 # ------------------------
 # Deploy YAML manifests with temporary key pair for uma-proxy
 # ------------------------
-kind-start-nginx:
-	@echo "📄 Deploying NGINX Ingress Controller..."
-	@kubectl apply -f https://kind.sigs.k8s.io/examples/ingress/deploy-ingress-nginx.yaml
+kind-start-traefik:
+	@echo "📄 Deploying Traefik Ingress Controller..."
+	@helm repo add traefik https://traefik.github.io/charts
+	@helm repo update
+	@helm upgrade --install aggregator-traefik traefik/traefik \
+		--namespace aggregator-traefik \
+		--create-namespace \
+		--set ingressClass.enabled=true \
+		--set ingressClass.name=aggregator-traefik \
+		--set ports.web.hostPort=80 \
+		--set ports.websecure.hostPort=443 \
+		--set service.type=ClusterIP
 
-	@echo "📄 Waiting for ingress controller to be ready..."
-	@kubectl wait --namespace ingress-nginx \
-	  --for=condition=ready pod \
-	  --selector=app.kubernetes.io/component=controller \
-	  --timeout=90s
+kind-start-cleaner:
+	@echo "📄 Deploying aggregator-cleaner controller..."
+	@kubectl apply -f k8s/ops/ns.yaml
+	@kubectl apply -f k8s/ops/cleaner.yaml
+
+	@echo "📄 Waiting for aggregator-cleaner to be ready..."
+	@kubectl wait --namespace aggregator-ops \
+	  --for=condition=available deployment/aggregator-cleaner \
+	  --timeout=60s || true
+
+	@echo "✅ Aggregator cleaner deployed"
 
 kind-deploy:
 	@echo "📄 Applying aggregator namespace..."
-	@kubectl apply -f k8s/aggregator/aggregator-ns.yaml
+	@kubectl apply -f k8s/app/ns.yaml
+
+	@echo "📄 Applying traefik config..."
+	@kubectl apply -f k8s/app/traefik-config.yaml
 
 	@echo "📄 Creating secret for ingress-uma..."
-	@kubectl -n aggregator-ns create secret generic ingress-uma-key \
-		--from-file=private_key.pem=k8s/aggregator/private_key.pem \
+	@kubectl -n aggregator-app create secret generic ingress-uma-key \
+		--from-file=private_key.pem=k8s/uma/private_key.pem \
 		--dry-run=client -o yaml | kubectl apply -f -
 
 	@echo "📄 Applying aggregator ConfigMap..."
-	@kubectl apply -f k8s/aggregator/aggregator-config.yaml
+	@kubectl apply -f k8s/app/config.yaml
 
 	@echo "📄 Applying aggregator deployment and service..."
-	@kubectl apply -f k8s/aggregator/aggregator.yaml
+	@kubectl apply -f k8s/app/aggregator.yaml
 
 	@echo "📄 Applying ingress-uma..."
-	@kubectl apply -f k8s/aggregator/ingress-uma.yaml
+	@kubectl apply -f k8s/app/ingress-uma.yaml
 
 	@echo "📄 Adding localhost entries for ingress hosts..."
 	@grep -qxF "127.0.0.1 aggregator.local" /etc/hosts || sudo -- sh -c "echo '127.0.0.1 aggregator.local' >> /etc/hosts"
@@ -133,15 +154,57 @@ kind-stop-nginx:
 	@kubectl delete clusterrole ingress-nginx --ignore-not-found
 	@kubectl delete clusterrolebinding ingress-nginx --ignore-not-found
 
+kind-stop-cleaner:
+	@echo "🧹 Removing aggregator-cleaner controller..."
+	@kubectl delete -f k8s/ops/cleaner.yaml --ignore-not-found
+	@echo "✅ Aggregator cleaner removed"
+
 kind-clean:
 	@echo "🧹 Deleting aggregator cluster-wide roles..."
 	@kubectl delete clusterrole aggregator-namespace-manager --ignore-not-found
 	@kubectl delete clusterrolebinding aggregator-namespace-manager-binding --ignore-not-found
 
 	@echo "🧹 Deleting aggregator namespace..."
-	@kubectl delete namespace aggregator-ns --ignore-not-found
+	@kubectl delete namespace aggregator-app --ignore-not-found
 
 	@echo "🧹 Removing localhost entries..."
 	@sudo sed -i.bak '/aggregator\.local/d' /etc/hosts
 
 	@echo "✅ Cleanup complete"
+
+# -------------------------
+# wsl support
+# -------------------------
+
+enable-wsl:
+	@echo "🔍 Detecting WSL2 IP..."
+	$(eval WSL_IP := $(shell hostname -I | awk '{print $$1}'))
+	@echo "Detected WSL2 IP: $(WSL_IP)"
+
+	@echo "🧠 Backing up CoreDNS ConfigMap..."
+	@kubectl -n kube-system get configmap coredns -o yaml > /tmp/coredns.yaml
+
+	@echo "🧩 Patching CoreDNS..."
+	@awk -v ip="$(WSL_IP)" '\
+		/^data:/ {print; inData=1; next} \
+		inData && /^\s*Corefile:/ { \
+			print; \
+			print "    wsl.local:53 {"; \
+			print "        hosts {"; \
+			print "            " ip " wsl.local"; \
+			print "            fallthrough"; \
+			print "        }"; \
+			print "    }"; \
+			next \
+		} \
+		{print} \
+	' /tmp/coredns.yaml > /tmp/coredns-patched.yaml
+
+	@echo "📦 Applying patched ConfigMap..."
+	@kubectl -n kube-system apply -f /tmp/coredns-patched.yaml >/dev/null
+
+	@echo "♻️ Restarting CoreDNS deployment..."
+	@kubectl -n kube-system rollout restart deployment coredns >/dev/null
+
+	@echo "✅ Done! 'wsl.local' now resolves to $(WSL_IP)"
+

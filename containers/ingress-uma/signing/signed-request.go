@@ -20,7 +20,6 @@ import (
 //
 // Parameters:
 //   - req: the HTTP request to sign
-//   - rsCredURI: RS identity URI for the Authorization header
 //
 // Returns the HTTP response or an error.
 func DoSignedRequest(req *http.Request) (*http.Response, error) {

@@ -2,19 +2,18 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
 
+	"ingress-uma/auth"
 	"ingress-uma/signing"
 
 	"github.com/sirupsen/logrus"
 )
 
 var ExternalHost = os.Getenv("EXTERNAL_HOST")
-var CredUri string
 
 func init() {
 	// Set up logging
@@ -27,41 +26,20 @@ func init() {
 }
 
 func main() {
-
 	mux := http.NewServeMux()
 	signing.InitSigning(mux, "/keys/private_key.pem", ExternalHost)
+	auth.InitAuth(ExternalHost)
 
-	mux.HandleFunc("/authorize", authorizeHandler)
+	mux.HandleFunc("/authorize", auth.AuthorizeRequest)
 	mux.HandleFunc("/resources", resourcesHandler)
 
-	logrus.Info("Starting dummy UMA auth server on :8080")
-	if err := http.ListenAndServe(":8080", mux); err != nil {
+	// Wrap the mux with the logging middleware
+	loggedMux := loggingMiddleware(mux)
+
+	logrus.Info("Starting UMA RS auth server on :8080")
+	if err := http.ListenAndServe(":8080", loggedMux); err != nil {
 		logrus.Fatalf("Server failed: %v", err)
 	}
-
-}
-
-func authorizeHandler(w http.ResponseWriter, r *http.Request) {
-	// Read body
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to read request body")
-		bodyBytes = []byte("<body read error>")
-	}
-	// Always close the body
-	defer r.Body.Close()
-
-	// Log request details
-	logrus.WithFields(logrus.Fields{
-		"method":  r.Method,
-		"path":    r.URL.Path,
-		"headers": r.Header,
-		"body":    string(bodyBytes),
-	}).Info("Authorization request received")
-
-	// UMA: Always reject for now
-	w.WriteHeader(http.StatusUnauthorized)
-	fmt.Fprint(w, "Unauthorized")
 }
 
 func resourcesHandler(w http.ResponseWriter, r *http.Request) {
@@ -90,10 +68,10 @@ func resourcesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert string scopes to []Scope (your type)
-	scopes := make([]Scope, len(reqData.Scopes))
+	// Convert string scopes to []Scope
+	scopes := make([]auth.Scope, len(reqData.Scopes))
 	for i, s := range reqData.Scopes {
-		scopes[i] = Scope(s)
+		scopes[i] = auth.Scope(s)
 	}
 
 	logrus.WithFields(logrus.Fields{
@@ -102,7 +80,7 @@ func resourcesHandler(w http.ResponseWriter, r *http.Request) {
 		"scopes":      reqData.Scopes,
 	}).Info("Received resource registration request")
 
-	if err := CreateResource(reqData.Issuer, reqData.ResourceID, scopes); err != nil {
+	if err := auth.CreateResource(reqData.Issuer, reqData.ResourceID, scopes); err != nil {
 		logrus.WithError(err).Error("Failed to create UMA resource")
 		http.Error(w, "Failed to register resource", http.StatusInternalServerError)
 		return
@@ -110,4 +88,21 @@ func resourcesHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
+}
+
+// loggingMiddleware wraps a handler and logs every request
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes))) // reset body for next handler
+
+		logrus.WithFields(logrus.Fields{
+			"method":  r.Method,
+			"path":    r.URL.Path,
+			"headers": r.Header,
+			"body":    string(bodyBytes),
+		}).Info("Incoming request")
+
+		next.ServeHTTP(w, r)
+	})
 }

@@ -8,7 +8,7 @@
     "build": "tsc",
     "create-actor": "tsc && node dist/create-actor.js",
     "get-actor": "tsc && node dist/get-actor.js",
-    "create-pipeline": "tsc && node dist/create-pipeline;js",
+    "create-pipeline": "tsc && node dist/create-pipeline.js",
     "stream-actor-demo": "tsc && node dist/stream-actor-demo.js"
   },
   "dependencies": {

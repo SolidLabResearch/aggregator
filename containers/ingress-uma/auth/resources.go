@@ -1,4 +1,4 @@
-package main
+package auth
 
 import (
 	"bytes"
@@ -15,6 +15,7 @@ type Scope string
 
 const (
 	Read   Scope = "urn:example:css:modes:read"
+	Modify Scope = "urn:example:css:modes:modify"
 	Append Scope = "urn:example:css:modes:append"
 	Create Scope = "urn:example:css:modes:create"
 	Delete Scope = "urn:example:css:modes:delete"
@@ -22,14 +23,17 @@ const (
 )
 
 var idIndex = make(map[string]string)
+var issuerIndex = make(map[string]string)
 
 func CreateResource(issuer string, resourceId string, scopes []Scope) error {
+	// Fetch UMA configuration
 	config, err := fetchUmaConfig(issuer)
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("Error while retrieving UMA configuration")
 		return err
 	}
 
+	// Check if resource already registered
 	UmaId := idIndex[resourceId]
 	endpoint := config.ResourceRegistrationEndpoint
 	method := "POST"
@@ -103,6 +107,7 @@ func CreateResource(issuer string, resourceId string, scopes []Scope) error {
 			return nil
 		}
 		idIndex[resourceId] = responseData.ID
+		issuerIndex[resourceId] = issuer
 		logrus.WithFields(logrus.Fields{"resource_id": resourceId, "uma_id": responseData.ID}).Info("Registered resource with UMA")
 	}
 	return nil
