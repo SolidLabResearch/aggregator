@@ -281,8 +281,8 @@ func (actor *Actor) MarshalJSON() ([]byte, error) {
 		ID:          actor.id,
 		Description: actor.description,
 		Namespace:   actor.namespace,
-		Config:      fmt.Sprintf("http://%s/config/actors/%s/%s", ExternalHost, actor.namespace, actor.id),
-		Status:      fmt.Sprintf("http://%s/config/actors/%s/%s/status", ExternalHost, actor.namespace, actor.id),
+		Config:      fmt.Sprintf("http://%s/config/%s/actors/%s", ExternalHost, actor.namespace, actor.id),
+		Status:      fmt.Sprintf("http://%s/config/%s/actors/%s/status", ExternalHost, actor.namespace, actor.id),
 		Endpoints:   actor.pubEndpoints,
 	}
 

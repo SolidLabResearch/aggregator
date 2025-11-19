@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -74,7 +75,7 @@ func initUserConfiguration(mux *http.ServeMux, user User) {
 		serveMux:            mux,
 	}
 
-	config.HandleFunc(fmt.Sprintf("/config/%s", user.Namespace), config.HandleActorsEndpoint, []Scope{Read, Create})
+	config.HandleFunc(fmt.Sprintf("/config/%s/actors", user.Namespace), config.HandleActorsEndpoint, []Scope{Read, Create})
 }
 
 func (config *UserConfigData) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), scopes []Scope) {
@@ -85,7 +86,7 @@ func (config *UserConfigData) HandleFunc(pattern string, handler func(http.Respo
 	//)
 }
 
-// HandleActorsEndpoint handles requests to the /config/actors endpoint
+// HandleActorsEndpoint handles requests to the /config/<namespace>/actors endpoint
 func (config *UserConfigData) HandleActorsEndpoint(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "HEAD":
@@ -161,8 +162,8 @@ func (config *UserConfigData) postActor(w http.ResponseWriter, r *http.Request) 
 	config.etagActors++
 
 	// Create config and status endpoints
-	config.HandleFunc(fmt.Sprintf("/config/actors/%s/%s", actor.namespace, actor.id), config.HandleActorEndpoint, []Scope{Read})
-	config.HandleFunc(fmt.Sprintf("/config/actors/%s/%s/status", actor.namespace, actor.id), config.HandleStatusEndpoint, []Scope{Read})
+	config.HandleFunc(fmt.Sprintf("/config/%s/actors/%s", actor.namespace, actor.id), config.HandleActorEndpoint, []Scope{Read})
+	config.HandleFunc(fmt.Sprintf("/config/%s/actors/%s/status", actor.namespace, actor.id), config.HandleStatusEndpoint, []Scope{Read})
 
 	// Start watching deployments for readiness
 	config.eventHub.WatchActorDeployments(actor)
@@ -187,15 +188,11 @@ func (config *UserConfigData) postActor(w http.ResponseWriter, r *http.Request) 
 
 // SSE endpoint: /config/actors/<namespace>/<id>/status
 func (config *UserConfigData) HandleStatusEndpoint(w http.ResponseWriter, r *http.Request) {
-	// Parse namespace and actor ID from the URL
-	var namespace, actorID string
-	_, err := fmt.Sscanf(r.URL.Path, "/config/actors/%s/%s/status", &namespace, &actorID)
-	if err != nil {
-		http.Error(w, "Invalid actor path", http.StatusBadRequest)
-		return
-	}
+	// Parse actor ID from the URL
+	parts := strings.Split(r.URL.Path, "/")
+	id := parts[4]
 
-	actor, ok := config.actors[actorID]
+	actor, ok := config.actors[id]
 	if !ok {
 		http.Error(w, "Actor not found", http.StatusNotFound)
 		return
@@ -238,14 +235,11 @@ func (config *UserConfigData) HandleStatusEndpoint(w http.ResponseWriter, r *htt
 	}
 }
 
-// HandleActorEndpoint handles requests to the /config/actors/<namespace>/<id> endpoint
+// HandleActorEndpoint handles requests to the /config/<namespace>/actors/<id> endpoint
 func (config *UserConfigData) HandleActorEndpoint(w http.ResponseWriter, r *http.Request) {
-	var namespace, id string
-	_, err := fmt.Sscanf(r.URL.Path, "/config/actors/%s/%s", &namespace, &id)
-	if err != nil {
-		http.Error(w, "Invalid actor path", http.StatusBadRequest)
-		return
-	}
+	// Parse actor ID from the URL
+	parts := strings.Split(r.URL.Path, "/")
+	id := parts[4]
 
 	actor, ok := config.actors[id]
 	if !ok {

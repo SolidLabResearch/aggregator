@@ -23,6 +23,12 @@ type User struct {
 	Namespace string `json:"namespace"`
 }
 
+func (u *User) ConfigEndpoints() map[string]string {
+	return map[string]string{
+		"actors": fmt.Sprintf("http://%s/config/%s/actors", ExternalHost, u.Namespace),
+	}
+}
+
 var (
 	users   = make(map[string]*User)
 	userMux sync.Mutex
@@ -92,9 +98,7 @@ func userRegistrationHandler(w http.ResponseWriter, r *http.Request, mux *http.S
 	users[user.Id] = &user
 
 	// Respond with the user config endpoint
-	response := map[string]interface{}{
-		"config": fmt.Sprintf("http://%s/config/%s", ExternalHost, user.Namespace),
-	}
+	response := user.ConfigEndpoints()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(response)
