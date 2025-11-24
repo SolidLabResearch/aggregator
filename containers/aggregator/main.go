@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -18,11 +19,15 @@ import (
 var Protocol = "http"
 var ExternalHost string
 
+// Authorization Server URL
+var ASURL string
+
 // Logging
 var LogLevel logrus.Level
 
 // Kubernetes client
 var Clientset *kubernetes.Clientset
+var DynamicClient *dynamic.DynamicClient
 
 func main() {
 	// Set up logging
@@ -40,6 +45,13 @@ func main() {
 		logrus.Fatal("Environment variables AGGREGATOR_EXTERNAL_HOST must be set")
 	}
 
+	// Read AS URL from environment variable
+	ASURL = os.Getenv("AS_URL")
+
+	if ASURL == "" {
+		logrus.Fatal("Environment variable AS_URL must be set")
+	}
+
 	// Load in-cluster kubeConfig
 	kubeConfig, err := rest.InClusterConfig()
 	if err != nil {
@@ -49,6 +61,10 @@ func main() {
 	Clientset, err = kubernetes.NewForConfig(kubeConfig)
 	if err != nil {
 		logrus.Fatalf("Failed to create Kubernetes client: %v", err)
+	}
+	DynamicClient, err = dynamic.NewForConfig(kubeConfig)
+	if err != nil {
+		logrus.Fatalf("Failed to create dynamic Kubernetes client: %v", err)
 	}
 
 	// Configure HTTP server

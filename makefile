@@ -104,7 +104,11 @@ kind-start-traefik:
 		--set ingressClass.name=aggregator-traefik \
 		--set ports.web.hostPort=80 \
 		--set ports.websecure.hostPort=443 \
-		--set service.type=ClusterIP
+		--set service.type=ClusterIP \
+		--set providers.kubernetesCRD.allowCrossNamespace=true
+	@echo "⏳ Waiting for Traefik deployment to be ready..."
+	@kubectl rollout status deployment aggregator-traefik -n aggregator-traefik --timeout=180s
+	@echo "✅ Traefik deployment is ready!"
 
 kind-start-cleaner:
 	@echo "📄 Deploying aggregator-cleaner controller..."
@@ -129,18 +133,35 @@ kind-deploy:
 	@kubectl -n aggregator-app create secret generic ingress-uma-key \
 		--from-file=private_key.pem=k8s/uma/private_key.pem \
 		--dry-run=client -o yaml | kubectl apply -f -
-
+	
 	@echo "📄 Applying aggregator ConfigMap..."
 	@kubectl apply -f k8s/app/config.yaml
 
-	@echo "📄 Applying aggregator deployment and service..."
-	@kubectl apply -f k8s/app/aggregator.yaml
-
-	@echo "📄 Applying ingress-uma..."
-	@kubectl apply -f k8s/app/ingress-uma.yaml
-
 	@echo "📄 Adding localhost entries for ingress hosts..."
 	@grep -qxF "127.0.0.1 aggregator.local" /etc/hosts || sudo -- sh -c "echo '127.0.0.1 aggregator.local' >> /etc/hosts"
+	@grep -qxF "127.0.0.1 wsl.local" /etc/hosts || sudo -- sh -c "echo '127.0.0.1 wsl.local' >> /etc/hosts"
+	
+	@echo "📄 Applying ingress-uma..."
+	@kubectl apply -f k8s/app/ingress-uma.yaml
+	@echo "⏳ Waiting for ingress-uma deployment to be ready..."
+	@kubectl rollout status deployment ingress-uma -n aggregator-app --timeout=90s
+
+	@echo "⏳ Waiting for ingress-uma via Ingress to be reachable..."
+	@for i in {1..30}; do \
+			STATUS=$$(curl -s -o /dev/null -w "%{http_code}" http://aggregator.local/uma/.well-known/jwks.json || echo "000"); \
+			if [ "$$STATUS" = "200" ]; then \
+					echo "✅ Ingress-uma endpoint is ready"; \
+					break; \
+			else \
+					echo "Waiting for Ingress JWKS endpoint... (status=$$STATUS)"; \
+					sleep 2; \
+			fi; \
+	done
+
+	@echo "📄 Applying aggregator deployment and service..."
+	@kubectl apply -f k8s/app/aggregator.yaml
+	@echo "⏳ Waiting for aggregator deployment to be ready..."
+	@kubectl rollout status deployment aggregator -n aggregator-app --timeout=120s
 
 	@echo "✅ Resources deployed to kind"
 
@@ -159,6 +180,12 @@ kind-stop-cleaner:
 	@kubectl delete -f k8s/ops/cleaner.yaml --ignore-not-found
 	@echo "✅ Aggregator cleaner removed"
 
+kind-stop-traefik:
+	@echo "🧹 Deleting Traefik Ingress Controller..."
+	# Delete the namespace (optional, removes all resources inside)
+	@kubectl delete namespace aggregator-traefik --ignore-not-found
+	@echo "✅ Traefik Ingress Controller removed successfully."
+
 kind-clean:
 	@echo "🧹 Deleting aggregator cluster-wide roles..."
 	@kubectl delete clusterrole aggregator-namespace-manager --ignore-not-found
@@ -169,6 +196,7 @@ kind-clean:
 
 	@echo "🧹 Removing localhost entries..."
 	@sudo sed -i.bak '/aggregator\.local/d' /etc/hosts
+	@sudo sed -i.bak '/wsl\.local/d' /etc/hosts
 
 	@echo "✅ Cleanup complete"
 

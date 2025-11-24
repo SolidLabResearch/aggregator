@@ -6,9 +6,13 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "create-actor": "tsc && node dist/create-actor.js",
-    "get-actor": "tsc && node dist/get-actor.js",
-    "create-pipeline": "tsc && node dist/create-pipeline.js",
+    "s-create-actor": "tsc && node dist/solid/create-actor.js",
+    "s-get-actor": "tsc && node dist/solid/get-actor.js",
+    "s-get-trans": "tsc && node dist/solid/get-trans.js",
+    "kc-register-user": "tsc && node dist/keycloak/register-user.js",
+    "kc-create-actor": "tsc && node dist/keycloak/create-actor.js",
+    "kc-get-actor": "tsc && node dist/keycloak/get-actor.js",
+    "kc-get-trans": "tsc && node dist/keycloak/get-trans.js",
     "stream-actor-demo": "tsc && node dist/stream-actor-demo.js"
   },
   "dependencies": {

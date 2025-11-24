@@ -1,4 +1,4 @@
-import { SolidOIDCAuth } from "./util.js";
+import { SolidOIDCAuth } from "../util.js";
 
 /*
 const PipelineDescription = `

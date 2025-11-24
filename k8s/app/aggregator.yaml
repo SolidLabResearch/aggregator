@@ -8,13 +8,14 @@ metadata:
   namespace: aggregator-app
 ---
 # ========================
-# 2 ClusterRole: namespace management
+# 2 ClusterRole: namespace management + Traefik middleware
 # ========================
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: aggregator-namespace-manager
 rules:
+  # Built-in resources
   - apiGroups: [""]
     resources: ["namespaces", "pods", "services", "configmaps"]
     verbs: ["get", "list", "create", "delete", "watch"]
@@ -24,9 +25,13 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "list", "create", "delete", "watch"]
+  # Traefik CRDs
+  - apiGroups: ["traefik.io"]
+    resources: ["middlewares", "ingressroutes"]
+    verbs: ["get", "list", "create", "update", "delete"]
 ---
 # ========================
-# 3 ClusterRoleBinding: grant namespace management cluster-wide
+# 3 ClusterRoleBinding: bind SA to role
 # ========================
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -42,7 +47,7 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ---
 # ========================
-# 5 Deployment
+# 4 Deployment
 # ========================
 apiVersion: apps/v1
 kind: Deployment
@@ -72,11 +77,16 @@ spec:
                 configMapKeyRef:
                   name: aggregator-config
                   key: log_level
+            - name: AS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: as_url
             - name: AGGREGATOR_EXTERNAL_HOST
               value: "aggregator.local"
 ---
 # ========================
-# 6 Service: expose aggregator
+# 5 Service: expose aggregator
 # ========================
 apiVersion: v1
 kind: Service
@@ -92,24 +102,23 @@ spec:
       targetPort: 5000
 ---
 # =======================
-# 7 Ingress
+# 6 Ingress
 # ========================
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
 metadata:
-  name: aggregator-ingress
+  name: aggregator-ingressroute
   namespace: aggregator-app
 spec:
-  ingressClassName: aggregator-traefik
-  rules:
-    - host: "aggregator.local"
-      http:
-        paths:
-          - path: "/"                     
-            pathType: Prefix
-            backend:
-              service:
-                name: aggregator-svc          
-                port:
-                  number: 5000            
+  entryPoints:
+    - web  # or websecure if using HTTPS
+  routes:
+    - match: Host(`aggregator.local`) && PathPrefix(`/`)
+      kind: Rule
+      services:
+        - name: aggregator-svc
+          port: 5000
+      middlewares:
+        - name: ingress-uma
+          namespace: aggregator-app
 ---

@@ -18,11 +18,11 @@ const (
 	Write  Scope = "urn:example:css:modes:write"
 )
 
-func registerResource(id, issuer string) error {
+func registerResource(id, issuer string, scopes []Scope) error {
 	body := map[string]interface{}{
 		"issuer":      issuer,
 		"resource_id": id,
-		"scopes":      []Scope{Read},
+		"scopes":      scopes,
 	}
 
 	jsonBody, err := json.Marshal(body)

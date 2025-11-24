@@ -8,3 +8,5 @@ metadata:
   namespace: aggregator-app
 data:
   log_level: "info"                         # Set log level (debug, info, warn, error)
+  as_url: "http://wsl.local:4000/uma"       # Authorization Server URL
+  disable_auth: "true"                      # Disable authentication for testing purposes (true, false)

@@ -24,6 +24,11 @@ func initAdminConfiguration(mux *http.ServeMux) {
 		transformations:     hardcodedAvailableTransformations,
 	}
 	mux.HandleFunc("/config", config.HandleConfigurationEndpoint)
+	registerResource(
+		fmt.Sprintf("%s://%s/config", Protocol, ExternalHost),
+		ASURL,
+		[]Scope{Read},
+	)
 }
 
 // HandleConfigurationEndpoint handles requests to the /config endpoint
@@ -80,10 +85,11 @@ func initUserConfiguration(mux *http.ServeMux, user User) {
 
 func (config *UserConfigData) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), scopes []Scope) {
 	config.serveMux.HandleFunc(pattern, handler)
-	// auth.CreateResource(
-	//	fmt.Sprintf("%s://%s:%s%s", Protocol, ExternalHost, ExternalPort, pattern),
-	//	resourceScopes,
-	//)
+	registerResource(
+		fmt.Sprintf("%s://%s%s", Protocol, ExternalHost, pattern),
+		ASURL,
+		scopes,
+	)
 }
 
 // HandleActorsEndpoint handles requests to the /config/<namespace>/actors endpoint
@@ -153,7 +159,8 @@ func (config *UserConfigData) postActor(w http.ResponseWriter, r *http.Request) 
 	// create actor
 	actor, err := createActor(request)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to set up actor: %v", err), http.StatusInternalServerError)
+		logrus.WithError(err).Error("Failed to create actor")
+		http.Error(w, fmt.Sprintf("Failed to create actor: %v", err), http.StatusInternalServerError)
 		return
 	}
 

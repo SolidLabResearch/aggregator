@@ -1,4 +1,4 @@
-import {SolidOIDCAuth} from './util.js';
+import {SolidOIDCAuth} from '../util.js';
 
 async function main() {
     const pipelineEndpoint = 'http://localhost:5000/config/actors';

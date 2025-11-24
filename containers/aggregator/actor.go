@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -12,6 +15,8 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
@@ -61,9 +66,9 @@ func createActor(request ActorRequest) (*Actor, error) {
 	}
 
 	// Create Ingress
-	if err := actor.createIngress(request.Owner.ASURL, ctx); err != nil {
+	if err := actor.createIngressRoute(request.Owner.ASURL, ctx); err != nil {
 		cleanup()
-		return nil, fmt.Errorf("ingress creation failed: %w", err)
+		return nil, fmt.Errorf("ingress route creation failed: %w", err)
 	}
 
 	// return fully created actor
@@ -167,47 +172,65 @@ func (actor *Actor) createService(ctx context.Context) error {
 	return nil
 }
 
-func (actor *Actor) createIngress(asURL string, ctx context.Context) error {
-	ingName := actor.id + "-ingress"
+func (actor *Actor) createIngressRoute(asURL string, ctx context.Context) error {
+	irName := actor.namespace + "-" + actor.id + "-ingressroute"
 	svcName := actor.id + "-service"
-	className := "aggregator-traefik"
-	pathType := networkingv1.PathTypePrefix
+	namespace := actor.namespace
 
-	// Check if ingress already exists
-	_, err := Clientset.NetworkingV1().Ingresses(actor.namespace).Get(ctx, ingName, metav1.GetOptions{})
-	if err == nil {
-		return fmt.Errorf("ingress %s already exists in namespace %s", ingName, actor.namespace)
+	// Check if IngressRoute already exists
+	ingressRouteGVR := schema.GroupVersionResource{
+		Group:    "traefik.io",
+		Version:  "v1alpha1",
+		Resource: "ingressroutes",
 	}
 
-	// Specify Ingress
-	ingSpec := &networkingv1.Ingress{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      ingName,
-			Namespace: actor.namespace,
-			Annotations: map[string]string{
-				"traefik.ingress.kubernetes.io/router.middlewares": "aggregator-app-ingress-uma@kubernetescrd",
+	_, err := DynamicClient.
+		Resource(ingressRouteGVR).
+		Namespace("aggregator-app").
+		Get(ctx, irName, metav1.GetOptions{})
+	if err == nil {
+		return fmt.Errorf("IngressRoute %s already exists in namespace %s", irName, namespace)
+	}
+	if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to check existing IngressRoute %s: %w", irName, err)
+	}
+
+	// Create Rewrite Middleware
+	rewriteMiddleware, err := createRewriteMiddleware("/", ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create rewrite middleware: %w", err)
+	}
+
+	// Define IngressRoute spec
+	obj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "traefik.io/v1alpha1",
+			"kind":       "IngressRoute",
+			"metadata": map[string]interface{}{
+				"name":      irName,
+				"namespace": "aggregator-app",
 			},
-		},
-		Spec: networkingv1.IngressSpec{
-			IngressClassName: &className,
-			Rules: []networkingv1.IngressRule{
-				{
-					Host: ExternalHost,
-					IngressRuleValue: networkingv1.IngressRuleValue{
-						HTTP: &networkingv1.HTTPIngressRuleValue{
-							Paths: []networkingv1.HTTPIngressPath{
-								{
-									Path:     "/actors/" + actor.namespace + "/" + actor.id,
-									PathType: &pathType,
-									Backend: networkingv1.IngressBackend{
-										Service: &networkingv1.IngressServiceBackend{
-											Name: svcName,
-											Port: networkingv1.ServiceBackendPort{
-												Number: 80,
-											},
-										},
-									},
-								},
+			"spec": map[string]interface{}{
+				"entryPoints": []string{"web"}, // adjust to websecure if needed
+				"routes": []interface{}{
+					map[string]interface{}{
+						"match": "Host(`" + ExternalHost + "`) && PathPrefix(`/actors/" + namespace + "/" + actor.id + "`)",
+						"kind":  "Rule",
+						"services": []interface{}{
+							map[string]interface{}{
+								"name":      svcName,
+								"namespace": namespace,
+								"port":      80,
+							},
+						},
+						"middlewares": []interface{}{
+							map[string]interface{}{
+								"name":      "ingress-uma",
+								"namespace": "aggregator-app",
+							},
+							map[string]interface{}{
+								"name":      rewriteMiddleware,
+								"namespace": "aggregator-app",
 							},
 						},
 					},
@@ -216,24 +239,86 @@ func (actor *Actor) createIngress(asURL string, ctx context.Context) error {
 		},
 	}
 
-	// Create Ingress
-	ing, err := Clientset.NetworkingV1().Ingresses(actor.namespace).Create(ctx, ingSpec, metav1.CreateOptions{})
+	// Create IngressRoute
+	_, err = DynamicClient.
+		Resource(ingressRouteGVR).
+		Namespace("aggregator-app").
+		Create(ctx, obj, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to create ingress %s: %w", ingName, err)
-	}
-	actor.ingresses = append(actor.ingresses, *ing)
-
-	// Register resource
-	resourceID := fmt.Sprintf("http://%s/actors/%s/%s", ExternalHost, actor.namespace, actor.id)
-	if err := registerResource(resourceID, asURL); err != nil {
-		return fmt.Errorf("failed to register resource for ingress %q: %w", ingName, err)
+		return fmt.Errorf("failed to create IngressRoute %s: %w", irName, err)
 	}
 
-	// Register endpoint
+	// Register resource & endpoint
+	resourceID := fmt.Sprintf("http://%s/actors/%s/%s", ExternalHost, namespace, actor.id)
+	if err := registerResource(resourceID, asURL, []Scope{Read}); err != nil {
+		return fmt.Errorf("failed to register resource for IngressRoute %q: %w", irName, err)
+	}
 	actor.pubEndpoints = append(actor.pubEndpoints, resourceID)
 
-	logrus.Infof("Ingress %s created successfully in namespace %s", ingName, actor.namespace)
+	logrus.Infof("IngressRoute %s created successfully in namespace %s", irName, "aggregator-app")
 	return nil
+}
+
+// createRewriteMiddleware creates a Traefik IngressRoute Middleware to rewrite paths.
+func createRewriteMiddleware(path string, ctx context.Context) (string, error) {
+	// Use aggregator-app namespace for middlewares
+	namespace := "aggregator-app"
+
+	// Sanitize path for name (remove /, replace with -) and hash to avoid collisions / length issues
+	cleanPath := strings.ReplaceAll(path, "/", "-")
+	if cleanPath == "" {
+		cleanPath = "root"
+	}
+	hash := sha1.Sum([]byte(path))
+	mwName := fmt.Sprintf("rewrite-%s%s", cleanPath, hex.EncodeToString(hash[:4])) // short hash for uniqueness
+
+	// Traefik Middleware GVR
+	middlewareGVR := schema.GroupVersionResource{
+		Group:    "traefik.io",
+		Version:  "v1alpha1",
+		Resource: "middlewares",
+	}
+
+	// Check if middleware exists
+	_, err := DynamicClient.
+		Resource(middlewareGVR).
+		Namespace(namespace).
+		Get(ctx, mwName, metav1.GetOptions{})
+
+	if err == nil {
+		// Already exists → reuse
+		return mwName, nil
+	}
+	if !errors.IsNotFound(err) {
+		return "", fmt.Errorf("failed to check existing middleware %s: %w", mwName, err)
+	}
+
+	// Create new middleware
+	obj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "traefik.io/v1alpha1",
+			"kind":       "Middleware",
+			"metadata": map[string]interface{}{
+				"name":      mwName,
+				"namespace": namespace,
+			},
+			"spec": map[string]interface{}{
+				"replacePath": map[string]interface{}{
+					"path": path,
+				},
+			},
+		},
+	}
+
+	_, err = DynamicClient.
+		Resource(middlewareGVR).
+		Namespace(namespace).
+		Create(ctx, obj, metav1.CreateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to create middleware %s: %w", mwName, err)
+	}
+
+	return mwName, nil
 }
 
 func (actor *Actor) Stop() error {

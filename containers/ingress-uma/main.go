@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -14,6 +13,7 @@ import (
 )
 
 var ExternalHost = os.Getenv("EXTERNAL_HOST")
+var DisableAuth = strings.ToLower(os.Getenv("DISABLE_AUTH")) == "true"
 
 func init() {
 	// Set up logging
@@ -28,16 +28,13 @@ func init() {
 func main() {
 	mux := http.NewServeMux()
 	signing.InitSigning(mux, "/keys/private_key.pem", ExternalHost)
-	auth.InitAuth(ExternalHost)
+	auth.InitAuth(ExternalHost, DisableAuth)
 
 	mux.HandleFunc("/authorize", auth.AuthorizeRequest)
 	mux.HandleFunc("/resources", resourcesHandler)
 
-	// Wrap the mux with the logging middleware
-	loggedMux := loggingMiddleware(mux)
-
 	logrus.Info("Starting UMA RS auth server on :8080")
-	if err := http.ListenAndServe(":8080", loggedMux); err != nil {
+	if err := http.ListenAndServe(":8080", mux); err != nil {
 		logrus.Fatalf("Server failed: %v", err)
 	}
 }
@@ -88,21 +85,4 @@ func resourcesHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-}
-
-// loggingMiddleware wraps a handler and logs every request
-func loggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		bodyBytes, _ := io.ReadAll(r.Body)
-		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes))) // reset body for next handler
-
-		logrus.WithFields(logrus.Fields{
-			"method":  r.Method,
-			"path":    r.URL.Path,
-			"headers": r.Header,
-			"body":    string(bodyBytes),
-		}).Info("Incoming request")
-
-		next.ServeHTTP(w, r)
-	})
 }

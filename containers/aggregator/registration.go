@@ -38,6 +38,11 @@ func initUserRegistration(mux *http.ServeMux) {
 	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
 		userRegistrationHandler(w, r, mux)
 	})
+	registerResource(
+		fmt.Sprintf("%s://%s/register", Protocol, ExternalHost),
+		ASURL,
+		[]Scope{Write},
+	)
 }
 
 func userRegistrationHandler(w http.ResponseWriter, r *http.Request, mux *http.ServeMux) {
