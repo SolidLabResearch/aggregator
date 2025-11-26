@@ -46,65 +46,48 @@ async function createActor(id: string, description: string) {
     const actor = await response.json();
     console.log(JSON.stringify(actor, null, 2));
 
-    // console.log(`=== Waiting for actor to become ready ===`);
-
-    // Listen to actor status SSE endpoint
-    // await waitForActorReady(actor.status);
+    console.log(`=== Waiting for actor to become ready ===`);
+    await waitForActorReady(actor.status);
 
     console.log(`🔧 Actor ${actor.id} endpoints:`);
     console.log(`configuration: ${actor.config}`);
     console.log(`endpoints: ${actor.endpoints}`);
 }
 
-async function waitForActorReady(statusUrl: string): Promise<void> {
-    const response = await umaFetch(statusUrl, {
-        headers: { Accept: "text/event-stream" }
-    });
 
-    if (!response.ok || !response.body) {
-        throw new Error(`Failed to connect to SSE at ${statusUrl}`);
+async function waitForActorReady(statusUrl: string, intervalMs = 3000, timeoutMs = 60000): Promise<void> {
+    const startTime = Date.now();
+
+    while (true) {
+        try {
+            const response = await umaFetch(statusUrl, {
+                headers: { Accept: "application/json" }
+            });
+
+            if (!response.ok) {
+                throw new Error(`Status check failed: ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            if (data.ready === true) {
+                console.log("✅ Actor is ready");
+                return;
+            } else {
+                console.log("⏳ Actor not ready yet...");
+            }
+        } catch (err) {
+            console.error("❌ Error checking status:", err);
+        }
+
+        // Check timeout
+        if (Date.now() - startTime > timeoutMs) {
+            throw new Error("Timeout waiting for actor to become ready");
+        }
+
+        // Wait before next poll
+        await new Promise(resolve => setTimeout(resolve, intervalMs));
     }
-
-    console.log("CONTENT TYPE: ", response.headers.get("Content-Type"));
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-
-    return new Promise<void>((resolve, reject) => {
-        let doneReading = false;
-
-        const parser = createParser({
-            onEvent(event) {
-                const data = JSON.parse(event.data);
-
-                if (data.type === "ready") {
-                    console.log("✅ Actor is ready:", data.message || "");
-                    doneReading = true;
-                    reader.cancel();        
-                    resolve();
-                } else if (data.type === "error") {
-                    console.error("❌ Actor failed:", data.message || "");
-                    doneReading = true;
-                    reader.cancel();        
-                    reject(new Error(data.message || "Actor error"));
-                } else {
-                    console.log(`ℹ️ Event [${data.type}]: ${data.message || ""}`);
-                }
-            }
-        });
-
-        (async () => {
-            try {
-                while (true) {
-                    const { value, done } = await reader.read();
-                    if (done || doneReading) break;
-                    parser.feed(decoder.decode(value));
-                }
-            } catch (err) {
-                reject(err);
-            }
-        })();
-    });
 }
 
 async function main() {

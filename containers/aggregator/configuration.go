@@ -211,51 +211,30 @@ func (config *UserConfigData) postActor(w http.ResponseWriter, r *http.Request) 
 }
 
 // SSE endpoint: /config/actors/<namespace>/<id>/status
-func (config *UserConfigData) HandleStatusEndpoint(w http.ResponseWriter, r *http.Request) {
-	// Parse actor ID from the URL
-	parts := strings.Split(r.URL.Path, "/")
-	id := parts[4]
 
+func (config *UserConfigData) HandleStatusEndpoint(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 5 {
+		http.Error(w, "Invalid URL", http.StatusBadRequest)
+		return
+	}
+
+	id := parts[4]
 	actor, ok := config.actors[id]
 	if !ok {
 		http.Error(w, "Actor not found", http.StatusNotFound)
 		return
 	}
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-		return
-	}
+	ready := actor.Status()
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	// Subscribe to event updates
-	eventCh := config.eventHub.Subscribe(actor.id)
-	defer config.eventHub.Unsubscribe(actor.id, eventCh)
-
-	// Initial message: connected
-	fmt.Fprintf(w, "data: %s\n\n", `{"type":"info","message":"Connected to actor status stream"}`)
-	flusher.Flush()
-
-	// Main loop: stream events
-	for {
-		select {
-		case event := <-eventCh:
-			payload, _ := json.Marshal(event)
-			fmt.Fprintf(w, "data: %s\n\n", payload)
-			flusher.Flush()
-
-			if event.Type == "complete" || event.Type == "error" {
-				return
-			}
-
-		case <-r.Context().Done():
-			// Client disconnected
-			return
-		}
+	w.Header().Set("Content-Type", "application/json")
+	if ready {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"ready": true})
+	} else {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]bool{"ready": false})
 	}
 }
 

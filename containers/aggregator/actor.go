@@ -355,6 +355,15 @@ func (actor *Actor) Stop() error {
 	return nil
 }
 
+func (actor *Actor) Status() bool {
+	for _, dep := range actor.deployments {
+		if dep.Status.AvailableReplicas == 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func (actor *Actor) MarshalJSON() ([]byte, error) {
 	type actorJSON struct {
 		ID          string   `json:"id"`
