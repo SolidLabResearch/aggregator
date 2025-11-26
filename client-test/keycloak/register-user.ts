@@ -19,10 +19,12 @@ const umaFetch = auth.createUMAFetch();
 
 async function register(user_id: string, as_url: string): Promise<any> {
     console.log(`=== Registering user at ${REGISTER_ENDPOINT} ===`);
+    await auth.refreshAccessToken();
     const registerRequest = {
         method: "POST",
         headers: {
-            "content-type": "application/json"
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${auth.accessToken}`
         },
         body: JSON.stringify({
             user_id,

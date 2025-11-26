@@ -275,7 +275,7 @@ export class SolidOIDCAuth {
 export class KeycloakOIDCAuth {
     private tokenEndpoint!: string;
 
-    private accessToken: string | undefined;
+    public accessToken: string | undefined;
     private idToken: string | undefined;
     private expiresAt: number | undefined;
 
@@ -341,7 +341,7 @@ export class KeycloakOIDCAuth {
     /**
      * Refresh access token
      */
-    private async refreshAccessToken(): Promise<void> {
+    public async refreshAccessToken(): Promise<void> {
         const tokenResponse = await this.directAccessTokenRequest();
         this.accessToken = tokenResponse.access_token;
         this.idToken = tokenResponse.id_token;
@@ -366,7 +366,7 @@ export class KeycloakOIDCAuth {
 
         if (!this.accessToken || !this.idToken) throw new Error("Not initialized");
 
-        return this.idToken;
+        return this.accessToken;
     }
 
     /**

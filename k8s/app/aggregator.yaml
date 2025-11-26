@@ -87,6 +87,21 @@ spec:
                 configMapKeyRef:
                   name: aggregator-config
                   key: admin
+            - name: CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: client_id
+            - name: CLIENT_SECRET
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: client_secret
+            - name: IDP
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: idp
             - name: AGGREGATOR_EXTERNAL_HOST
               value: "aggregator.local"
 ---
@@ -116,7 +131,7 @@ metadata:
   namespace: aggregator-app
 spec:
   entryPoints:
-    - web  # or websecure if using HTTPS
+    - web
   routes:
     - match: Host(`aggregator.local`) && PathPrefix(`/`)
       kind: Rule
@@ -126,4 +141,19 @@ spec:
       middlewares:
         - name: ingress-uma
           namespace: aggregator-app
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aggregator-register-ingressroute
+  namespace: aggregator-app
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`aggregator.local`) && PathPrefix(`/register`)
+      kind: Rule
+      services:
+        - name: aggregator-svc
+          port: 5000
 ---

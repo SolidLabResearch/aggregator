@@ -6,6 +6,9 @@ metadata:
 spec:
   forwardAuth:
     address: "http://ingress-uma.aggregator-app.svc.cluster.local/authorize"
+    trustForwardHeader: true
+    authResponseHeaders:
+      - Authorization
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
