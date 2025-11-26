@@ -32,10 +32,9 @@ func InitAuth(extHost string, disbaleAuth bool) {
 	DisableAuth = disbaleAuth
 }
 
-func AuthorizeRequest(w http.ResponseWriter, r *http.Request) {
+func HandleAuthorizationRequest(w http.ResponseWriter, r *http.Request) {
 	// Extract the UMA information from the forwarded headers
 	scheme := strings.Trim(r.Header.Get("X-Forwarded-Proto"), "[]")
-
 	resourcePath := strings.Trim(r.Header.Get("X-Forwarded-Uri"), "[]")
 	resourceId := fmt.Sprintf("%s://%s%s", scheme, ExternalHost, resourcePath)
 	umaId := idIndex[resourceId]
@@ -52,7 +51,13 @@ func AuthorizeRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logrus.WithFields(logrus.Fields{"resource": resourceId, "uma_id": umaId, "as_url": issuer}).Info("Authorize request")
+	method := strings.Trim(r.Header.Get("X-Forwarded-Method"), "[]")
+	logrus.WithFields(logrus.Fields{
+		"resource": resourceId,
+		"uma_id":   umaId,
+		"method":   method,
+		"as_url":   issuer},
+	).Info("Authorize request")
 
 	// Always authorize if disabled for testing
 	if DisableAuth {
@@ -72,8 +77,9 @@ func AuthorizeRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func ticketlessAuthorization(w http.ResponseWriter, r *http.Request, umaId string, issuer string) {
+	method := strings.Trim(r.Header.Get("X-Forwarded-Method"), "[]")
 	permissions := make(map[string][]Scope)
-	scopes, err := determineScopes(r.Method)
+	scopes, err := determineScopes(method)
 	if err != nil {
 		logrus.WithError(err).Error("Error determining scopes")
 		http.Error(w, "Error determining scopes", http.StatusUnauthorized)
@@ -105,7 +111,8 @@ func ticketlessAuthorization(w http.ResponseWriter, r *http.Request, umaId strin
 }
 
 func ticketedAuthorization(w http.ResponseWriter, r *http.Request, umaId string, issuer string) {
-	logrus.WithFields(logrus.Fields{"method": r.Method, "path": r.URL.Path}).Info("🔍 Verifying authorization token")
+	method := strings.Trim(r.Header.Get("X-Forwarded-Method"), "[]")
+	logrus.WithFields(logrus.Fields{"method": method, "path": r.URL.Path}).Info("🔍 Verifying authorization token")
 	permission, err := verifyTicket(r.Header.Get("Authorization"), []string{issuer})
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Error while verifying ticket")
@@ -116,7 +123,7 @@ func ticketedAuthorization(w http.ResponseWriter, r *http.Request, umaId string,
 	logrus.WithFields(logrus.Fields{"count": len(permission), "permissions": permission}).Debug("🔑 User permissions retrieved")
 
 	// Determine required scopes for this request
-	requiredScopes, err := determineScopes(r.Method)
+	requiredScopes, err := determineScopes(method)
 	if err != nil {
 		logrus.WithError(err).Error("Error determining scopes")
 		w.WriteHeader(http.StatusBadRequest)
@@ -144,36 +151,6 @@ func ticketedAuthorization(w http.ResponseWriter, r *http.Request, umaId string,
 	// No matching permission for the resource was found
 	logrus.WithFields(logrus.Fields{"resource_id": umaId, "permissions": permission}).Warn("❌ No matching permission found")
 	w.WriteHeader(http.StatusBadRequest)
-}
-
-func determineScopes(method string) ([]Scope, error) {
-	switch method {
-	case "POST", "PUT", "DELETE":
-		logrus.WithFields(logrus.Fields{"method": method}).Debug("🔧 Requesting 'modify' permissions")
-		return []Scope{Modify}, nil
-	case "GET":
-		logrus.WithFields(logrus.Fields{"method": method}).Debug("📖 Requesting 'read' permissions")
-		return []Scope{Read}, nil
-	default:
-		logrus.WithFields(logrus.Fields{"method": method}).Warn("❌ Method not supported by authorization")
-		return nil, fmt.Errorf("❌ Method %s not supported by authorization", method)
-	}
-}
-
-func checkScopes(permissionedScopes, requiredScopes []Scope) bool {
-	permMap := make(map[Scope]struct{}, len(permissionedScopes))
-	for _, s := range permissionedScopes {
-		permMap[s] = struct{}{}
-	}
-
-	// Ensure every required scope exists in the permissioned set
-	for _, req := range requiredScopes {
-		if _, ok := permMap[req]; !ok {
-			return false
-		}
-	}
-
-	return true
 }
 
 func fetchTicket(asUrl string, permissions map[string][]Scope) (string, error) {

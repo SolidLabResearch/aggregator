@@ -1,7 +1,7 @@
 import { createParser } from "eventsource-parser";
 import { KeycloakOIDCAuth } from "../util.js";
 
-const ACTORS_ENDPOINT = "http://aggregator.local/config/doctor/actors";
+const ACTORS_ENDPOINT = "http://aggregator.local/config/7dbd3102-2207-4f2d-aa01-b1b4c7e8b76a/actors";
 
 const USERNAME = "doctor@example.com";
 const PASSWORD = "doctor";

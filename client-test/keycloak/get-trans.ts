@@ -1,5 +1,6 @@
 import { KeycloakOIDCAuth } from "../util.js";
 
+const USER_ID = "https://pacsoi-idp.faqir.org/users/056e2d71-21aa-4528-a9f8-735ad76f0baa";
 const IDP = "https://pacsoi-idp.faqir.org";
 const REALM = "kvasir";
 const USERNAME = "doctor@example.com";

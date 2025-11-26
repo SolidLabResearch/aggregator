@@ -82,6 +82,11 @@ spec:
                 configMapKeyRef:
                   name: aggregator-config
                   key: as_url
+            - name: ADMIN_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: admin
             - name: AGGREGATOR_EXTERNAL_HOST
               value: "aggregator.local"
 ---

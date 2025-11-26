@@ -7,7 +7,7 @@ const PASSWORD = "doctor";
 const CLIENT_ID = "moveup-app";
 const CLIENT_SECRET = "Yg8rGkQNQ4OqDh3AUR81EoSJtjPDXH4n";
 
-const ACTOR_ENDPOINT = "http://aggregator.local/actors/doctor/echo";
+const ACTOR_ENDPOINT = "http://aggregator.local/actors/7dbd3102-2207-4f2d-aa01-b1b4c7e8b76a/echo";
 
 
 async function main() {

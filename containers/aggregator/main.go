@@ -20,7 +20,8 @@ var Protocol = "http"
 var ExternalHost string
 
 // Authorization Server URL
-var ASURL string
+var AggregatorASURL string
+var AdminId string
 
 // Logging
 var LogLevel logrus.Level
@@ -40,16 +41,19 @@ func main() {
 
 	// Read host and port from environment variables
 	ExternalHost = os.Getenv("AGGREGATOR_EXTERNAL_HOST")
-
 	if ExternalHost == "" {
 		logrus.Fatal("Environment variables AGGREGATOR_EXTERNAL_HOST must be set")
 	}
 
 	// Read AS URL from environment variable
-	ASURL = os.Getenv("AS_URL")
-
-	if ASURL == "" {
+	AggregatorASURL = os.Getenv("AS_URL")
+	if AggregatorASURL == "" {
 		logrus.Fatal("Environment variable AS_URL must be set")
+	}
+
+	AdminId = os.Getenv("ADMIN_ID")
+	if AdminId == "" {
+		logrus.Fatal("Environment variable ADMIN_ID must be set")
 	}
 
 	// Load in-cluster kubeConfig

@@ -7,6 +7,7 @@ metadata:
   name: aggregator-config
   namespace: aggregator-app
 data:
-  log_level: "info"                         # Set log level (debug, info, warn, error)
-  as_url: "http://wsl.local:4000/uma"       # Authorization Server URL
-  disable_auth: "true"                      # Disable authentication for testing purposes (true, false)
+  log_level: "info"                             # Set log level (debug, info, warn, error)
+  as_url: "http://wsl.local:4000/uma"           # Authorization Server URL
+  disable_auth: "false"                          # Disable authentication for testing purposes (true, false)
+  admin: "https://pacsoi-idp.faqir.org/users/056e2d71-21aa-4528-a9f8-735ad76f0baa" # Admin user ID

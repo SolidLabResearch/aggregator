@@ -11,21 +11,53 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type Scope string
-
-const (
-	Read   Scope = "urn:example:css:modes:read"
-	Modify Scope = "urn:example:css:modes:modify"
-	Append Scope = "urn:example:css:modes:append"
-	Create Scope = "urn:example:css:modes:create"
-	Delete Scope = "urn:example:css:modes:delete"
-	Write  Scope = "urn:example:css:modes:write"
-)
-
 var idIndex = make(map[string]string)
 var issuerIndex = make(map[string]string)
 
-func CreateResource(issuer string, resourceId string, scopes []Scope) error {
+func HandleResourceRequest(w http.ResponseWriter, r *http.Request) {
+	// Only accept POST requests
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var reqData struct {
+		Issuer     string   `json:"issuer"`
+		ResourceID string   `json:"resource_id"`
+		Scopes     []string `json:"scopes"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&reqData); err != nil {
+		logrus.WithError(err).Warn("Invalid JSON in request body")
+		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	// Basic validation
+	if reqData.Issuer == "" || reqData.ResourceID == "" || len(reqData.Scopes) == 0 {
+		http.Error(w, "Missing required fields: issuer, resource_id, scopes", http.StatusBadRequest)
+		return
+	}
+
+	scopes := stringsToScopes(reqData.Scopes)
+
+	logrus.WithFields(logrus.Fields{
+		"issuer":      reqData.Issuer,
+		"resource_id": reqData.ResourceID,
+		"scopes":      reqData.Scopes,
+	}).Info("Received resource registration request")
+
+	if err := createResource(reqData.Issuer, reqData.ResourceID, scopes); err != nil {
+		logrus.WithError(err).Error("Failed to create UMA resource")
+		http.Error(w, "Failed to register resource", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+}
+
+func createResource(issuer string, resourceId string, scopes []Scope) error {
 	// Fetch UMA configuration
 	config, err := fetchUmaConfig(issuer)
 	if err != nil {

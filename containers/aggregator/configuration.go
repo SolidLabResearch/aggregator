@@ -26,8 +26,19 @@ func initAdminConfiguration(mux *http.ServeMux) {
 	mux.HandleFunc("/config", config.HandleConfigurationEndpoint)
 	registerResource(
 		fmt.Sprintf("%s://%s/config", Protocol, ExternalHost),
-		ASURL,
+		AggregatorASURL,
+		[]Scope{Read, Write},
+	)
+	definePublicPolicy(
+		fmt.Sprintf("%s://%s/config", Protocol, ExternalHost),
+		AggregatorASURL,
 		[]Scope{Read},
+	)
+	definePolicy(
+		fmt.Sprintf("%s://%s/config", Protocol, ExternalHost),
+		AdminId,
+		AggregatorASURL,
+		[]Scope{Write},
 	)
 }
 
@@ -87,7 +98,13 @@ func (config *UserConfigData) HandleFunc(pattern string, handler func(http.Respo
 	config.serveMux.HandleFunc(pattern, handler)
 	registerResource(
 		fmt.Sprintf("%s://%s%s", Protocol, ExternalHost, pattern),
-		ASURL,
+		AggregatorASURL,
+		scopes,
+	)
+	definePolicy(
+		fmt.Sprintf("%s://%s%s", Protocol, ExternalHost, pattern),
+		config.owner.UserId,
+		AggregatorASURL,
 		scopes,
 	)
 }

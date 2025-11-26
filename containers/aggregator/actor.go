@@ -66,7 +66,7 @@ func createActor(request ActorRequest) (*Actor, error) {
 	}
 
 	// Create Ingress
-	if err := actor.createIngressRoute(request.Owner.ASURL, ctx); err != nil {
+	if err := actor.createIngressRoute(request.Owner, ctx); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("ingress route creation failed: %w", err)
 	}
@@ -172,7 +172,7 @@ func (actor *Actor) createService(ctx context.Context) error {
 	return nil
 }
 
-func (actor *Actor) createIngressRoute(asURL string, ctx context.Context) error {
+func (actor *Actor) createIngressRoute(owner User, ctx context.Context) error {
 	irName := actor.namespace + "-" + actor.id + "-ingressroute"
 	svcName := actor.id + "-service"
 	namespace := actor.namespace
@@ -248,10 +248,13 @@ func (actor *Actor) createIngressRoute(asURL string, ctx context.Context) error 
 		return fmt.Errorf("failed to create IngressRoute %s: %w", irName, err)
 	}
 
-	// Register resource & endpoint
+	// Register resource & endpoint with policies
 	resourceID := fmt.Sprintf("http://%s/actors/%s/%s", ExternalHost, namespace, actor.id)
-	if err := registerResource(resourceID, asURL, []Scope{Read}); err != nil {
+	if err := registerResource(resourceID, owner.ASURL, []Scope{Read}); err != nil {
 		return fmt.Errorf("failed to register resource for IngressRoute %q: %w", irName, err)
+	}
+	if err := definePolicy(resourceID, owner.UserId, owner.ASURL, []Scope{Read}); err != nil {
+		return fmt.Errorf("failed to create policy for IngressRoute %q: %w", irName, err)
 	}
 	actor.pubEndpoints = append(actor.pubEndpoints, resourceID)
 

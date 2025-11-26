@@ -15,10 +15,7 @@ import (
 )
 
 type User struct {
-	Id        string `json:"id"`
-	Secret    string `json:"secret"`
-	Issuer    string `json:"issuer"`
-	Name      string `json:"name"`
+	UserId    string `json:"user_id"`
 	ASURL     string `json:"as_url"`
 	Namespace string `json:"namespace"`
 }
@@ -40,7 +37,12 @@ func initUserRegistration(mux *http.ServeMux) {
 	})
 	registerResource(
 		fmt.Sprintf("%s://%s/register", Protocol, ExternalHost),
-		ASURL,
+		AggregatorASURL,
+		[]Scope{Write},
+	)
+	definePublicPolicy(
+		fmt.Sprintf("%s://%s/register", Protocol, ExternalHost),
+		AggregatorASURL,
 		[]Scope{Write},
 	)
 }
@@ -58,16 +60,8 @@ func userRegistrationHandler(w http.ResponseWriter, r *http.Request, mux *http.S
 		return
 	}
 
-	if user.Id == "" {
-		http.Error(w, "Missing required field: id", http.StatusBadRequest)
-		return
-	}
-	if user.Secret == "" {
-		http.Error(w, "Missing required field: secret", http.StatusBadRequest)
-		return
-	}
-	if user.Issuer == "" {
-		http.Error(w, "Missing required field: issuer", http.StatusBadRequest)
+	if user.UserId == "" {
+		http.Error(w, "Missing required field: user_id", http.StatusBadRequest)
 		return
 	}
 	if user.ASURL == "" {
@@ -80,7 +74,7 @@ func userRegistrationHandler(w http.ResponseWriter, r *http.Request, mux *http.S
 	defer userMux.Unlock()
 
 	// Check if user already exists
-	if _, exists := users[user.Id]; exists {
+	if _, exists := users[user.UserId]; exists {
 		http.Error(w, "User already registered", http.StatusConflict)
 		return
 	}
@@ -88,7 +82,7 @@ func userRegistrationHandler(w http.ResponseWriter, r *http.Request, mux *http.S
 	// Create a unique namespace for the user
 	ns, err := createNamespace(user)
 	if err != nil {
-		logrus.WithError(err).Errorf("Failed to create namespace for %s", user.Id)
+		logrus.WithError(err).Errorf("Failed to create namespace for %s", user.UserId)
 		http.Error(w, "Unable to create namespace", http.StatusInternalServerError)
 		return
 	}
@@ -100,7 +94,7 @@ func userRegistrationHandler(w http.ResponseWriter, r *http.Request, mux *http.S
 	initUserConfiguration(mux, user)
 
 	// Store user
-	users[user.Id] = &user
+	users[user.UserId] = &user
 
 	// Respond with the user config endpoint
 	response := user.ConfigEndpoints()
@@ -113,22 +107,7 @@ func createNamespace(user User) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	nsName := user.Name
-	if nsName == "" {
-		nsName = uuid.NewString()
-	} else {
-		_, err := Clientset.CoreV1().Namespaces().Get(ctx, nsName, metav1.GetOptions{})
-		if err == nil {
-			nsName = uuid.NewString()
-		}
-	}
-
-	// Check if namespace already exists
-	_, err := Clientset.CoreV1().Namespaces().Get(ctx, nsName, metav1.GetOptions{})
-	if err == nil {
-		return "", fmt.Errorf("namespace %s already exists", nsName)
-	}
-
+	nsName := uuid.NewString()
 	// Create namespace with labels/annotations
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
@@ -137,13 +116,13 @@ func createNamespace(user User) (string, error) {
 				"created-by": "aggregator",
 			},
 			Annotations: map[string]string{
-				"owner":  user.Id,
+				"owner":  user.UserId,
 				"as_url": user.ASURL,
 			},
 		},
 	}
 
-	_, err = Clientset.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	_, err := Clientset.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to create namespace %s: %w", nsName, err)
 	}
