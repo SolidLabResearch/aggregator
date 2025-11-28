@@ -145,13 +145,13 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: aggregator-register-ingressroute
+  name: aggregator-registration-ingressroute
   namespace: aggregator-app
 spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`aggregator.local`) && PathPrefix(`/register`)
+    - match: Host(`aggregator.local`) && PathPrefix(`/registration`)
       kind: Rule
       services:
         - name: aggregator-svc

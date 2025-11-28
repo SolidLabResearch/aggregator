@@ -250,10 +250,10 @@ func (actor *Actor) createIngressRoute(owner User, ctx context.Context) error {
 
 	// Register resource & endpoint with policies
 	resourceID := fmt.Sprintf("http://%s/actors/%s/%s", ExternalHost, namespace, actor.id)
-	if err := registerResource(resourceID, owner.ASURL, []Scope{Read}); err != nil {
+	if err := registerResource(resourceID, owner.AuthzServerURL, []Scope{Read}); err != nil {
 		return fmt.Errorf("failed to register resource for IngressRoute %q: %w", irName, err)
 	}
-	if err := definePolicy(resourceID, owner.UserId, owner.ASURL, []Scope{Read}); err != nil {
+	if err := definePolicy(resourceID, owner.UserId, owner.AuthzServerURL, []Scope{Read}); err != nil {
 		return fmt.Errorf("failed to create policy for IngressRoute %q: %w", irName, err)
 	}
 	actor.pubEndpoints = append(actor.pubEndpoints, resourceID)
