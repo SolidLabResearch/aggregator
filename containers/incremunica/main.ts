@@ -204,6 +204,10 @@ async function fetchRegistration(method: 'POST' | 'PATCH' | 'PUT' | 'DELETE', bo
   return null;
 }
 
+// Track registered endpoints for cleanup
+type RegisteredEndpoint = { endpoint: string, description: string, scopes: string[] };
+const registeredEndpoints: RegisteredEndpoint[] = [];
+
 // Function to register an endpoint with the aggregator
 async function registerEndpointWithAggregator(endpoint: string, description: string, scopes: string[] = ["read"]): Promise<void> {
   const registrationData: any = {
@@ -225,6 +229,8 @@ async function registerEndpointWithAggregator(endpoint: string, description: str
     if (response.ok) {
       const result = await response.json();
       logger.info({ endpoint, external_url: result.external_url, actor_id: result.actor_id }, 'Endpoint registered');
+      // Track for cleanup
+      registeredEndpoints.push({ endpoint, description, scopes });
       return result.actor_id;
     } else {
       const errorText = await response.text();
@@ -289,6 +295,39 @@ async function registerWithAggregator(): Promise<void> {
   logger.info('All endpoints registered with aggregator');
 }
 
+// Function to deregister an endpoint from the aggregator
+async function deregisterEndpointWithAggregator(endpoint: string): Promise<void> {
+  const deregData: any = {
+    pod_name: POD_NAME,
+    pod_ip: POD_IP,
+    port: SERVICE_PORT,
+    endpoint: endpoint,
+  };
+  try {
+    logger.info({ endpoint }, 'Deregistering endpoint');
+    const response = await fetchRegistration("DELETE", deregData);
+    if (!response) {
+      logger.error({ endpoint }, 'Failed deregistering endpoint: no aggregator reachable');
+      return;
+    }
+    if (response.ok) {
+      logger.info({ endpoint }, 'Endpoint deregistered');
+    } else {
+      const errorText = await response.text();
+      logger.error({ endpoint, status: response.status, errorText }, 'Failed deregistering endpoint');
+    }
+  } catch (error) {
+    logger.error({ endpoint, error: (error as any)?.toString?.() ?? String(error) }, 'Error deregistering endpoint');
+  }
+}
+
+// Function to deregister all endpoints
+async function deregisterWithAggregator(): Promise<void> {
+  logger.info('Deregistering all endpoints with aggregator');
+  await Promise.all(registeredEndpoints.map(e => deregisterEndpointWithAggregator(e.endpoint)));
+  logger.info('All endpoints deregistered with aggregator');
+}
+
 class UpToDateTimeout {
   private readonly interval: number;
   private readonly upToDateCallback: () => void = () => {};
@@ -321,6 +360,10 @@ async function main() {
   const materializedView: Map<string,{bindings: any, count: number}> = new Map();
   let server: http.Server;
   const deferredEvaluationTrigger = new EventEmitter();
+  const sseManager = new SSEConnectionManager();
+  const upToDateTimeout = new UpToDateTimeout(1000, () => {
+    sseManager.broadcast("up-to-date", { timestamp: Date.now() });
+  });
   await new Promise((resolve) => {
     server = http.createServer((req, res) => {
       logger.info({ method: req.method, url: req.url }, 'Incoming request');
@@ -486,13 +529,7 @@ SELECT ?queryString ?source ?endpoint ?variable WHERE {
     // @ts-ignore
     sources: [sourceIterator],
     fetch: customFetch,
-    deferredEvaluationTrigger: deferredEvaluationTrigger,
-  });
-
-  // Create SSE manager for broadcasting updates
-  const sseManager = new SSEConnectionManager();
-  const upToDateTimeout = new UpToDateTimeout(1000, () => {
-    sseManager.broadcast("up-to-date", { timestamp: Date.now() });
+    deferredEvaluationTrigger: new EventEmitter(),
   });
 
   bindingsStream.on('data', (bindings: any) => {
@@ -783,13 +820,47 @@ function bindingToSparqlJson(bindings: any) {
 export { getSources, getSourceValue, collectSourcesFromBindingObject, SSEConnectionManager, UpToDateTimeout, materializedViewToSparqlJson, bindingToSparqlJson, logger, customFetch };
 
 if (require.main === module) {
+  let isShuttingDown = false;
+
+  // Graceful shutdown handler
+  async function gracefulShutdown(signal?: string) {
+    if (isShuttingDown) {
+      return;
+    }
+    isShuttingDown = true;
+
+    if (signal) {
+      logger.info({ signal }, 'Received shutdown signal');
+    }
+
+    try {
+      await deregisterWithAggregator();
+    } catch (error) {
+      logger.error({ error }, 'Error during deregistration');
+    }
+
+    process.exit(signal === 'SIGTERM' || signal === 'SIGINT' ? 0 : 1);
+  }
+
+  // Handle various exit scenarios
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('uncaughtException', async (error) => {
+    logger.error({ error }, 'Uncaught exception');
+    await gracefulShutdown();
+  });
+  process.on('unhandledRejection', async (reason) => {
+    logger.error({ reason }, 'Unhandled rejection');
+    await gracefulShutdown();
+  });
+
   main()
-    .then(() => {
+    .then(async () => {
       logger.error('Error: Incremunica client closed.');
-      process.exit(1);
+      await gracefulShutdown();
     })
-    .catch((error) => {
-      logger.error({ error }, 'Error starting Incremunica client');
-      process.exit(1);
+    .catch(async (error) => {
+      logger.error({error}, 'Error starting Incremunica client');
+      await gracefulShutdown();
     });
 }
