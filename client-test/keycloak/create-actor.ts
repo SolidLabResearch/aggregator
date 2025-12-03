@@ -1,14 +1,13 @@
-import { createParser } from "eventsource-parser";
 import { KeycloakOIDCAuth } from "../util.js";
 
-const ACTORS_ENDPOINT = "http://aggregator.local/config/c1310168-b7e7-4bdc-86b1-badc8568fa5b/actors";
+const ACTORS_ENDPOINT = "http://aggregator.local/config/7275e5fb-ffd5-4478-8e72-7770b411386c/actors";
 
 const USERNAME = "doctor@example.com";
 const PASSWORD = "doctor";
 const CLIENT_ID = "moveup-app";
 const CLIENT_SECRET = "Yg8rGkQNQ4OqDh3AUR81EoSJtjPDXH4n";
 
-const ACTOR_ID = "echo";
+const ACTOR_ID = "fetch";
 const DESCRIPTION = `
 @prefix config: <http://localhost:5000/config#> .
 @prefix fno: <https://w3id.org/function/ontology#> .
@@ -92,7 +91,6 @@ async function waitForActorReady(statusUrl: string, intervalMs = 3000, timeoutMs
 
 async function main() {
     await createActor(ACTOR_ID, DESCRIPTION);
-    //await waitForActorReady("http://aggregator.local/config/doctor/actors/echo/status")
 }
 
 main().catch(console.error);

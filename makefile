@@ -169,12 +169,6 @@ kind-deploy:
 # Cleanup kind deployment
 # ------------------------
 
-kind-stop-nginx:
-	@echo "🧹 Deleting NGINX Ingress Controller..."
-	@kubectl delete ns ingress-nginx --ignore-not-found
-	@kubectl delete clusterrole ingress-nginx --ignore-not-found
-	@kubectl delete clusterrolebinding ingress-nginx --ignore-not-found
-
 kind-stop-cleaner:
 	@echo "🧹 Removing aggregator-cleaner controller..."
 	@kubectl delete -f k8s/ops/cleaner.yaml --ignore-not-found
@@ -184,7 +178,7 @@ kind-stop-traefik:
 	@echo "🧹 Deleting Traefik Ingress Controller..."
 	# Delete the namespace (optional, removes all resources inside)
 	@kubectl delete namespace aggregator-traefik --ignore-not-found
-	@echo "✅ Traefik Ingress Controller removed successfully."
+	@echo "✅ Traefik Ingress Controller removed successfully.
 
 kind-clean:
 	@echo "🧹 Deleting aggregator cluster-wide roles..."

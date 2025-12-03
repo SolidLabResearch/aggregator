@@ -7,7 +7,7 @@ toolchain go1.23.8
 require (
 	github.com/google/uuid v1.6.0
 	github.com/sirupsen/logrus v1.9.3
-	golang.org/x/net v0.38.0
+	golang.org/x/net v0.38.0 // indirect
 	k8s.io/api v0.32.3
 	k8s.io/apimachinery v0.32.3
 	k8s.io/client-go v0.32.3

@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"github.com/sirupsen/logrus"
 	"io"
 	"math/big"
 	"net"
@@ -19,84 +18,12 @@ import (
 	"os"
 	"strings"
 	"time"
-)
 
-// FetchRequest represents the JSON payload for the /fetch endpoint
-type FetchRequest struct {
-	URL     string            `json:"url"`
-	Method  string            `json:"method"`
-	Headers map[string]string `json:"headers"`
-	Body    string            `json:"body"`
-}
+	"github.com/sirupsen/logrus"
+)
 
 var caCert *x509.Certificate
 var caKey *rsa.PrivateKey
-
-func main() {
-	// Initialize Solid OIDC authentication if configured
-	webId := os.Getenv("WEBID")
-	email := os.Getenv("EMAIL")
-	password := os.Getenv("PASSWORD")
-	var err error
-	logLevel, err := logrus.ParseLevel(os.Getenv("LOG_LEVEL"))
-	if err != nil {
-		logLevel = logrus.InfoLevel
-		err = nil
-	}
-	logrus.SetLevel(logLevel)
-	logrus.SetOutput(os.Stdout)
-
-	if webId != "" && email != "" && password != "" {
-		logrus.WithFields(logrus.Fields{"webid": webId}).Info("🔐 Initializing Solid OIDC authentication")
-		solidAuth = NewSolidAuth(webId)
-		if err := solidAuth.Init(email, password); err != nil {
-			logrus.WithFields(logrus.Fields{"err": err}).Error("⚠️ Failed to initialize Solid OIDC auth")
-			logrus.Warn("⚠️ Continuing without Solid OIDC authentication")
-			solidAuth = nil
-		} else {
-			logrus.Info("✅ Solid OIDC authentication initialized successfully")
-		}
-	} else {
-		logrus.Warn("⚠️ WEBID, EMAIL, and/or PASSWORD not set")
-		logrus.Warn("⚠️ Solid OIDC disabled - proxy will not perform authentication")
-	}
-
-	http.HandleFunc("/", Handler)
-	http.HandleFunc("/fetch", FetchHandler)
-	go func() {
-		logrus.WithFields(logrus.Fields{"port": 8080}).Info("HTTP proxy listening")
-		if err := http.ListenAndServe(":8080", nil); err != nil {
-			logrus.WithFields(logrus.Fields{"err": err}).Error("HTTP proxy failed")
-			os.Exit(1)
-		}
-	}()
-	caCertPath := os.Getenv("CERT_PATH")
-	caKeyPath := os.Getenv("KEY_PATH")
-
-	caCert, caKey, err = loadCA(caCertPath, caKeyPath)
-	if err != nil {
-		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to load CA cert and key")
-		os.Exit(1)
-	}
-
-	// HTTPS MITM proxy on 8443
-	ln, err := net.Listen("tcp", ":8443")
-	if err != nil {
-		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to start MITM listener")
-		os.Exit(1)
-	}
-	defer ln.Close()
-	logrus.WithFields(logrus.Fields{"port": 8443}).Info("🚀 HTTPS MITM proxy listening")
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			logrus.WithFields(logrus.Fields{"err": err}).Warn("Accept error")
-			continue
-		}
-		go handleMITM(conn)
-	}
-}
 
 // Handler for HTTP UMA flow
 func Handler(w http.ResponseWriter, req *http.Request) {

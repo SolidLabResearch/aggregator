@@ -11,9 +11,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the app code
 COPY app.py .
 
-# Allow setting message via environment variable
-ENV APP_MESSAGE="Hello from Docker!"
-
 # Expose port 8080
 EXPOSE 8080
 

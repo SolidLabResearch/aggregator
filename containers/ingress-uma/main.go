@@ -29,6 +29,7 @@ func main() {
 	signing.InitSigning(mux, "/keys/private_key.pem", ExternalHost)
 	auth.InitAuth(ExternalHost, DisableAuth)
 
+	// UMA endpoints
 	mux.HandleFunc("/authorize", auth.HandleAuthorizationRequest)
 	mux.HandleFunc("/resources", auth.HandleResourceRequest)
 	mux.HandleFunc("/policies", auth.HandlePolicyRequest)

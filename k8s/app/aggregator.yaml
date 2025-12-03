@@ -29,6 +29,10 @@ rules:
   - apiGroups: ["traefik.io"]
     resources: ["middlewares", "ingressroutes"]
     verbs: ["get", "list", "create", "update", "delete"]
+  # Istio CRDs
+  - apiGroups: ["networking.istio.io"]
+    resources: ["serviceentries", "virtualservices", "destinationrules", "gateways", "envoyfilters"]
+    verbs: ["get", "list", "create", "update", "delete", "watch"]
 ---
 # ========================
 # 3 ClusterRoleBinding: bind SA to role

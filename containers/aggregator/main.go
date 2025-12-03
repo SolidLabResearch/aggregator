@@ -1,6 +1,9 @@
 package main
 
 import (
+	"aggregator/config"
+	reg "aggregator/registration"
+	"aggregator/vars"
 	"context"
 	"net/http"
 	"os"
@@ -15,58 +18,43 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-// Network configuration
-var Protocol = "http"
-var ExternalHost string
-
-// Authorization configuration
-var AggregatorASURL string
-var AdminId string
-var ClientId string
-var ClientSecret string
-var Idp string
-
-// Logging configuration
-var LogLevel logrus.Level
-
-// Kubernetes client
-var Clientset *kubernetes.Clientset
-var DynamicClient *dynamic.DynamicClient
-
 func main() {
 	// Set up logging
-	LogLevel, err := logrus.ParseLevel(strings.ToLower(os.Getenv("LOG_LEVEL")))
+	logLevel, err := logrus.ParseLevel(strings.ToLower(os.Getenv("LOG_LEVEL")))
 	if err != nil {
-		LogLevel = logrus.InfoLevel
+		vars.LogLevel = logrus.InfoLevel
+	} else {
+		vars.LogLevel = logLevel
 	}
-	logrus.SetLevel(LogLevel)
+	logrus.SetLevel(vars.LogLevel)
 	logrus.SetOutput(os.Stdout)
 
 	// Read Network configuration from environment variables
-	ExternalHost = os.Getenv("AGGREGATOR_EXTERNAL_HOST")
-	if ExternalHost == "" {
+	vars.ExternalHost = os.Getenv("AGGREGATOR_EXTERNAL_HOST")
+	if vars.ExternalHost == "" {
 		logrus.Fatal("Environment variables AGGREGATOR_EXTERNAL_HOST must be set")
 	}
+	vars.Protocol = "http"
 
 	// Read Authorization configuration from environment variables
-	AggregatorASURL = os.Getenv("AS_URL")
-	if AggregatorASURL == "" {
+	vars.AggregatorASURL = os.Getenv("AS_URL")
+	if vars.AggregatorASURL == "" {
 		logrus.Fatal("Environment variable AS_URL must be set")
 	}
-	AdminId = os.Getenv("ADMIN_ID")
-	if AdminId == "" {
+	vars.AdminId = os.Getenv("ADMIN_ID")
+	if vars.AdminId == "" {
 		logrus.Fatal("Environment variable ADMIN_ID must be set")
 	}
-	ClientId = os.Getenv("CLIENT_ID")
-	if ClientId == "" {
+	vars.ClientId = os.Getenv("CLIENT_ID")
+	if vars.ClientId == "" {
 		logrus.Fatal("Environment variable CLIENT_ID must be set")
 	}
-	ClientSecret = os.Getenv("CLIENT_SECRET")
-	if ClientSecret == "" {
+	vars.ClientSecret = os.Getenv("CLIENT_SECRET")
+	if vars.ClientSecret == "" {
 		logrus.Fatal("Environment variable CLIENT_SECRET must be set")
 	}
-	Idp = os.Getenv("IDP")
-	if Idp == "" {
+	vars.Idp = os.Getenv("IDP")
+	if vars.Idp == "" {
 		logrus.Fatal("Environment variable IDP must be set")
 	}
 
@@ -76,26 +64,26 @@ func main() {
 		logrus.Fatalf("Failed to load in-cluster config: %v", err)
 	}
 
-	Clientset, err = kubernetes.NewForConfig(kubeConfig)
+	vars.Clientset, err = kubernetes.NewForConfig(kubeConfig)
 	if err != nil {
 		logrus.Fatalf("Failed to create Kubernetes client: %v", err)
 	}
-	DynamicClient, err = dynamic.NewForConfig(kubeConfig)
+	vars.DynamicClient, err = dynamic.NewForConfig(kubeConfig)
 	if err != nil {
 		logrus.Fatalf("Failed to create dynamic Kubernetes client: %v", err)
 	}
 
 	// Configure HTTP server
 	serverMux := http.NewServeMux()
-	initUserRegistration(serverMux)
-	initAdminConfiguration(serverMux)
 
-	serverMux.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		w.Header().Set("X-Custom-Header", "CustomValue")
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte("Error not intercepted"))
-	})
+	// Configuration endpoint
+	err = config.InitAdminConfiguration(serverMux)
+	if err != nil {
+		logrus.WithError(err).Fatalf("Failed to set up configuration endpoint")
+	}
+
+	// Registration endpoint
+	initRegistration(serverMux)
 
 	// Start HTTP server
 	srv := &http.Server{
@@ -125,4 +113,11 @@ func main() {
 	}
 
 	logrus.Info("Server stopped gracefully")
+}
+
+func initRegistration(mux *http.ServeMux) {
+	mux.HandleFunc("/registration", reg.RegistrationHandler)
+	mux.HandleFunc("/registration/callback", func(w http.ResponseWriter, r *http.Request) {
+		reg.RegistrationCallback(w, r, mux)
+	})
 }

@@ -1,4 +1,4 @@
-module uma-proxy
+module egress-uma
 
 go 1.23
 

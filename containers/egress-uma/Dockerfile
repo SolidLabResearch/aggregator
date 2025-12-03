@@ -12,7 +12,7 @@ RUN go mod download
 COPY . .
 
 # Build the Go application
-RUN CGO_ENABLED=0 go build -ldflags="-extldflags=-static" -o uma-proxy .
+RUN CGO_ENABLED=0 go build -ldflags="-extldflags=-static" -o egress-uma .
 
 # Use a minimal base image for the final container
 FROM alpine
@@ -21,11 +21,10 @@ FROM alpine
 WORKDIR /app
 
 # Copy the built binary from the builder stage
-COPY --from=builder /app/uma-proxy .
+COPY --from=builder /app/egress-uma .
 
 # Expose the port the proxy listens on
 EXPOSE 8080
-EXPOSE 8443
 
 # Command to run the proxy
-CMD ["./uma-proxy"]
+CMD ["./egress-uma"]
