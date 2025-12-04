@@ -1,7 +1,7 @@
 package auth
 
 import (
-	"aggregator/types"
+	"aggregator/model"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -11,12 +11,12 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func DefinePublicPolicy(resourceId string, issuer string, scopes []types.Scope) error {
+func DefinePublicPolicy(resourceId string, issuer string, scopes []model.Scope) error {
 	logrus.Infof("Defining public policy for resource %s with scopes %v", resourceId, scopes)
 	return DefinePolicy(resourceId, "", issuer, scopes)
 }
 
-func DefinePolicy(resourceId string, userId string, issuer string, scopes []types.Scope) error {
+func DefinePolicy(resourceId string, userId string, issuer string, scopes []model.Scope) error {
 	body := map[string]interface{}{
 		"issuer":      issuer,
 		"resource_id": resourceId,

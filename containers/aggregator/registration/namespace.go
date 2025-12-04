@@ -1,8 +1,7 @@
 package registration
 
 import (
-	"aggregator/types"
-	"aggregator/vars"
+	"aggregator/model"
 	"context"
 	"fmt"
 
@@ -14,7 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-func createNamespace(user types.User, ctx context.Context) (string, error) {
+func createNamespace(user model.User, ctx context.Context) (string, error) {
 	nsName := uuid.NewString()
 	// Create namespace with labels/annotations
 	ns := &corev1.Namespace{
@@ -31,7 +30,7 @@ func createNamespace(user types.User, ctx context.Context) (string, error) {
 		},
 	}
 
-	_, err := vars.Clientset.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	_, err := model.Clientset.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to create namespace %s: %w", nsName, err)
 	}
@@ -75,11 +74,11 @@ func createUMAProxy(replicas int32, namespace string, tokenEndpoint string, refr
 								{ContainerPort: 8080},
 							},
 							Env: []corev1.EnvVar{
-								{Name: "CLIENT_ID", Value: vars.ClientId},
-								{Name: "CLIENT_SECRET", Value: vars.ClientSecret},
+								{Name: "CLIENT_ID", Value: model.ClientId},
+								{Name: "CLIENT_SECRET", Value: model.ClientSecret},
 								{Name: "REFRESH_TOKEN", Value: refreshToken},
 								{Name: "TOKEN_ENDPOINT", Value: tokenEndpoint},
-								{Name: "LOG_LEVEL", Value: vars.LogLevel.String()},
+								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 							},
 						},
 					},
@@ -88,7 +87,7 @@ func createUMAProxy(replicas int32, namespace string, tokenEndpoint string, refr
 		},
 	}
 
-	_, err := vars.Clientset.AppsV1().Deployments(namespace).Create(ctx, deploy, metav1.CreateOptions{})
+	_, err := model.Clientset.AppsV1().Deployments(namespace).Create(ctx, deploy, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create Egress UMA deployment: %w", err)
 	}
@@ -117,7 +116,7 @@ func createUMAProxy(replicas int32, namespace string, tokenEndpoint string, refr
 		},
 	}
 
-	_, err = vars.Clientset.CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
+	_, err = model.Clientset.CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create Egress UMA service: %w", err)
 	}

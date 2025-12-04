@@ -1,7 +1,6 @@
-package types
+package model
 
 import (
-	"aggregator/vars"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -37,7 +36,7 @@ func (actor *Actor) Stop() error {
 
 	// Delete Deployments
 	for _, dep := range actor.Deployments {
-		err := vars.Clientset.AppsV1().Deployments(actor.Namespace).Delete(ctx, dep.Name, metav1.DeleteOptions{})
+		err := Clientset.AppsV1().Deployments(actor.Namespace).Delete(ctx, dep.Name, metav1.DeleteOptions{})
 		if err != nil && !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete deployment %s: %w", dep.Name, err)
 		}
@@ -45,7 +44,7 @@ func (actor *Actor) Stop() error {
 
 	// Delete Services
 	for _, svc := range actor.Services {
-		err := vars.Clientset.CoreV1().Services(actor.Namespace).Delete(ctx, svc.Name, metav1.DeleteOptions{})
+		err := Clientset.CoreV1().Services(actor.Namespace).Delete(ctx, svc.Name, metav1.DeleteOptions{})
 		if err != nil && !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete service %s: %w", svc.Name, err)
 		}
@@ -53,7 +52,7 @@ func (actor *Actor) Stop() error {
 
 	// Delete Ingresses
 	for _, ing := range actor.Ingresses {
-		err := vars.Clientset.NetworkingV1().Ingresses(actor.Namespace).Delete(ctx, ing.Name, metav1.DeleteOptions{})
+		err := Clientset.NetworkingV1().Ingresses(actor.Namespace).Delete(ctx, ing.Name, metav1.DeleteOptions{})
 		if err != nil && !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete ingress %s: %w", ing.Name, err)
 		}
@@ -85,8 +84,8 @@ func (actor *Actor) MarshalJSON() ([]byte, error) {
 		ID:          actor.Id,
 		Description: actor.Description,
 		Namespace:   actor.Namespace,
-		Config:      fmt.Sprintf("http://%s/config/%s/actors/%s", vars.ExternalHost, actor.Namespace, actor.Id),
-		Status:      fmt.Sprintf("http://%s/config/%s/actors/%s/status", vars.ExternalHost, actor.Namespace, actor.Id),
+		Config:      fmt.Sprintf("http://%s/config/%s/actors/%s", ExternalHost, actor.Namespace, actor.Id),
+		Status:      fmt.Sprintf("http://%s/config/%s/actors/%s/status", ExternalHost, actor.Namespace, actor.Id),
 		Endpoints:   actor.PubEndpoints,
 	}
 

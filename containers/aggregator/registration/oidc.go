@@ -1,21 +1,29 @@
 package registration
 
 import (
-	"aggregator/types"
+	"aggregator/model"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/lestrrat-go/jwx/jwk"
 	"github.com/lestrrat-go/jwx/jwt"
 )
 
-var stateStore = make(map[string]types.RegistrationRequest) // state to as_url mapping
+type storedState struct {
+	Req       model.RegistrationRequest
+	ExpiresAt time.Time
+}
+
+var (
+	stateStore   = make(map[string]storedState)
+	stateStoreMu sync.Mutex
+)
 
 func generateRandomState() (string, error) {
 	b := make([]byte, 32)
@@ -24,6 +32,33 @@ func generateRandomState() (string, error) {
 		return "", err
 	}
 	return base64.URLEncoding.EncodeToString(b), nil
+}
+
+// fetchOIDCConfig fetches and parses the OIDC discovery document for the given IdP
+func fetchOIDCConfig(idpURL string) (*model.OIDCConfig, error) {
+	discoveryURL := fmt.Sprintf("%s/.well-known/openid-configuration", idpURL)
+
+	res, err := http.Get(discoveryURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch OIDC discovery document: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("OIDC discovery returned non-OK status: %s", res.Status)
+	}
+
+	var cfg model.OIDCConfig
+	if err := json.NewDecoder(res.Body).Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to decode OIDC discovery JSON: %w", err)
+	}
+
+	if cfg.
+		AuthorizationEndpoint == "" || cfg.TokenEndpoint == "" {
+		return nil, fmt.Errorf("OIDC config missing required endpoints")
+	}
+
+	return &cfg, nil
 }
 
 // verifyToken verifies the JWT using the issuer's JWKS endpoint.
@@ -72,60 +107,4 @@ func validateToken(token jwt.Token, idp string) (string, error) {
 	}
 
 	return userID, nil
-}
-
-func getTokenEndpoint(issuer string) (string, error) {
-	url := fmt.Sprintf("%s/.well-known/openid-configuration", issuer)
-
-	resp, err := http.Get(url)
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch OIDC config: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("OIDC config error: %s", string(body))
-	}
-
-	var config struct {
-		TokenEndpoint string `json:"token_endpoint"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
-		return "", fmt.Errorf("failed to parse OIDC config: %w", err)
-	}
-
-	if config.TokenEndpoint == "" {
-		return "", fmt.Errorf("token_endpoint not found in OIDC config")
-	}
-
-	return config.TokenEndpoint, nil
-}
-
-func getAuthEndpoint(issuer string) (string, error) {
-	url := fmt.Sprintf("%s/.well-known/openid-configuration", issuer)
-
-	resp, err := http.Get(url)
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch OIDC config: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("OIDC config error: %s", string(body))
-	}
-
-	var config struct {
-		AuthnEndpoint string `json:"authorization_endpoint"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
-		return "", fmt.Errorf("failed to parse OIDC config: %w", err)
-	}
-
-	if config.AuthnEndpoint == "" {
-		return "", fmt.Errorf("authorization_endpoint not found in OIDC config")
-	}
-
-	return config.AuthnEndpoint, nil
 }

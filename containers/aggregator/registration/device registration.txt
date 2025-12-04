@@ -1,0 +1,256 @@
+package registration
+
+import (
+	"aggregator/config"
+	"aggregator/model"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/sirupsen/logrus"
+)
+
+var (
+	users         = make(map[string]*model.User)
+	userMux       sync.Mutex
+	deviceStore   = make(map[string]*deviceSession)
+	deviceStoreMu sync.Mutex
+)
+
+// --- Registration Handler ---
+func RegistrationHandler(w http.ResponseWriter, r *http.Request) {
+	logrus.WithFields(logrus.Fields{
+		"method": r.Method,
+		"path":   r.URL.Path,
+		"remote": r.RemoteAddr,
+	}).Info("Received registration request")
+
+	if r.Method != http.MethodPost {
+		logrus.WithField("method", r.Method).Warn("Method not allowed for registration")
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req model.RegistrationRequest
+	contentType := r.Header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "application/json") {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			logrus.WithError(err).Warn("Failed to decode JSON registration request")
+			http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+			return
+		}
+	} else {
+		if err := r.ParseForm(); err != nil {
+			logrus.WithError(err).Warn("Failed to parse form registration request")
+			http.Error(w, "Invalid form body", http.StatusBadRequest)
+			return
+		}
+		req.UserIdp = r.FormValue("openid_provider")
+		req.AuthzServerURL = r.FormValue("as_url")
+	}
+
+	if req.UserIdp == "" || req.AuthzServerURL == "" {
+		logrus.WithFields(logrus.Fields{
+			"user_idp":     req.UserIdp,
+			"authz_server": req.AuthzServerURL,
+		}).Warn("Missing required fields in registration request")
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch OIDC configuration for IdP
+	oidcConfig, err := fetchOIDCConfig(req.UserIdp)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to fetch OIDC configuration")
+		http.Error(w, "Failed to fetch OIDC config", http.StatusInternalServerError)
+		return
+	}
+
+	// Request device code
+	deviceResp, err := requestDeviceCode(oidcConfig.DeviceAuthorizationEndpoint)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to request device code")
+		http.Error(w, "Failed to initiate device flow", http.StatusInternalServerError)
+		return
+	}
+
+	// Store device session
+	sess := &deviceSession{
+		OIDCConfig:  *oidcConfig,
+		AuthzServer: req.AuthzServerURL,
+		DeviceCode:  deviceResp.DeviceCode,
+		Interval:    deviceResp.Interval,
+		ExpiresAt:   time.Now().Add(time.Duration(deviceResp.ExpiresIn) * time.Second),
+		CallbackURI: fmt.Sprintf("%s://%s/registration/callback", model.Protocol, model.ExternalHost),
+	}
+
+	deviceStoreMu.Lock()
+	deviceStore[deviceResp.DeviceCode] = sess
+	deviceStoreMu.Unlock()
+
+	logrus.WithFields(logrus.Fields{
+		"user_idp":         req.UserIdp,
+		"device_code":      deviceResp.DeviceCode,
+		"user_code":        deviceResp.UserCode,
+		"verification_uri": deviceResp.VerificationURI,
+	}).Info("Device flow initiated")
+
+	// Start polling in background
+	StartDeviceRegistration(sess)
+
+	// Return device flow info to UI
+	resp := map[string]interface{}{
+		"user_code":        deviceResp.UserCode,
+		"verification_uri": deviceResp.VerificationURI,
+		"expires_in":       deviceResp.ExpiresIn,
+		"interval":         deviceResp.Interval,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		logrus.WithError(err).Error("Failed to encode device flow response")
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+}
+
+// requestDeviceCode calls the IdP device authorization endpoint
+func requestDeviceCode(endpoint string) (*DeviceCodeResponse, error) {
+	data := url.Values{
+		"client_id": {model.ClientId},
+		"scope":     {"openid profile email offline_access"},
+	}
+	resp, err := http.PostForm(endpoint, data)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("device authorization failed: %s", string(body))
+	}
+	var deviceResp DeviceCodeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&deviceResp); err != nil {
+		return nil, err
+	}
+	return &deviceResp, nil
+}
+
+// --- Start Device Registration ---
+func StartDeviceRegistration(sess *deviceSession) {
+	go func() {
+		ticker := time.NewTicker(time.Duration(sess.Interval) * time.Second)
+		defer ticker.Stop()
+
+		for {
+			if time.Now().After(sess.ExpiresAt) {
+				logrus.WithField("device_code", sess.DeviceCode).Warn("Device code expired before registration completion")
+				return
+			}
+
+			for range ticker.C {
+				if err := pollDeviceToken(sess); err != nil {
+					if strings.Contains(err.Error(), "authorization_pending") {
+						logrus.WithField("device_code", sess.DeviceCode).Debug("User has not completed login yet")
+						continue
+					} else if strings.Contains(err.Error(), "slow_down") {
+						logrus.WithField("device_code", sess.DeviceCode).Debug("Polling slowed down due to IdP instruction")
+						ticker.Reset(time.Duration(sess.Interval+5) * time.Second)
+						continue
+					} else {
+						logrus.WithError(err).WithField("device_code", sess.DeviceCode).Error("Device token polling failed")
+						return
+					}
+				}
+				return
+			}
+		}
+	}()
+}
+
+// --- Poll Device Token ---
+func pollDeviceToken(sess *deviceSession) error {
+	tokenEndpoint := sess.OIDCConfig.TokenEndpoint
+	data := url.Values{
+		"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
+		"device_code": {sess.DeviceCode},
+		"client_id":   {model.ClientId},
+	}
+
+	resp, err := http.PostForm(tokenEndpoint, data)
+	if err != nil {
+		return fmt.Errorf("failed HTTP POST for device token: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("device token endpoint returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var tokenResp struct {
+		RefreshToken string `json:"refresh_token"`
+		IDToken      string `json:"id_token"`
+		TokenType    string `json:"token_type"`
+		ExpiresIn    int    `json:"expires_in"`
+	}
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return fmt.Errorf("failed to parse device token response: %w", err)
+	}
+
+	logrus.WithField("device_code", sess.DeviceCode).Info("Device authorized by user, completing registration")
+
+	return CompleteDeviceRegistration(sess, tokenResp.IDToken, tokenResp.RefreshToken)
+}
+
+// --- Complete Device Registration ---
+func CompleteDeviceRegistration(sess *deviceSession, idToken, refreshToken string) error {
+	userID, err := validateToken(idToken, sess.OIDCConfig.Issuer)
+	if err != nil {
+		return fmt.Errorf("failed to validate ID token: %w", err)
+	}
+
+	user := &model.User{
+		UserId:         userID,
+		RefreshToken:   refreshToken,
+		AuthzServerURL: sess.AuthzServer,
+	}
+
+	userMux.Lock()
+	defer userMux.Unlock()
+	if _, exists := users[user.UserId]; exists {
+		logrus.WithField("user_id", user.UserId).Warn("User already exists during device registration completion")
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	ns, err := createNamespace(*user, ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create namespace: %w", err)
+	}
+	user.Namespace = ns
+
+	tokenEndpoint := sess.OIDCConfig.TokenEndpoint
+	if err := createUMAProxy(1, ns, tokenEndpoint, refreshToken, ctx); err != nil {
+		return fmt.Errorf("failed to deploy UMA proxy: %w", err)
+	}
+
+	if err := config.InitUserConfiguration(nil, *user); err != nil {
+		return fmt.Errorf("failed to initialize user configuration: %w", err)
+	}
+
+	users[user.UserId] = user
+	logrus.WithFields(logrus.Fields{
+		"user_id":   user.UserId,
+		"namespace": ns,
+	}).Info("Device registration completed successfully")
+
+	return nil
+}

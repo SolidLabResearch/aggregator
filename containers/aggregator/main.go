@@ -2,8 +2,8 @@ package main
 
 import (
 	"aggregator/config"
+	"aggregator/model"
 	reg "aggregator/registration"
-	"aggregator/vars"
 	"context"
 	"net/http"
 	"os"
@@ -22,39 +22,39 @@ func main() {
 	// Set up logging
 	logLevel, err := logrus.ParseLevel(strings.ToLower(os.Getenv("LOG_LEVEL")))
 	if err != nil {
-		vars.LogLevel = logrus.InfoLevel
+		model.LogLevel = logrus.InfoLevel
 	} else {
-		vars.LogLevel = logLevel
+		model.LogLevel = logLevel
 	}
-	logrus.SetLevel(vars.LogLevel)
+	logrus.SetLevel(model.LogLevel)
 	logrus.SetOutput(os.Stdout)
 
 	// Read Network configuration from environment variables
-	vars.ExternalHost = os.Getenv("AGGREGATOR_EXTERNAL_HOST")
-	if vars.ExternalHost == "" {
+	model.ExternalHost = os.Getenv("AGGREGATOR_EXTERNAL_HOST")
+	if model.ExternalHost == "" {
 		logrus.Fatal("Environment variables AGGREGATOR_EXTERNAL_HOST must be set")
 	}
-	vars.Protocol = "http"
+	model.Protocol = "http"
 
 	// Read Authorization configuration from environment variables
-	vars.AggregatorASURL = os.Getenv("AS_URL")
-	if vars.AggregatorASURL == "" {
+	model.AggregatorASURL = os.Getenv("AS_URL")
+	if model.AggregatorASURL == "" {
 		logrus.Fatal("Environment variable AS_URL must be set")
 	}
-	vars.AdminId = os.Getenv("ADMIN_ID")
-	if vars.AdminId == "" {
+	model.AdminId = os.Getenv("ADMIN_ID")
+	if model.AdminId == "" {
 		logrus.Fatal("Environment variable ADMIN_ID must be set")
 	}
-	vars.ClientId = os.Getenv("CLIENT_ID")
-	if vars.ClientId == "" {
+	model.ClientId = os.Getenv("CLIENT_ID")
+	if model.ClientId == "" {
 		logrus.Fatal("Environment variable CLIENT_ID must be set")
 	}
-	vars.ClientSecret = os.Getenv("CLIENT_SECRET")
-	if vars.ClientSecret == "" {
+	model.ClientSecret = os.Getenv("CLIENT_SECRET")
+	if model.ClientSecret == "" {
 		logrus.Fatal("Environment variable CLIENT_SECRET must be set")
 	}
-	vars.Idp = os.Getenv("IDP")
-	if vars.Idp == "" {
+	model.Idp = os.Getenv("IDP")
+	if model.Idp == "" {
 		logrus.Fatal("Environment variable IDP must be set")
 	}
 
@@ -64,11 +64,11 @@ func main() {
 		logrus.Fatalf("Failed to load in-cluster config: %v", err)
 	}
 
-	vars.Clientset, err = kubernetes.NewForConfig(kubeConfig)
+	model.Clientset, err = kubernetes.NewForConfig(kubeConfig)
 	if err != nil {
 		logrus.Fatalf("Failed to create Kubernetes client: %v", err)
 	}
-	vars.DynamicClient, err = dynamic.NewForConfig(kubeConfig)
+	model.DynamicClient, err = dynamic.NewForConfig(kubeConfig)
 	if err != nil {
 		logrus.Fatalf("Failed to create dynamic Kubernetes client: %v", err)
 	}

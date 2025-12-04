@@ -1,7 +1,6 @@
-package types
+package model
 
 import (
-	"aggregator/vars"
 	"fmt"
 )
 
@@ -15,6 +14,6 @@ type User struct {
 
 func (u *User) ConfigEndpoints() map[string]string {
 	return map[string]string{
-		"actors": fmt.Sprintf("http://%s/config/%s/actors", vars.ExternalHost, u.Namespace),
+		"actors": fmt.Sprintf("http://%s/config/%s/actors", ExternalHost, u.Namespace),
 	}
 }

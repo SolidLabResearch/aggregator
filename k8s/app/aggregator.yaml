@@ -160,4 +160,7 @@ spec:
       services:
         - name: aggregator-svc
           port: 5000
+      middlewares:
+        - name: cors
+          namespace: aggregator-app
 ---

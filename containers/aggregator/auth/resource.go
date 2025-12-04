@@ -1,7 +1,7 @@
 package auth
 
 import (
-	"aggregator/types"
+	"aggregator/model"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -11,7 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func RegisterResource(resourceId string, issuer string, scopes []types.Scope) error {
+func RegisterResource(resourceId string, issuer string, scopes []model.Scope) error {
 	logrus.Infof("Registering resource %s with scopes %v", resourceId, scopes)
 	body := map[string]interface{}{
 		"issuer":      issuer,

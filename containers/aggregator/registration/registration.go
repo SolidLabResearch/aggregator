@@ -2,10 +2,8 @@ package registration
 
 import (
 	"aggregator/config"
-	"aggregator/types"
-	"aggregator/vars"
+	"aggregator/model"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,51 +17,57 @@ import (
 )
 
 var (
-	users   = make(map[string]*types.User)
+	users   = make(map[string]*model.User)
 	userMux sync.Mutex
 )
 
-// registrationHandler now accepts POST (form or JSON) and returns a redirect to the IdP auth endpoint
 func RegistrationHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		logrus.Warnf("Registration attempt with wrong method: %s", r.Method)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var req types.RegistrationRequest
-
-	// Accept either form values or JSON body for convenience
+	var req model.RegistrationRequest
 	contentType := r.Header.Get("Content-Type")
+	logrus.Debugf("Registration request content-type: %s", contentType)
+
+	// Parse JSON
 	if contentType == "application/json" || strings.HasPrefix(contentType, "application/json;") {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			logrus.WithError(err).Warn("Invalid JSON body")
 			http.Error(w, "Invalid JSON body", http.StatusBadRequest)
 			return
 		}
 	} else {
 		// Parse form
 		if err := r.ParseForm(); err != nil {
+			logrus.WithError(err).Warn("Invalid form body")
 			http.Error(w, "Invalid form body", http.StatusBadRequest)
 			return
 		}
 		req.UserIdp = r.FormValue("openid_provider")
 		req.AuthzServerURL = r.FormValue("as_url")
-		req.SuccessRedirect = r.FormValue("success_redirect")
-		req.FailRedirect = r.FormValue("fail_redirect")
 	}
 
-	if req.UserIdp == "" || req.AuthzServerURL == "" || req.SuccessRedirect == "" || req.FailRedirect == "" {
+	// Required fields
+	if req.UserIdp == "" || req.AuthzServerURL == "" {
+		logrus.Warn("Missing required fields (openid_provider or as_url)")
 		http.Error(w, "missing required fields", http.StatusBadRequest)
 		return
 	}
 
-	// Discover auth endpoint
-	authURL, err := getAuthEndpoint(req.UserIdp)
+	// Fetch OIDC Config
+	oidcConfig, err := fetchOIDCConfig(req.UserIdp)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to get authn endpoint")
-		http.Error(w, "Failed to get authn endpoint", http.StatusInternalServerError)
+		logrus.WithError(err).Error("Unable to fetch OIDC configuration")
+		// Note: not throwing error upward — handler ends here → log it
+		http.Error(w, "unable to fetch oidc configuration", http.StatusInternalServerError)
 		return
 	}
+	req.OIDCConfig = *oidcConfig
 
+	// Generate random state
 	state, err := generateRandomState()
 	if err != nil {
 		logrus.WithError(err).Error("Failed to generate state")
@@ -71,74 +75,111 @@ func RegistrationHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Store the registration request for callback (state -> req mapping)
-	stateStore[state] = req
-
-	// Build auth URL with parameters
-	params := url.Values{
-		"redirect_uri":  {fmt.Sprintf("%s://%s/registration/callback", vars.Protocol, vars.ExternalHost)},
-		"state":         {state},
-		"scope":         {"openid profile email offline_access"},
-		"response_type": {"code"},
-		"client_id":     {vars.ClientId},
+	// Store state
+	stateStoreMu.Lock()
+	stateStore[state] = storedState{
+		Req:       req,
+		ExpiresAt: time.Now().Add(10 * time.Minute), // recommended TTL
 	}
-	redirectTo := fmt.Sprintf("%s?%s", authURL, params.Encode())
+	stateStoreMu.Unlock()
+	logrus.Debugf("Stored registration request for state %s", state)
 
-	// Redirect browser to IdP authorization endpoint
-	http.Redirect(w, r, redirectTo, http.StatusFound)
+	// Construct response metadata
+	callbackURI := fmt.Sprintf("%s://%s/registration/callback", model.Protocol, model.ExternalHost)
+	response := map[string]string{
+		"callback_uri":  callbackURI,
+		"state":         state,
+		"scope":         "openid profile email offline_access",
+		"response_type": "code",
+		"client_id":     model.ClientId,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		logrus.WithError(err).Error("Failed to write registration response")
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	logrus.Infof("Registration initialization successful (state=%s)", state)
 }
 
 func RegistrationCallback(w http.ResponseWriter, r *http.Request, mux *http.ServeMux) {
-	logrus.Debug("Entered registrationCallback")
+	logrus.Debug("Entered RegistrationCallback")
 
-	code := r.URL.Query().Get("code")
-	state := r.URL.Query().Get("state")
-	if code == "" || state == "" {
-		logrus.Warnf("Missing code or state: code='%s', state='%s'", code, state)
+	// Method check
+	if r.Method != http.MethodPost {
+		logrus.Warnf("RegistrationCallback: wrong method %s", r.Method)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse request body
+	var reqBody struct {
+		Code        string `json:"code"`
+		State       string `json:"state"`
+		RedirectUri string `json:"redirect_uri"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		logrus.WithError(err).Warn("Invalid JSON body in registration callback")
+		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+		return
+	}
+
+	if reqBody.Code == "" || reqBody.State == "" {
+		logrus.Warn("Missing code or state in registration callback")
 		http.Error(w, "Missing code or state", http.StatusBadRequest)
 		return
 	}
-	logrus.Debugf("Received code and state: code='%s', state='%s'", code, state)
 
-	req, ok := stateStore[state]
+	logrus.Debugf("Received registration callback: code='%s', state='%s'", reqBody.Code, reqBody.State)
+
+	stateStoreMu.Lock()
+	entry, ok := stateStore[reqBody.State]
+	if ok {
+		delete(stateStore, reqBody.State)
+	}
+	stateStoreMu.Unlock()
+
 	if !ok {
-		logrus.Warnf("Invalid state: %s", state)
 		http.Error(w, "Invalid state", http.StatusBadRequest)
 		return
 	}
-	delete(stateStore, state)
 
-	tokenEndpoint, err := getTokenEndpoint(req.UserIdp)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to get token endpoint")
-		http.Redirect(w, r, req.FailRedirect, http.StatusFound)
+	if time.Now().After(entry.ExpiresAt) {
+		http.Error(w, "State expired", http.StatusBadRequest)
 		return
 	}
-	logrus.Infof("Using token endpoint: %s", tokenEndpoint)
 
+	regReq := entry.Req
+
+	// Prepare token request
+	tokenEndpoint := regReq.OIDCConfig.TokenEndpoint
 	data := url.Values{
 		"grant_type":    {"authorization_code"},
-		"code":          {code},
-		"redirect_uri":  {fmt.Sprintf("%s://%s/registration/callback", vars.Protocol, vars.ExternalHost)},
-		"client_id":     {vars.ClientId},
-		"client_secret": {vars.ClientSecret},
+		"code":          {reqBody.Code},
+		"redirect_uri":  {reqBody.RedirectUri},
+		"client_id":     {model.ClientId},
+		"client_secret": {model.ClientSecret},
 	}
 
 	resp, err := http.PostForm(tokenEndpoint, data)
 	if err != nil {
-		logrus.WithError(err).Error("Token exchange failed")
-		http.Redirect(w, r, req.FailRedirect, http.StatusFound)
+		logrus.WithError(err).Error("Token exchange failed during registration callback")
+		http.Error(w, "Token exchange failed", http.StatusInternalServerError)
 		return
 	}
 	defer resp.Body.Close()
 
+	// Token endpoint returned an error response
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		logrus.Errorf("Token endpoint returned %d: %s", resp.StatusCode, string(body))
-		http.Redirect(w, r, req.FailRedirect, http.StatusFound)
+		http.Error(w, fmt.Sprintf("Token endpoint error: %s", string(body)), http.StatusBadGateway)
 		return
 	}
 
+	// Parse token response
 	var tokenResp struct {
 		RefreshToken string `json:"refresh_token"`
 		IDToken      string `json:"id_token"`
@@ -146,31 +187,32 @@ func RegistrationCallback(w http.ResponseWriter, r *http.Request, mux *http.Serv
 		ExpiresIn    int    `json:"expires_in"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		logrus.WithError(err).Error("Failed to parse token response JSON")
-		http.Redirect(w, r, req.FailRedirect, http.StatusFound)
+		logrus.WithError(err).Error("Failed to parse token response")
+		http.Error(w, "Invalid token response", http.StatusInternalServerError)
 		return
 	}
-	logrus.Info("Successfully obtained tokens")
 
-	idToken, err := verifyToken(tokenResp.IDToken, req.UserIdp)
+	// Verify ID token
+	idToken, err := verifyToken(tokenResp.IDToken, regReq.UserIdp)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to verify ID token")
-		http.Redirect(w, r, req.FailRedirect, http.StatusFound)
+		http.Error(w, "ID token verification failed", http.StatusUnauthorized)
 		return
 	}
 
-	userId, err := validateToken(idToken, req.UserIdp)
+	// Validate ID token subject
+	userId, err := validateToken(idToken, regReq.UserIdp)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to validate ID token")
-		http.Redirect(w, r, req.FailRedirect, http.StatusFound)
+		http.Error(w, "ID token validation failed", http.StatusUnauthorized)
 		return
 	}
-	logrus.Infof("ID token validated for user: %s", userId)
 
-	user := types.User{
+	// Create user model
+	user := model.User{
 		UserId:         userId,
 		RefreshToken:   tokenResp.RefreshToken,
-		AuthzServerURL: req.AuthzServerURL,
+		AuthzServerURL: regReq.AuthzServerURL,
 	}
 
 	userMux.Lock()
@@ -178,53 +220,47 @@ func RegistrationCallback(w http.ResponseWriter, r *http.Request, mux *http.Serv
 
 	if _, exists := users[user.UserId]; exists {
 		logrus.Warnf("User already exists: %s", user.UserId)
-		http.Redirect(w, r, req.FailRedirect, http.StatusFound)
+		http.Error(w, "User already exists", http.StatusConflict)
 		return
 	}
 
+	// Create namespace for user
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	ns, err := createNamespace(user, ctx)
 	if err != nil {
 		logrus.WithError(err).Errorf("Failed to create namespace for user: %s", user.UserId)
-		http.Redirect(w, r, req.FailRedirect, http.StatusFound)
+		http.Error(w, "Failed to create namespace", http.StatusInternalServerError)
 		return
 	}
 	user.Namespace = ns
-	logrus.Infof("Namespace '%s' created for user: %s", ns, user.UserId)
 
+	// Deploy UMA proxy
 	if err := createUMAProxy(1, ns, tokenEndpoint, user.RefreshToken, ctx); err != nil {
 		logrus.WithError(err).Errorf("Failed to deploy Egress UMA for user: %s", user.UserId)
-		http.Redirect(w, r, req.FailRedirect, http.StatusFound)
+		http.Error(w, "Failed to deploy UMA proxy", http.StatusInternalServerError)
 		return
 	}
-	logrus.Infof("Egress UMA deployed successfully for user: %s in namespace %s", user.UserId, ns)
 
+	// Initialize user configuration
 	if err := config.InitUserConfiguration(mux, user); err != nil {
 		logrus.WithError(err).Errorf("Failed to initialize user configuration for user: %s", user.UserId)
-		http.Redirect(w, r, req.FailRedirect, http.StatusInternalServerError)
+		http.Error(w, "Failed to initialize user configuration", http.StatusInternalServerError)
 		return
 	}
 
+	// Add user to store
 	users[user.UserId] = &user
-	logrus.Infof("User stored successfully: %s", user.UserId)
 
-	// Prepare endpoints payload
+	logrus.Infof("User registration completed successfully: %s", user.UserId)
+
+	// Return final endpoints
 	endpoints := user.ConfigEndpoints()
-	endpointsJSON, _ := json.Marshal(endpoints)
-	payload := base64.StdEncoding.EncodeToString(endpointsJSON)
-
-	successURL, err := url.Parse(req.SuccessRedirect)
-	if err != nil {
-		logrus.WithError(err).Error("Invalid success redirect URL")
-		http.Redirect(w, r, req.FailRedirect, http.StatusBadRequest)
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(endpoints); err != nil {
+		logrus.WithError(err).Error("Failed to write endpoints JSON")
+		http.Error(w, "Failed to return endpoints", http.StatusInternalServerError)
 		return
 	}
-	q := successURL.Query()
-	q.Set("payload", url.QueryEscape(payload))
-	successURL.RawQuery = q.Encode()
-
-	logrus.Infof("Redirecting user %s to success URL", user.UserId)
-	http.Redirect(w, r, successURL.String(), http.StatusFound)
 }

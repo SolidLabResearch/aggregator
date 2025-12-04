@@ -2,15 +2,13 @@ package actors
 
 import (
 	"aggregator/auth"
-	"aggregator/vars"
+	"aggregator/model"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
-
-	"aggregator/types"
 
 	"github.com/sirupsen/logrus"
 	appsv1 "k8s.io/api/apps/v1"
@@ -23,11 +21,11 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-func CreateActor(request types.ActorRequest) (*types.Actor, error) {
+func CreateActor(request model.ActorRequest) (*model.Actor, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	actor := types.Actor{
+	actor := model.Actor{
 		Id:            request.Id,
 		Description:   request.Description,
 		Namespace:     request.Owner.Namespace,
@@ -67,7 +65,7 @@ func CreateActor(request types.ActorRequest) (*types.Actor, error) {
 	return &actor, nil
 }
 
-func createDeployment(actor *types.Actor, replicas int32, ctx context.Context) error {
+func createDeployment(actor *model.Actor, replicas int32, ctx context.Context) error {
 	labels := map[string]string{
 		"app":       actor.Id,
 		"namespace": actor.Namespace,
@@ -81,7 +79,7 @@ func createDeployment(actor *types.Actor, replicas int32, ctx context.Context) e
 			{Name: "GET_URL", Value: "http://wsl.local:6000/"},
 			{Name: "HTTP_PROXY", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", actor.Namespace)},
 			{Name: "http_proxy", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", actor.Namespace)},
-			{Name: "LOG_LEVEL", Value: vars.LogLevel.String()},
+			{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 		},
 		Ports: []corev1.ContainerPort{
 			{ContainerPort: 8080},
@@ -111,7 +109,7 @@ func createDeployment(actor *types.Actor, replicas int32, ctx context.Context) e
 		},
 	}
 
-	deploy, err := vars.Clientset.AppsV1().Deployments(actor.Namespace).Create(ctx, deploySpec, metav1.CreateOptions{})
+	deploy, err := model.Clientset.AppsV1().Deployments(actor.Namespace).Create(ctx, deploySpec, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create deployment %s: %w", actor.Id, err)
 	}
@@ -121,11 +119,11 @@ func createDeployment(actor *types.Actor, replicas int32, ctx context.Context) e
 	return nil
 }
 
-func createService(actor *types.Actor, ctx context.Context) error {
+func createService(actor *model.Actor, ctx context.Context) error {
 	svcName := actor.Id + "-service"
 
 	// Check if service already exists
-	_, err := vars.Clientset.CoreV1().Services(actor.Namespace).Get(ctx, svcName, metav1.GetOptions{})
+	_, err := model.Clientset.CoreV1().Services(actor.Namespace).Get(ctx, svcName, metav1.GetOptions{})
 	if err == nil {
 		return fmt.Errorf("service %s already exists in namespace %s", svcName, actor.Namespace)
 	}
@@ -151,7 +149,7 @@ func createService(actor *types.Actor, ctx context.Context) error {
 	}
 
 	// Create Service
-	svc, err := vars.Clientset.CoreV1().Services(actor.Namespace).Create(ctx, svcSpec, metav1.CreateOptions{})
+	svc, err := model.Clientset.CoreV1().Services(actor.Namespace).Create(ctx, svcSpec, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create service in namespace %s: %w", actor.Namespace, err)
 	}
@@ -163,7 +161,7 @@ func createService(actor *types.Actor, ctx context.Context) error {
 	return nil
 }
 
-func createIngressRoute(actor *types.Actor, owner types.User, ctx context.Context) error {
+func createIngressRoute(actor *model.Actor, owner model.User, ctx context.Context) error {
 	irName := actor.Namespace + "-" + actor.Id + "-ingressroute"
 	svcName := actor.Id + "-service"
 	namespace := actor.Namespace
@@ -175,7 +173,7 @@ func createIngressRoute(actor *types.Actor, owner types.User, ctx context.Contex
 		Resource: "ingressroutes",
 	}
 
-	_, err := vars.DynamicClient.
+	_, err := model.DynamicClient.
 		Resource(ingressRouteGVR).
 		Namespace("aggregator-app").
 		Get(ctx, irName, metav1.GetOptions{})
@@ -205,7 +203,7 @@ func createIngressRoute(actor *types.Actor, owner types.User, ctx context.Contex
 				"entryPoints": []string{"web"}, // adjust to websecure if needed
 				"routes": []interface{}{
 					map[string]interface{}{
-						"match": "Host(`" + vars.ExternalHost + "`) && PathPrefix(`/actors/" + namespace + "/" + actor.Id + "`)",
+						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/actors/" + namespace + "/" + actor.Id + "`)",
 						"kind":  "Rule",
 						"services": []interface{}{
 							map[string]interface{}{
@@ -231,7 +229,7 @@ func createIngressRoute(actor *types.Actor, owner types.User, ctx context.Contex
 	}
 
 	// Create IngressRoute
-	_, err = vars.DynamicClient.
+	_, err = model.DynamicClient.
 		Resource(ingressRouteGVR).
 		Namespace("aggregator-app").
 		Create(ctx, obj, metav1.CreateOptions{})
@@ -240,11 +238,11 @@ func createIngressRoute(actor *types.Actor, owner types.User, ctx context.Contex
 	}
 
 	// Register resource & endpoint with policies
-	resourceID := fmt.Sprintf("http://%s/actors/%s/%s", vars.ExternalHost, namespace, actor.Id)
-	if err := auth.RegisterResource(resourceID, owner.AuthzServerURL, []types.Scope{types.Read}); err != nil {
+	resourceID := fmt.Sprintf("http://%s/actors/%s/%s", model.ExternalHost, namespace, actor.Id)
+	if err := auth.RegisterResource(resourceID, owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
 		return fmt.Errorf("failed to register resource for IngressRoute %q: %w", irName, err)
 	}
-	if err := auth.DefinePolicy(resourceID, owner.UserId, owner.AuthzServerURL, []types.Scope{types.Read}); err != nil {
+	if err := auth.DefinePolicy(resourceID, owner.UserId, owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
 		return fmt.Errorf("failed to create policy for IngressRoute %q: %w", irName, err)
 	}
 	actor.PubEndpoints = append(actor.PubEndpoints, resourceID)
@@ -274,7 +272,7 @@ func createRewriteMiddleware(path string, ctx context.Context) (string, error) {
 	}
 
 	// Check if middleware exists
-	_, err := vars.DynamicClient.
+	_, err := model.DynamicClient.
 		Resource(middlewareGVR).
 		Namespace(namespace).
 		Get(ctx, mwName, metav1.GetOptions{})
@@ -304,7 +302,7 @@ func createRewriteMiddleware(path string, ctx context.Context) (string, error) {
 		},
 	}
 
-	_, err = vars.DynamicClient.
+	_, err = model.DynamicClient.
 		Resource(middlewareGVR).
 		Namespace(namespace).
 		Create(ctx, obj, metav1.CreateOptions{})

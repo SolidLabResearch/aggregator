@@ -2,8 +2,7 @@ package config
 
 import (
 	"aggregator/auth"
-	"aggregator/types"
-	"aggregator/vars"
+	"aggregator/model"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -25,24 +24,23 @@ func InitAdminConfiguration(mux *http.ServeMux) error {
 	}
 
 	// Register HTTP handler
-	mux.HandleFunc("/config", config.HandleConfigurationEndpoint)
+	mux.HandleFunc("/config/transformations", config.HandleTransformationsEndpoint)
 
 	// Build full URL
-	fullURL := fmt.Sprintf("%s://%s/config", vars.Protocol, vars.ExternalHost)
-	logrus.Debugf("Full Config URL: %s", fullURL)
+	fullURL := fmt.Sprintf("%s://%s/config", model.Protocol, model.ExternalHost)
 
 	// Register resource
-	if err := auth.RegisterResource(fullURL, vars.AggregatorASURL, []types.Scope{types.Read, types.Write}); err != nil {
+	if err := auth.RegisterResource(fullURL, model.AggregatorASURL, []model.Scope{model.Read, model.Write}); err != nil {
 		return fmt.Errorf("failed to register config resource %s: %w", fullURL, err)
 	}
 
 	// Define public policy
-	if err := auth.DefinePublicPolicy(fullURL, vars.AggregatorASURL, []types.Scope{types.Read}); err != nil {
+	if err := auth.DefinePublicPolicy(fullURL, model.AggregatorASURL, []model.Scope{model.Read}); err != nil {
 		return fmt.Errorf("failed to define public read policy for resource %s: %w", fullURL, err)
 	}
 
 	// Define admin policy
-	if err := auth.DefinePolicy(fullURL, vars.AdminId, vars.AggregatorASURL, []types.Scope{types.Write}); err != nil {
+	if err := auth.DefinePolicy(fullURL, model.AdminId, model.AggregatorASURL, []model.Scope{model.Write}); err != nil {
 		return fmt.Errorf("failed to define admin write policy for resource %s", fullURL)
 	}
 
@@ -50,8 +48,8 @@ func InitAdminConfiguration(mux *http.ServeMux) error {
 	return nil
 }
 
-// HandleConfigurationEndpoint handles requests to the /config endpoint
-func (config AdminConfigData) HandleConfigurationEndpoint(w http.ResponseWriter, r *http.Request) {
+// HandleTransformationsEndpoint handles requests to the /config/transformations endpoint
+func (config AdminConfigData) HandleTransformationsEndpoint(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "HEAD":
 		config.headAvailableTransformations(w, r)
@@ -62,14 +60,14 @@ func (config AdminConfigData) HandleConfigurationEndpoint(w http.ResponseWriter,
 	}
 }
 
-// getAvailableTransformations HEAD config/ retrieves all available transformations
+// getAvailableTransformations HEAD /config/transformations retrieves all available transformations
 func (config *AdminConfigData) headAvailableTransformations(w http.ResponseWriter, _ *http.Request) {
 	header := w.Header()
 	header.Set("ETag", strconv.Itoa(config.etagTransformations))
 	header.Set("Content-Type", "text/turtle")
 }
 
-// getAvailableTransformations GET config/ retrieves all available transformations
+// getAvailableTransformations GET /config/transformations retrieves all available transformations
 func (config *AdminConfigData) getAvailableTransformations(w http.ResponseWriter, _ *http.Request) {
 	header := w.Header()
 	header.Set("ETag", strconv.Itoa(config.etagTransformations))

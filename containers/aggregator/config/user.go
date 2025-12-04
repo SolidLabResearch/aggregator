@@ -11,32 +11,31 @@ import (
 
 	"aggregator/actors"
 	"aggregator/auth"
-	"aggregator/types"
-	"aggregator/vars"
+	"aggregator/model"
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
 type UserConfigData struct {
-	owner               types.User
+	owner               model.User
 	etagActors          int
 	etagTransformations int
-	actors              map[string]types.Actor
+	actors              map[string]model.Actor
 	serveMux            *http.ServeMux
 }
 
-func InitUserConfiguration(mux *http.ServeMux, user types.User) error {
+func InitUserConfiguration(mux *http.ServeMux, user model.User) error {
 	config := UserConfigData{
 		owner:               user,
 		etagActors:          0,
 		etagTransformations: 0,
-		actors:              make(map[string]types.Actor),
+		actors:              make(map[string]model.Actor),
 		serveMux:            mux,
 	}
 
 	pattern := fmt.Sprintf("/config/%s/actors", user.Namespace)
-	if err := config.HandleFunc(pattern, config.HandleActorsEndpoint, []types.Scope{types.Read, types.Create}); err != nil {
+	if err := config.HandleFunc(pattern, config.HandleActorsEndpoint, []model.Scope{model.Read, model.Create}); err != nil {
 		logrus.WithError(err).Errorf("Failed to initialize user configuration endpoint '%s'", pattern)
 		return fmt.Errorf("initUserConfiguration: failed to register handler for %s: %w", pattern, err)
 	}
@@ -45,8 +44,8 @@ func InitUserConfiguration(mux *http.ServeMux, user types.User) error {
 	return nil
 }
 
-func (config *UserConfigData) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), scopes []types.Scope) error {
-	fullURL := fmt.Sprintf("%s://%s%s", vars.Protocol, vars.ExternalHost, pattern)
+func (config *UserConfigData) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), scopes []model.Scope) error {
+	fullURL := fmt.Sprintf("%s://%s%s", model.Protocol, model.ExternalHost, pattern)
 	logrus.Debugf("Registering handler for pattern '%s' at URL '%s'", pattern, fullURL)
 
 	// Register HTTP handler
@@ -54,14 +53,14 @@ func (config *UserConfigData) HandleFunc(pattern string, handler func(http.Respo
 	logrus.Infof("Handler registered for pattern: %s", pattern)
 
 	// Register the resource with the Authorization Server
-	if err := auth.RegisterResource(fullURL, vars.AggregatorASURL, scopes); err != nil {
+	if err := auth.RegisterResource(fullURL, model.AggregatorASURL, scopes); err != nil {
 		logrus.WithError(err).Errorf("Failed to register resource for URL '%s'", fullURL)
 		return fmt.Errorf("HandleFunc: registerResource failed for %s: %w", fullURL, err)
 	}
 	logrus.Debugf("Resource registered successfully for URL '%s'", fullURL)
 
 	// Define policy for the resource
-	if err := auth.DefinePolicy(fullURL, config.owner.UserId, vars.AggregatorASURL, scopes); err != nil {
+	if err := auth.DefinePolicy(fullURL, config.owner.UserId, model.AggregatorASURL, scopes); err != nil {
 		logrus.WithError(err).Errorf("Failed to define policy for URL '%s' and user '%s'", fullURL, config.owner.UserId)
 		return fmt.Errorf("HandleFunc: definePolicy failed for %s: %w", fullURL, err)
 	}
@@ -94,7 +93,7 @@ func (config *UserConfigData) headActors(w http.ResponseWriter, _ *http.Request)
 }
 
 func (config *UserConfigData) getActors(w http.ResponseWriter, _ *http.Request) {
-	actorList := []types.Actor{}
+	actorList := []model.Actor{}
 	for _, actor := range config.actors {
 		actorList = append(actorList, actor)
 	}
@@ -112,7 +111,7 @@ func (config *UserConfigData) getActors(w http.ResponseWriter, _ *http.Request) 
 func (config *UserConfigData) postActor(w http.ResponseWriter, r *http.Request) {
 	logrus.Info("Recieved request to register a actor")
 	// read request body
-	var request types.ActorRequest
+	var request model.ActorRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -142,8 +141,8 @@ func (config *UserConfigData) postActor(w http.ResponseWriter, r *http.Request) 
 	config.etagActors++
 
 	// Create config and status endpoints
-	config.HandleFunc(fmt.Sprintf("/config/%s/actors/%s", actor.Namespace, actor.Id), config.HandleActorEndpoint, []types.Scope{types.Read})
-	config.HandleFunc(fmt.Sprintf("/config/%s/actors/%s/status", actor.Namespace, actor.Id), config.HandleStatusEndpoint, []types.Scope{types.Read})
+	config.HandleFunc(fmt.Sprintf("/config/%s/actors/%s", actor.Namespace, actor.Id), config.HandleActorEndpoint, []model.Scope{model.Read})
+	config.HandleFunc(fmt.Sprintf("/config/%s/actors/%s/status", actor.Namespace, actor.Id), config.HandleStatusEndpoint, []model.Scope{model.Read})
 
 	// Return actor information to the client
 	w.Header().Set("Content-Type", "application/json")
@@ -220,7 +219,7 @@ func generateActorETag(marshaledData []byte) string {
 }
 
 // headActor HEAD config/actors/<namespace>/<id> returns the ETag header for the actor with the given ID
-func (config *UserConfigData) headActor(w http.ResponseWriter, _ *http.Request, actor types.Actor) {
+func (config *UserConfigData) headActor(w http.ResponseWriter, _ *http.Request, actor model.Actor) {
 	logrus.WithFields(logrus.Fields{"actor_id": actor.Id}).Debug("Request HEAD for actor")
 
 	marshaledData, err := json.Marshal(&actor)
@@ -237,7 +236,7 @@ func (config *UserConfigData) headActor(w http.ResponseWriter, _ *http.Request, 
 }
 
 // getActor GET config/actors/<namespace>/<id> returns the full actor JSON with ETag
-func (config *UserConfigData) getActor(w http.ResponseWriter, _ *http.Request, actor types.Actor) {
+func (config *UserConfigData) getActor(w http.ResponseWriter, _ *http.Request, actor model.Actor) {
 	logrus.WithFields(logrus.Fields{"actor_id": actor.Id}).Info("Request GET for actor")
 
 	marshaledData, err := json.Marshal(&actor)
@@ -258,7 +257,7 @@ func (config *UserConfigData) getActor(w http.ResponseWriter, _ *http.Request, a
 }
 
 // DELETE config deletes an actor with the given ID
-func (config *UserConfigData) deleteActor(w http.ResponseWriter, _ *http.Request, actor types.Actor) {
+func (config *UserConfigData) deleteActor(w http.ResponseWriter, _ *http.Request, actor model.Actor) {
 	logrus.WithFields(logrus.Fields{"actor_id": actor.Id}).Info("Request to delete transformation")
 
 	actor.Stop()

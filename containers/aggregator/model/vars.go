@@ -1,4 +1,4 @@
-package vars
+package model
 
 import (
 	"github.com/sirupsen/logrus"
@@ -15,6 +15,7 @@ var AdminId string
 var ClientId string
 var ClientSecret string
 var Idp string
+var TrustedClients = make(map[string]TrustedClient)
 
 var Clientset *kubernetes.Clientset
 var DynamicClient *dynamic.DynamicClient
