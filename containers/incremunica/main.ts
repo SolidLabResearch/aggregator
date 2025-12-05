@@ -8,14 +8,21 @@ import {EventEmitter} from "node:events";
 import { logger } from './logger';
 
 class SSEConnectionManager {
-  private connections: Map<http.ServerResponse, NodeJS.Timeout> = new Map();
+  private connections: Set<http.ServerResponse> = new Set();
+  private pendingUpdates: { additions: any[], deletions: any[] } = { additions: [], deletions: [] };
+  private updateBatchTimeout: NodeJS.Timeout | null = null;
+  private readonly batchIntervalMs: number = 100;
+  private readonly heartbeatIntervalMs: number = 30000;
+  private heartbeatTimers: Map<http.ServerResponse, NodeJS.Timeout> = new Map();
 
   addConnection(res: http.ServerResponse): void {
     logger.info('New SSE connection established');
-    const heartbeat = setInterval(() => {
-      this.sendToConnection(res, "heartbeat", { timestamp: Date.now() });
-    }, 30000);
-    this.connections.set(res, heartbeat);
+    this.connections.add(res);
+    const hb = setInterval(() => {
+      this.sendToConnection(res, 'heartbeat');
+    }, this.heartbeatIntervalMs);
+    this.heartbeatTimers.set(res, hb);
+
     res.on('close', () => {
       this.removeConnection(res);
     });
@@ -23,11 +30,13 @@ class SSEConnectionManager {
 
   removeConnection(res: http.ServerResponse): boolean {
     logger.info('SSE connection closed');
-    const heartbeat = this.connections.get(res);
-    if (heartbeat) {
-      clearInterval(heartbeat);
+    const removed = this.connections.delete(res);
+    const timer = this.heartbeatTimers.get(res);
+    if (timer) {
+      clearInterval(timer as any);
+      this.heartbeatTimers.delete(res);
     }
-    return this.connections.delete(res);
+    return removed;
   }
 
   broadcast(event: string, data?: any): void {
@@ -39,9 +48,9 @@ class SSEConnectionManager {
     message += `\n`;
     for (const connection of this.connections) {
       try {
-        connection[0].write(message);
+        connection.write(message);
       } catch (error) {
-        this.removeConnection(connection[0])
+        this.removeConnection(connection)
       }
     }
   }
@@ -56,8 +65,40 @@ class SSEConnectionManager {
     try {
       res.write(message);
     } catch (error) {
-      this.connections.delete(res);
+      this.removeConnection(res);
     }
+  }
+
+  queueUpdate(isAddition: boolean, binding: any): void {
+    if (isAddition) {
+      this.pendingUpdates.additions.push(binding);
+    } else {
+      this.pendingUpdates.deletions.push(binding);
+    }
+
+    if (this.updateBatchTimeout) {
+      clearTimeout(this.updateBatchTimeout);
+    }
+
+    this.updateBatchTimeout = setTimeout(() => {
+      this.flushUpdates();
+    }, this.batchIntervalMs);
+  }
+
+  flushUpdates(): void {
+    if (this.pendingUpdates.additions.length === 0 && this.pendingUpdates.deletions.length === 0) {
+      return;
+    }
+
+    const updateData = {
+      additions: this.pendingUpdates.additions,
+      deletions: this.pendingUpdates.deletions
+    };
+
+    this.broadcast('update', updateData);
+
+    this.pendingUpdates = { additions: [], deletions: [] };
+    this.updateBatchTimeout = null;
   }
 }
 
@@ -329,7 +370,8 @@ async function deregisterWithAggregator(): Promise<void> {
 }
 
 class UpToDateTimeout {
-  private readonly interval: number;
+  private upToDate: boolean = false;
+  private interval: number;
   private readonly upToDateCallback: () => void = () => {};
   private timeout: NodeJS.Timeout | undefined;
 
@@ -338,21 +380,23 @@ class UpToDateTimeout {
     if (upToDateCallback) {
       this.upToDateCallback = upToDateCallback;
     }
-    this.reset();
   }
 
-  reset(): void {
+  reset(interval?: number): void {
+    interval = interval ?? this.interval;
     if (this.timeout) {
       clearTimeout(this.timeout as any);
     }
     this.timeout = setTimeout(() => {
       this.timeout = undefined;
+      this.upToDate = true;
       this.upToDateCallback();
-    }, this.interval);
+    }, interval);
+    this.upToDate = false;
   }
 
   isUpToDate(): boolean {
-    return this.timeout === undefined;
+    return this.upToDate;
   }
 }
 
@@ -362,7 +406,7 @@ async function main() {
   const deferredEvaluationTrigger = new EventEmitter();
   const sseManager = new SSEConnectionManager();
   const upToDateTimeout = new UpToDateTimeout(1000, () => {
-    sseManager.broadcast("up-to-date", { timestamp: Date.now() });
+    sseManager.broadcast("up-to-date", { timestamp: new Date().toISOString() });
   });
   await new Promise((resolve) => {
     server = http.createServer((req, res) => {
@@ -385,9 +429,9 @@ async function main() {
 
         sseManager.addConnection(res);
 
-        sseManager.sendToConnection(res, "init", materializedViewToSparqlJson(materializedView));
+        sseManager.sendToConnection(res, "initial", materializedViewToSparqlJson(materializedView));
         if (upToDateTimeout.isUpToDate()) {
-          sseManager.sendToConnection(res, "up-to-date", { timestamp: Date.now() });
+          sseManager.sendToConnection(res, "up-to-date", { timestamp: new Date().toISOString() });
         }
 
         req.on('close', () => {
@@ -542,7 +586,7 @@ SELECT ?queryString ?source ?endpoint ?variable WHERE {
         materializedView.set(key, { bindings: bindings, count: 1 });
       }
 
-      sseManager.broadcast("addition", bindingToSparqlJson(bindings));
+      sseManager.queueUpdate(true, bindingToSparqlJson(bindings).bindings[0]);
     } else {
       if (materializedView.has(key)) {
         const existingElement = materializedView.get(key)!;
@@ -551,7 +595,7 @@ SELECT ?queryString ?source ?endpoint ?variable WHERE {
           materializedView.delete(key);
         }
 
-        sseManager.broadcast("deletion", bindingToSparqlJson(bindings));
+        sseManager.queueUpdate(false, bindingToSparqlJson(bindings).bindings[0]);
       } else {
         throw new Error('Received a deletion for a binding that was not in the materialized view:' + key);
       }
@@ -567,7 +611,7 @@ SELECT ?queryString ?source ?endpoint ?variable WHERE {
   await new Promise(resolve => server.on("close", resolve));
 }
 
-async function getSources(sourceTerms: any[], pollIntervalMs: number = 5000): Promise<QuerySourceIterator> {
+async function getSources(sourceTerms: any[]): Promise<QuerySourceIterator> {
   // Collect static sources and dynamic endpoint descriptors
   const staticSources: Set<string> = new Set();
   const dynamicEndpoints: { endpoint: string; variables: string[] }[] = [];
@@ -646,64 +690,153 @@ async function getSources(sourceTerms: any[], pollIntervalMs: number = 5000): Pr
   }
 
   // Track previous per endpoint for diffing
-  const previousPerEndpoint: Map<string, Set<string>> = new Map();
-  dynamicEndpoints.forEach((d, idx) => {
-    previousPerEndpoint.set(d.endpoint, new Set(initialDynamicSourcesLists[idx]));
-  });
-
   if (dynamicEndpoints.length > 0) {
-    logger.info({ intervalMs: pollIntervalMs, endpoints: dynamicEndpoints.length }, 'Starting dynamic endpoint polling');
+    logger.info({ endpoints: dynamicEndpoints.length }, 'Starting dynamic endpoint SSE streams');
   }
 
-  const pollingIntervals: NodeJS.Timeout[] = dynamicEndpoints.map(descriptor => {
-    return setInterval(async () => {
-      const newList = await fetchEndpointSources(descriptor);
-      const newSet = new Set(newList);
-      const prevSet = previousPerEndpoint.get(descriptor.endpoint) || new Set<string>();
+  const sseCleanupFunctions: Array<() => void> = [];
 
-      // Additions
-      for (const value of newSet) {
-        if (!prevSet.has(value)) {
-          try {
-            const prevCount = dynamicRefCounts.get(value) ?? 0;
-            dynamicRefCounts.set(value, prevCount + 1);
-            if (prevCount === 0 && !staticSources.has(value)) {
-              querySourceIterator.addSource(value);
-              logger.debug({ source: value, endpoint: descriptor.endpoint }, 'Dynamic source added');
-            }
-          } catch (e) {
-            logger.error({ source: value, error: e }, 'Failed adding source');
+  for (const descriptor of dynamicEndpoints) {
+    try {
+      const eventsUrl = descriptor.endpoint.replace(/\/$/, '') + '/events';
+      logger.info({ endpoint: eventsUrl }, 'Subscribing to SSE stream');
+
+      let response: Response;
+      if (proxyUrl) {
+        const sseRequest = {
+          url: eventsUrl
+        };
+        response = await fetch(`${proxyUrl}/sse`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(sseRequest)
+        });
+      } else {
+        response = await fetch(eventsUrl, {
+          headers: {
+            'Accept': 'text/event-stream'
           }
-        }
+        });
       }
 
-      // Removals
-      for (const value of prevSet) {
-        if (!newSet.has(value)) {
-          try {
-            const prevCount = dynamicRefCounts.get(value) ?? 0;
-            const nextCount = Math.max(0, prevCount - 1);
-            dynamicRefCounts.set(value, nextCount);
-            if (nextCount === 0 && !staticSources.has(value)) {
-              querySourceIterator.removeSource(value);
-              logger.debug({ source: value, endpoint: descriptor.endpoint }, 'Dynamic source removed');
-            }
-          } catch (e) {
-            logger.error({ source: value, error: e }, 'Failed removing source');
-          }
-        }
+      if (!response.ok) {
+        logger.error({ endpoint: eventsUrl, status: response.status }, 'Failed to connect to SSE stream');
+        continue;
       }
 
-      previousPerEndpoint.set(descriptor.endpoint, newSet);
-    }, pollIntervalMs);
-  });
+      const reader = response.body?.getReader();
+      if (!reader) {
+        logger.error({ endpoint: eventsUrl }, 'No readable stream body');
+        continue;
+      }
 
-  const clearPolling = () => {
-    pollingIntervals.forEach(i => { try { clearInterval(i); } catch { /* ignore */ } });
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let isClosed = false;
+
+      const processStream = async () => {
+        try {
+          while (!isClosed) {
+            const { done, value } = await reader.read();
+            if (done) {
+              logger.info({ endpoint: eventsUrl }, 'SSE stream ended');
+              break;
+            }
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            let currentEvent: string | null = null;
+            let currentData: string | null = null;
+
+            for (const line of lines) {
+              if (line.startsWith('event: ')) {
+                currentEvent = line.slice(7).trim();
+              } else if (line.startsWith('data: ')) {
+                currentData = line.slice(6).trim();
+              } else if (line === '' && currentEvent && currentData) {
+                handleSSEEvent(descriptor, currentEvent, currentData);
+                currentEvent = null;
+                currentData = null;
+              }
+            }
+          }
+        } catch (e) {
+          if (!isClosed) {
+            logger.error({ endpoint: eventsUrl, error: e }, 'Error reading SSE stream');
+          }
+        }
+      };
+
+      const handleSSEEvent = (descriptor: { endpoint: string; variables: string[] }, event: string, data: string) => {
+        try {
+          if (event === 'initial' || event === 'processing' || event === 'up-to-date') {
+            return;
+          }
+
+          const parsed = JSON.parse(data);
+
+          if (event === 'update') {
+            // Handle additions
+            if (parsed.additions && Array.isArray(parsed.additions)) {
+              for (const binding of parsed.additions) {
+                const sources = collectSourcesFromBindingObject(binding, descriptor.variables);
+                for (const source of sources) {
+                  const prevCount = dynamicRefCounts.get(source) ?? 0;
+                  dynamicRefCounts.set(source, prevCount + 1);
+                  if (prevCount === 0 && !staticSources.has(source)) {
+                    querySourceIterator.addSource(source);
+                    logger.debug({ source, endpoint: descriptor.endpoint }, 'Dynamic source added via SSE');
+                  }
+                }
+              }
+            }
+
+            // Handle deletions
+            if (parsed.deletions && Array.isArray(parsed.deletions)) {
+              for (const binding of parsed.deletions) {
+                const sources = collectSourcesFromBindingObject(binding, descriptor.variables);
+                for (const source of sources) {
+                  const prevCount = dynamicRefCounts.get(source) ?? 0;
+                  const nextCount = Math.max(0, prevCount - 1);
+                  dynamicRefCounts.set(source, nextCount);
+                  if (nextCount === 0 && !staticSources.has(source)) {
+                    querySourceIterator.removeSource(source);
+                    logger.debug({ source, endpoint: descriptor.endpoint }, 'Dynamic source removed via SSE');
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+          logger.error({ endpoint: descriptor.endpoint, error: e }, 'Error handling SSE event');
+        }
+      };
+
+      processStream();
+
+      const cleanup = () => {
+        isClosed = true;
+        try {
+          reader.cancel();
+        } catch {}
+      };
+      sseCleanupFunctions.push(cleanup);
+
+    } catch (e) {
+      logger.error({ endpoint: descriptor.endpoint, error: e }, 'Error setting up SSE stream');
+    }
+  }
+
+  const cleanup = () => {
+    sseCleanupFunctions.forEach(fn => { try { fn(); } catch {} });
   };
-  process.on('exit', clearPolling);
-  process.on('SIGINT', () => { clearPolling(); process.exit(0); });
-  process.on('SIGTERM', () => { clearPolling(); process.exit(0); });
+  process.on('exit', cleanup);
+  process.on('SIGINT', () => { cleanup(); process.exit(0); });
+  process.on('SIGTERM', () => { cleanup(); process.exit(0); });
 
   return querySourceIterator;
 }
@@ -846,6 +979,7 @@ if (require.main === module) {
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
   process.on('uncaughtException', async (error) => {
+    console.warn('Uncaught exception:', error);
     logger.error({ error }, 'Uncaught exception');
     await gracefulShutdown();
   });

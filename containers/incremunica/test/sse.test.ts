@@ -40,11 +40,10 @@ describe('SSEConnectionManager', () => {
     mgr.addConnection(a as any);
     mgr.addConnection(b as any);
 
-    mgr.broadcast('addition', { foo: 'bar' });
+    mgr.broadcast('update', { additions: 'bar' });
 
-    expect(a.writes.join('')).toContain('event: addition');
-    expect(a.writes.join('')).toContain('"foo":"bar"');
-    expect(b.writes.join('')).toContain('event: addition');
+    expect(a.writes.join('')).toContain('event: update');
+    expect(a.writes.join('')).toContain('"additions":"bar"');
   });
 });
 

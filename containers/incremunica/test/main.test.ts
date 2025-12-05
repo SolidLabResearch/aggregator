@@ -60,63 +60,90 @@ describe('collectSourcesFromBindingObject', () => {
   });
 });
 
-describe('getSources dynamic polling', () => {
+describe('getSources with SSE streams', () => {
   const originalFetch = global.fetch;
 
   afterEach(() => {
     global.fetch = originalFetch;
-    jest.clearAllTimers();
-    jest.useRealTimers();
   });
 
-  it('seeds static sources and performs additions/removals from dynamic endpoint', async () => {
-    jest.useFakeTimers();
+  it('seeds static sources and performs additions/removals from dynamic endpoint via SSE', async () => {
+    const sseEvents: string[] = [];
 
-    const responses: Record<string, any[]> = {
-      'https://dynamic.endpoint/query': [
-        // First poll returns two sources
-        { results: { bindings: [ { a: { type: 'uri', value: 'https://ex.org/1' } }, { a: { type: 'uri', value: 'https://ex.org/2' } } ] } },
-        // Second poll removes 2, adds 3
-        { results: { bindings: [ { a: { type: 'uri', value: 'https://ex.org/1' } }, { a: { type: 'uri', value: 'https://ex.org/3' } } ] } },
-      ],
-    };
-    const fetchCallCount: Record<string, number> = { 'https://dynamic.endpoint/query': 0 };
+    function createSSEStream(events: string[]) {
+      let eventIndex = 0;
+      const encoder = new TextEncoder();
+
+      return new ReadableStream({
+        pull(controller) {
+          if (eventIndex < events.length) {
+            controller.enqueue(encoder.encode(events[eventIndex]));
+            eventIndex++;
+          }
+        }
+      });
+    }
 
     global.fetch = jest.fn(async (input: any) => {
       const url = typeof input === 'string' ? input : input.toString();
-      if (url.startsWith('http://') || url.startsWith('https://')) {
-        const arr = responses['https://dynamic.endpoint/query'];
-        const idx = fetchCallCount['https://dynamic.endpoint/query'];
-        const payload = idx < arr.length ? arr[idx] : arr[arr.length - 1];
-        fetchCallCount['https://dynamic.endpoint/query']++;
-        return new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+      if (url === 'https://dynamic.endpoint/query') {
+        return new Response(JSON.stringify({
+          results: {
+            bindings: [
+              { a: { type: 'uri', value: 'https://ex.org/1' } },
+              { a: { type: 'uri', value: 'https://ex.org/2' } }
+            ]
+          }
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
-      // Proxy fetch endpoint expectation in customFetch
+
+      if (url === 'https://dynamic.endpoint/query/events') {
+        sseEvents.push(
+          'event: initial\ndata: {}\n\n',
+          'event: update\ndata: {"deletions":[{"a":{"type":"uri","value":"https://ex.org/2"}}]}\n\n',
+          'event: update\ndata: {"additions":[{"a":{"type":"uri","value":"https://ex.org/3"}}]}\n\n'
+        );
+        return new Response(createSSEStream(sseEvents), {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' }
+        });
+      }
+
       if (url.endsWith('/fetch')) {
-        // Extract original URL from body
         const body = JSON.parse((input as Request).body as any);
-        const arr = responses['https://dynamic.endpoint/query'];
-        const idx = fetchCallCount['https://dynamic.endpoint/query'];
-        const payload = idx < arr.length ? arr[idx] : arr[arr.length - 1];
-        fetchCallCount['https://dynamic.endpoint/query']++;
-        return new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        if (body.url === 'https://dynamic.endpoint/query') {
+          return new Response(JSON.stringify({
+            results: {
+              bindings: [
+                { a: { type: 'uri', value: 'https://ex.org/1' } },
+                { a: { type: 'uri', value: 'https://ex.org/2' } }
+              ]
+            }
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        if (body.url === 'https://dynamic.endpoint/query/events') {
+          return new Response(createSSEStream(sseEvents), {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' }
+          });
+        }
       }
+
       return new Response('Not found', { status: 404 });
     }) as any;
 
     const staticTerm = { termType: 'NamedNode', value: 'https://static.org' };
     const dynamicDescriptor = { endpoint: 'https://dynamic.endpoint/query', variables: ['a'] };
 
-    const iterator = await getSources([ staticTerm, dynamicDescriptor ], 50); // fast poll
+    const iterator = await getSources([ staticTerm, dynamicDescriptor ]);
 
-    // Drain initial state (static + first dynamic poll)
     let drained = await drainIterator(iterator, 10);
     expect(drained.additions).toEqual(expect.arrayContaining(['https://static.org', 'https://ex.org/1', 'https://ex.org/2']));
 
-    // Advance timers for next poll
-    await jest.advanceTimersByTimeAsync(60);
+    await new Promise(resolve => setTimeout(resolve, 100));
+
     drained = await drainIterator(iterator, 10);
-    // We expect a removal of https://ex.org/2 and addition of https://ex.org/3
     expect(drained.additions).toEqual(expect.arrayContaining(['https://ex.org/3']));
     expect(drained.deletions).toEqual(expect.arrayContaining(['https://ex.org/2']));
 

@@ -7,6 +7,9 @@ describe('UpToDateTimeout', () => {
     const t = new UpToDateTimeout(50, () => calls.push(Date.now()));
     expect(t.isUpToDate()).toBe(false);
 
+    t.reset();
+    expect(t.isUpToDate()).toBe(false);
+
     // Reset several times within interval
     jest.advanceTimersByTime(25);
     t.reset();
