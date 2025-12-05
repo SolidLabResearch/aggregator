@@ -19,11 +19,12 @@ kubernettes-dashboard-start:
 	  --selector=app.kubernetes.io/instance=kubernetes-dashboard \
 	  --timeout=120s
 	@sleep 1
-	@echo "🔐 Retrieving token for \`admin-user\`..."
+	@echo "🔐 Creating admin-user ServiceAccount..."
+	@kubectl apply -f dashboard-admin.yaml
+	@echo "🔑 Retrieving token for \`admin-user\`..."
 	@token=$$(kubectl -n kubernetes-dashboard create token admin-user 2>/dev/null || true); \
 	if [ -z "$$token" ]; then \
-	  echo "⚠️  No token found for \`admin-user\`. The ServiceAccount may not exist."; \
-	  echo "   Create one and bind it to cluster-admin (for local/test clusters) with a manifest like \`dashboard-admin.yaml\` and run: kubectl apply -f dashboard-admin.yaml"; \
+	  echo "⚠️  Failed to create token for \`admin-user\`."; \
 	else \
 	  echo "✅ Dashboard ready — open: https://localhost:8443 with token:"; \
 	  echo "$$token"; \
