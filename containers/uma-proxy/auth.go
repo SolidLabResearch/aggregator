@@ -18,6 +18,8 @@ import (
 type SolidAuth struct {
 	webId               string
 	cssBaseURL          string
+	email               string
+	password            string
 	authString          string
 	accessToken         string
 	expiresAt           time.Time
@@ -43,13 +45,16 @@ func NewSolidAuth(webId string) *SolidAuth {
 
 // Init initializes the client credentials
 func (sa *SolidAuth) Init(email, password string) error {
+	sa.email = email
+	sa.password = password
+
 	req, err := createRequestWithRedirect("GET", sa.webId, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create WebID request: %w", err)
 	}
 
 	req.Header.Set("Accept", "application/n-triples")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := throttledDo(req)
 	if err != nil {
 		return fmt.Errorf("failed to fetch WebID profile: %w", err)
 	}
@@ -84,14 +89,28 @@ func (sa *SolidAuth) Init(email, password string) error {
 	}
 	logrus.Info("✅ OIDC issuer found: " + sa.cssBaseURL)
 
-	// Step 1: Get controls from account endpoint
 	logrus.WithFields(logrus.Fields{"endpoint": sa.cssBaseURL + ".account/"}).Debug("🔑 Initializing client credentials for Solid OIDC")
+
+	if err := sa.performAuthFlow(); err != nil {
+		return err
+	}
+
+	logrus.WithFields(logrus.Fields{"webid": sa.webId}).Info("✅ Client credentials initialized for WebID")
+
+	return sa.refreshAccessToken()
+}
+
+// performAuthFlow performs the complete authentication flow and updates credentials and access token
+func (sa *SolidAuth) performAuthFlow() error {
+	logrus.Debug("🔄 Starting full authentication flow to obtain new access token")
+
+	// Step 1: Get controls from account endpoint
 	reqAccount, err := createRequestWithRedirect("GET", sa.cssBaseURL+".account/", nil)
 	if err != nil {
 		return fmt.Errorf("failed to create account request: %w", err)
 	}
 
-	indexResp, err := http.DefaultClient.Do(reqAccount)
+	indexResp, err := throttledDo(reqAccount)
 	if err != nil {
 		return fmt.Errorf("failed to get account controls: %w", err)
 	}
@@ -110,8 +129,8 @@ func (sa *SolidAuth) Init(email, password string) error {
 
 	// Step 2: Login with password
 	loginData := map[string]string{
-		"email":    email,
-		"password": password,
+		"email":    sa.email,
+		"password": sa.password,
 	}
 	loginBody, _ := json.Marshal(loginData)
 
@@ -121,7 +140,7 @@ func (sa *SolidAuth) Init(email, password string) error {
 	}
 	reqLogin.Header.Set("Content-Type", "application/json")
 
-	loginResp, err := http.DefaultClient.Do(reqLogin)
+	loginResp, err := throttledDo(reqLogin)
 	if err != nil {
 		return fmt.Errorf("failed to login: %w", err)
 	}
@@ -145,7 +164,7 @@ func (sa *SolidAuth) Init(email, password string) error {
 	}
 	req3.Header.Set("Authorization", "CSS-Account-Token "+loginResult.Authorization)
 
-	indexResp2, err := http.DefaultClient.Do(req3)
+	indexResp2, err := throttledDo(req3)
 	if err != nil {
 		return fmt.Errorf("failed to get authenticated controls: %w", err)
 	}
@@ -180,7 +199,7 @@ func (sa *SolidAuth) Init(email, password string) error {
 	req2.Header.Set("Authorization", "CSS-Account-Token "+loginResult.Authorization)
 	req2.Header.Set("Content-Type", "application/json")
 
-	credResp, err := http.DefaultClient.Do(req2)
+	credResp, err := throttledDo(req2)
 	if err != nil {
 		return fmt.Errorf("failed to create client credentials: %w", err)
 	}
@@ -196,22 +215,10 @@ func (sa *SolidAuth) Init(email, password string) error {
 
 	sa.authString = url.QueryEscape(credResult.ID) + ":" + url.QueryEscape(credResult.Secret)
 
-	logrus.WithFields(logrus.Fields{"webid": sa.webId}).Info("✅ Client credentials initialized for WebID")
-
-	// Get initial access token
-	return sa.refreshAccessToken()
-}
-
-// refreshAccessToken gets a new access token
-func (sa *SolidAuth) refreshAccessToken() error {
-	sa.mu.Lock()
-	defer sa.mu.Unlock()
-
-	if sa.authString == "" {
-		return fmt.Errorf("not initialized")
-	}
-
+	// Step 5: Get access token with new client credentials
 	tokenURL := sa.cssBaseURL + ".oidc/token"
+
+	logrus.WithFields(logrus.Fields{"token_url": tokenURL}).Debug("🔄 Requesting new access token via client credentials flow")
 
 	req, err := createRequestWithRedirect("POST", tokenURL, bytes.NewReader([]byte("grant_type=client_credentials&scope=webid")))
 	if err != nil {
@@ -220,7 +227,7 @@ func (sa *SolidAuth) refreshAccessToken() error {
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(sa.authString)))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := throttledDo(req)
 	if err != nil {
 		return fmt.Errorf("failed to get access token: %w", err)
 	}
@@ -228,6 +235,7 @@ func (sa *SolidAuth) refreshAccessToken() error {
 
 	if resp.StatusCode != http.StatusOK {
 		bodyText, _ := io.ReadAll(resp.Body)
+		logrus.WithFields(logrus.Fields{"status": resp.StatusCode, "body": string(bodyText)}).Error("❌ Token request failed")
 		return fmt.Errorf("token request failed with status: %d, and body: %s", resp.StatusCode, bodyText)
 	}
 
@@ -239,13 +247,32 @@ func (sa *SolidAuth) refreshAccessToken() error {
 		return fmt.Errorf("failed to decode token response: %w", err)
 	}
 
+	if tokenResp.AccessToken == "" {
+		return fmt.Errorf("received empty access token")
+	}
+
 	sa.accessToken = tokenResp.AccessToken
 	sa.expiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 
-	logrus.WithFields(logrus.Fields{"expires_at": sa.expiresAt.Format(time.RFC3339)}).Info("✅ Access token refreshed")
+	logrus.WithFields(logrus.Fields{"expires_at": sa.expiresAt.Format(time.RFC3339), "expires_in_seconds": tokenResp.ExpiresIn}).Info("✅ Access token obtained via client credentials flow")
 
-	// Schedule next refresh 500ms before expiry
-	refreshIn := time.Duration(tokenResp.ExpiresIn)*time.Second - 500*time.Millisecond
+	return nil
+}
+
+// refreshAccessToken gets a new access token using the full authentication flow
+func (sa *SolidAuth) refreshAccessToken() error {
+	sa.mu.Lock()
+	defer sa.mu.Unlock()
+
+	if sa.email == "" || sa.password == "" {
+		return fmt.Errorf("not initialized")
+	}
+
+	if err := sa.performAuthFlow(); err != nil {
+		return err
+	}
+
+	refreshIn := time.Until(sa.expiresAt) - 500*time.Millisecond
 	if refreshIn < 0 {
 		refreshIn = 0
 	}
@@ -327,4 +354,46 @@ func (sa *SolidAuth) clearUmaCache() {
 	for k := range sa.umaPermissionTokens {
 		delete(sa.umaPermissionTokens, k)
 	}
+}
+
+// GetServiceToken retrieves a UMA service token for SSE connections
+func (sa *SolidAuth) GetServiceToken(resourceURL, serviceEndpoint, tokenType, accessToken string) (string, error) {
+	reqData := map[string]string{
+		"resource_url": resourceURL,
+	}
+	reqBody, err := json.Marshal(reqData)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal service token request: %w", err)
+	}
+
+	req, err := createRequestWithRedirect("POST", serviceEndpoint, bytes.NewReader(reqBody))
+	if err != nil {
+		return "", fmt.Errorf("failed to create service token request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("%s %s", tokenType, accessToken))
+
+	resp, err := throttledDo(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to get service token: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyText, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("service token request failed with status: %d, body: %s", resp.StatusCode, bodyText)
+	}
+
+	var serviceTokenResp struct {
+		ServiceToken string `json:"service_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&serviceTokenResp); err != nil {
+		return "", fmt.Errorf("failed to decode service token response: %w", err)
+	}
+
+	if serviceTokenResp.ServiceToken == "" {
+		return "", fmt.Errorf("empty service token in response")
+	}
+
+	return serviceTokenResp.ServiceToken, nil
 }

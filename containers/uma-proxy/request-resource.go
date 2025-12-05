@@ -8,12 +8,59 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/sirupsen/logrus"
 )
 
 var client = &http.Client{} // restored global HTTP client
 var solidAuth *SolidAuth    // restored global SolidAuth instance
+
+const maxConcurrentRequestsPerEndpoint = 20
+
+type endpointThrottler struct {
+	mu         sync.Mutex
+	semaphores map[string]chan struct{}
+}
+
+var throttler = &endpointThrottler{
+	semaphores: make(map[string]chan struct{}),
+}
+
+func (et *endpointThrottler) acquire(endpoint string) {
+	et.mu.Lock()
+	sem, exists := et.semaphores[endpoint]
+	if !exists {
+		sem = make(chan struct{}, maxConcurrentRequestsPerEndpoint)
+		et.semaphores[endpoint] = sem
+	}
+	et.mu.Unlock()
+
+	sem <- struct{}{}
+}
+
+func (et *endpointThrottler) release(endpoint string) {
+	et.mu.Lock()
+	sem, exists := et.semaphores[endpoint]
+	et.mu.Unlock()
+
+	if exists {
+		<-sem
+	}
+}
+
+func getEndpoint(u *url.URL) string {
+	return u.Scheme + "://" + u.Host
+}
+
+func throttledDo(req *http.Request) (*http.Response, error) {
+	endpoint := getEndpoint(req.URL)
+
+	throttler.acquire(endpoint)
+	defer throttler.release(endpoint)
+
+	return client.Do(req)
+}
 
 type claimToken struct {
 	ClaimToken       string `json:"claim_token"`
@@ -81,7 +128,7 @@ func fetchAccessToken(tokenEndpoint string, request interface{}, claims []claimT
 		return "", "", "", 0, err
 	}
 	tokenReq.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(tokenReq)
+	resp, err := throttledDo(tokenReq)
 	if err != nil {
 		return "", "", "", 0, err
 	}
@@ -176,7 +223,7 @@ func Do(req *http.Request) (*http.Response, error) {
 
 	// If no authentication is configured, just pass through the request
 	if solidAuth == nil {
-		return client.Do(req)
+		return throttledDo(req)
 	}
 	// Attempt to use cached UMA token first
 	method := req.Method
@@ -184,7 +231,7 @@ func Do(req *http.Request) (*http.Response, error) {
 	if tokenType, accessToken, ok := solidAuth.getUmaToken(method, resourceURL); ok {
 		logrus.WithFields(logrus.Fields{"url": resourceURL}).Debug("Using cached UMA token")
 		req.Header.Set("Authorization", fmt.Sprintf("%s %s", tokenType, accessToken))
-		cachedResp, err := client.Do(req)
+		cachedResp, err := throttledDo(req)
 		if err != nil {
 			return nil, err
 		}
@@ -200,7 +247,7 @@ func Do(req *http.Request) (*http.Response, error) {
 		req.Header.Del("Authorization")
 	}
 	// Perform unauthenticated request
-	unauthenticatedResp, err := client.Do(req)
+	unauthenticatedResp, err := throttledDo(req)
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +263,7 @@ func Do(req *http.Request) (*http.Response, error) {
 		if err != nil {
 			return nil, err
 		}
-		uma2ConfigResponse, err := client.Do(reqConf)
+		uma2ConfigResponse, err := throttledDo(reqConf)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get UMA2 configuration: %w", err)
 		}
@@ -242,7 +289,7 @@ func Do(req *http.Request) (*http.Response, error) {
 		// Store in cache before retry
 		solidAuth.storeUmaToken(method, resourceURL, tokenType, accessToken, expiresIn)
 		req.Header.Set("Authorization", fmt.Sprintf("%s %s", tokenType, accessToken))
-		authorizedResp, err := client.Do(req)
+		authorizedResp, err := throttledDo(req)
 		if err != nil {
 			return nil, err
 		}

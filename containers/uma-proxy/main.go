@@ -62,6 +62,7 @@ func main() {
 
 	http.HandleFunc("/", Handler)
 	http.HandleFunc("/fetch", FetchHandler)
+	http.HandleFunc("/sse", SSEHandler)
 	go func() {
 		logrus.WithFields(logrus.Fields{"port": 8080}).Info("HTTP proxy listening")
 		if err := http.ListenAndServe(":8080", nil); err != nil {
@@ -212,6 +213,229 @@ func FetchHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Copy the response body directly
 	io.Copy(w, resp.Body)
+}
+
+// Handler for /sse endpoint - authenticates SSE connections and proxies the stream
+func SSEHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var sseReq struct {
+		URL string `json:"url"`
+	}
+	err := json.NewDecoder(r.Body).Decode(&sseReq)
+	if err != nil {
+		http.Error(w, "Bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if sseReq.URL == "" {
+		http.Error(w, "Bad request: url is required", http.StatusBadRequest)
+		return
+	}
+
+	logrus.WithFields(logrus.Fields{"url": sseReq.URL}).Info("📡 SSE connection request")
+
+	if solidAuth == nil {
+		http.Error(w, "Authentication not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	originalURL := sseReq.URL
+	redirectedURL := redirectLocalhostURL(sseReq.URL)
+
+	// Step 1: Initial request to get UMA challenge
+	initialReq, err := http.NewRequest("GET", redirectedURL, nil)
+	if err != nil {
+		http.Error(w, "Failed to create request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	initialReq.Header.Set("Accept", "text/event-stream")
+
+	if redirectedURL != originalURL {
+		parsedOriginal, _ := url.Parse(originalURL)
+		if parsedOriginal != nil {
+			initialReq.Host = parsedOriginal.Host
+		}
+	}
+
+	initialResp, err := throttledDo(initialReq)
+	if err != nil {
+		logrus.WithFields(logrus.Fields{"url": sseReq.URL, "err": err}).Error("❌ Failed to connect to SSE")
+		http.Error(w, "Failed to connect: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer initialResp.Body.Close()
+
+	if initialResp.StatusCode != http.StatusUnauthorized {
+		logrus.WithFields(logrus.Fields{"status": initialResp.StatusCode}).Error("❌ Expected 401 for SSE, got different status")
+		http.Error(w, fmt.Sprintf("Expected 401 for SSE authentication, got %d", initialResp.StatusCode), http.StatusBadGateway)
+		return
+	}
+
+	// Step 2: Parse UMA challenge
+	asUri, ticket, err := getTicketInfo(initialResp.Header.Get("WWW-Authenticate"))
+	if err != nil {
+		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to parse WWW-Authenticate header")
+		http.Error(w, "Failed to parse UMA challenge: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	// Step 3: Extract service endpoint from Link header
+	linkHeader := initialResp.Header.Get("Link")
+	serviceEndpoint := ""
+	if linkHeader != "" {
+		// Parse Link header: <url>; rel="service-token-endpoint"
+		parts := strings.Split(linkHeader, ";")
+		for i, part := range parts {
+			if strings.Contains(part, `rel="service-token-endpoint"`) && i > 0 {
+				urlPart := strings.TrimSpace(parts[i-1])
+				urlPart = strings.Trim(urlPart, "<>")
+				serviceEndpoint = urlPart
+				break
+			}
+		}
+	}
+
+	if serviceEndpoint == "" {
+		logrus.Error("❌ Missing service-token-endpoint in Link header")
+		http.Error(w, "Missing UMA service endpoint for SSE", http.StatusBadGateway)
+		return
+	}
+
+	logrus.WithFields(logrus.Fields{"as_uri": asUri, "service_endpoint": serviceEndpoint}).Debug("🔐 Retrieved UMA endpoints")
+
+	// Step 4: Get UMA2 token endpoint
+	uma2ConfigReq, err := createRequestWithRedirect("GET", asUri+"/.well-known/uma2-configuration", nil)
+	if err != nil {
+		http.Error(w, "Failed to create UMA config request: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	uma2ConfigResp, err := throttledDo(uma2ConfigReq)
+	if err != nil {
+		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to get UMA2 configuration")
+		http.Error(w, "Failed to get UMA2 configuration: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer uma2ConfigResp.Body.Close()
+
+	if uma2ConfigResp.StatusCode != http.StatusOK {
+		logrus.WithFields(logrus.Fields{"status": uma2ConfigResp.StatusCode}).Error("❌ UMA2 configuration request failed")
+		http.Error(w, "UMA2 configuration unavailable", http.StatusBadGateway)
+		return
+	}
+
+	var uma2Config struct {
+		TokenEndpoint string `json:"token_endpoint"`
+	}
+	if err := json.NewDecoder(uma2ConfigResp.Body).Decode(&uma2Config); err != nil {
+		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to decode UMA2 configuration")
+		http.Error(w, "Failed to decode UMA2 configuration: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	tokenEndpoint := uma2Config.TokenEndpoint
+
+	// Step 5: Get access token with claim gathering
+	accessToken, tokenType, _, _, err := fetchAccessToken(tokenEndpoint, ticket, nil)
+	if err != nil {
+		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to fetch access token")
+		http.Error(w, "Failed to fetch access token: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	// Step 6: Get service token for SSE
+	serviceToken, err := solidAuth.GetServiceToken(sseReq.URL, serviceEndpoint, tokenType, accessToken)
+	if err != nil {
+		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to get service token")
+		http.Error(w, "Failed to get service token: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	logrus.WithFields(logrus.Fields{"url": sseReq.URL}).Info("✅ Service token obtained")
+
+	// Step 7: Connect to SSE with service token
+	sseReq2, err := http.NewRequest("GET", redirectedURL, nil)
+	if err != nil {
+		http.Error(w, "Failed to create authenticated SSE request: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	sseReq2.Header.Set("Accept", "text/event-stream")
+	sseReq2.Header.Set("Cache-Control", "no-cache")
+	sseReq2.Header.Set("Authorization", "Bearer "+serviceToken)
+
+	if redirectedURL != originalURL {
+		parsedOriginal, _ := url.Parse(originalURL)
+		if parsedOriginal != nil {
+			sseReq2.Host = parsedOriginal.Host
+		}
+	}
+
+	sseResp, err := throttledDo(sseReq2)
+	if err != nil {
+		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to connect to authenticated SSE")
+		http.Error(w, "Failed to connect to SSE: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer sseResp.Body.Close()
+
+	if sseResp.StatusCode != http.StatusOK {
+		bodyText, _ := io.ReadAll(sseResp.Body)
+		logrus.WithFields(logrus.Fields{"status": sseResp.StatusCode, "body": string(bodyText)}).Error("❌ SSE connection failed")
+		http.Error(w, fmt.Sprintf("SSE connection failed (status: %d): %s", sseResp.StatusCode, string(bodyText)), http.StatusBadGateway)
+		return
+	}
+
+	logrus.WithFields(logrus.Fields{"url": sseReq.URL}).Info("✅ SSE connection established, streaming")
+
+	// Step 8: Set up SSE response headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	// Copy any other relevant headers from upstream
+	for key, values := range sseResp.Header {
+		if key != "Content-Type" && key != "Cache-Control" && key != "Connection" {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+
+	// Flush headers immediately
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+
+	// Step 9: Stream the SSE data
+	buf := make([]byte, 4096)
+	for {
+		n, err := sseResp.Body.Read(buf)
+		if n > 0 {
+			_, writeErr := w.Write(buf[:n])
+			if writeErr != nil {
+				logrus.WithFields(logrus.Fields{"err": writeErr}).Warn("⚠️ Failed to write SSE data to client")
+				return
+			}
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
+		if err == io.EOF {
+			logrus.WithFields(logrus.Fields{"url": sseReq.URL}).Info("📭 SSE stream ended")
+			return
+		}
+		if err != nil {
+			logrus.WithFields(logrus.Fields{"err": err}).Warn("⚠️ Error reading SSE stream")
+			return
+		}
+	}
 }
 
 // MITM handler
