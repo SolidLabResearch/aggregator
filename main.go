@@ -90,6 +90,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Deploy cleanup daemon at startup
+	if err := DeployCleanupDaemon(); err != nil {
+		logrus.WithError(err).Warn("Failed to deploy cleanup daemon - cleanup will use inline fallback")
+	}
+
 	// Validate and warn about Solid OIDC configuration
 	if *webId == "" || *email == "" || *password == "" {
 		logrus.Warn("⚠️  WARNING: Solid OIDC configuration incomplete")
@@ -131,18 +136,36 @@ func main() {
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
-
 	<-stop
 	logrus.Info("Shutting down gracefully...")
 
-	pods, err := Clientset.CoreV1().Pods("default").List(context.Background(), metav1.ListOptions{})
+	// Trigger cleanup daemon to handle resource deletion
+	TriggerCleanup()
+
+	// Delete auth resources
+	auth.DeleteAllResources()
+
+	logrus.Info("Cleanup initiated. Exiting.")
+}
+
+// performInlineCleanup is a fallback cleanup function when the daemon is unavailable
+func performInlineCleanup() {
+	logrus.Info("Performing inline cleanup")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Delete pods with force
+	pods, err := Clientset.CoreV1().Pods("default").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to list pods during shutdown")
-		os.Exit(1)
+		return
 	}
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 30)
+	gracePeriod := int64(0)
+
 	for _, pod := range pods.Items {
 		p := pod
 		wg.Add(1)
@@ -150,42 +173,46 @@ func main() {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			err := Clientset.CoreV1().Pods(p.Namespace).Delete(ctx, p.Name, metav1.DeleteOptions{})
+			deleteCtx, deleteCancel := context.WithTimeout(ctx, 5*time.Second)
+			defer deleteCancel()
+			err := Clientset.CoreV1().Pods(p.Namespace).Delete(deleteCtx, p.Name, metav1.DeleteOptions{
+				GracePeriodSeconds: &gracePeriod,
+			})
 			if err != nil {
-				logrus.WithFields(logrus.Fields{"namespace": p.Namespace, "name": p.Name, "err": err}).Error("Failed to delete pod")
+				logrus.WithFields(logrus.Fields{"namespace": p.Namespace, "name": p.Name, "err": err}).Warn("Failed to delete pod")
 			} else {
 				logrus.WithFields(logrus.Fields{"namespace": p.Namespace, "name": p.Name}).Info("Deleted pod")
 			}
 		}()
 	}
-	services, err := Clientset.CoreV1().Services("default").List(context.Background(), metav1.ListOptions{})
+
+	// Delete services
+	services, err := Clientset.CoreV1().Services("default").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("Failed to list services during shutdown")
-		os.Exit(1)
-	}
-	for _, svc := range services.Items {
-		if svc.Name == "kubernetes" {
-			continue
-		}
-		s := svc // capture loop var
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			err := Clientset.CoreV1().Services(s.Namespace).Delete(ctx, s.Name, metav1.DeleteOptions{})
-			if err != nil {
-				logrus.WithFields(logrus.Fields{"namespace": s.Namespace, "name": s.Name, "err": err}).Error("Failed to delete service")
-			} else {
-				logrus.WithFields(logrus.Fields{"namespace": s.Namespace, "name": s.Name}).Info("Deleted service")
+	} else {
+		for _, svc := range services.Items {
+			if svc.Name == "kubernetes" || svc.Name == "cleanup-daemon" {
+				continue
 			}
-		}()
+			s := svc
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				deleteCtx, deleteCancel := context.WithTimeout(ctx, 5*time.Second)
+				defer deleteCancel()
+				err := Clientset.CoreV1().Services(s.Namespace).Delete(deleteCtx, s.Name, metav1.DeleteOptions{})
+				if err != nil {
+					logrus.WithFields(logrus.Fields{"namespace": s.Namespace, "name": s.Name, "err": err}).Warn("Failed to delete service")
+				} else {
+					logrus.WithFields(logrus.Fields{"namespace": s.Namespace, "name": s.Name}).Info("Deleted service")
+				}
+			}()
+		}
 	}
-	auth.DeleteAllResources()
+
 	wg.Wait()
-	logrus.Info("Cleanup complete. Exiting.")
+	logrus.Info("Inline cleanup complete")
 }
