@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"aggregator/httpclient"
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -356,7 +357,7 @@ func verifyTicket(token string, validIssuers []string) ([]Permission, error) {
 
 func fetchAndSelectKey(jwksUri, kid string) (interface{}, error) {
 	// 1) Fetch the JWKS JSON
-	resp, err := http.Get(jwksUri)
+	resp, err := httpclient.DefaultClient.Get(jwksUri)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch JWKS from %s: %w", jwksUri, err)
 	}
@@ -511,7 +512,7 @@ var REQUIRED_METADATA = []string{
 }
 
 func fetchUmaConfig(issuer string) (UmaConfig, error) {
-	resp, err := http.Get(issuer + "/.well-known/uma2-configuration")
+	resp, err := httpclient.DefaultClient.Get(issuer + "/.well-known/uma2-configuration")
 	if err != nil {
 		return UmaConfig{}, err
 	}

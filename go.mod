@@ -1,8 +1,8 @@
 module aggregator
 
-go 1.23.0
+go 1.24.0
 
-toolchain go1.23.8
+toolchain go1.24.11
 
 require (
 	github.com/golang-jwt/jwt/v4 v4.5.2
@@ -10,6 +10,7 @@ require (
 	github.com/gorilla/websocket v1.5.1
 	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/net v0.38.0
+	golang.org/x/sync v0.18.0
 	k8s.io/api v0.32.3
 	k8s.io/apimachinery v0.32.3
 	k8s.io/client-go v0.32.3

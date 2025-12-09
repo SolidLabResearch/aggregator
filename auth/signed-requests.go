@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"aggregator/httpclient"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -188,6 +189,5 @@ func doSignedRequest(req *http.Request) (*http.Response, error) {
 
 	req.Header.Set("Signature", signatureValue)
 
-	client := &http.Client{}
-	return client.Do(req)
+	return httpclient.DefaultClient.Do(req)
 }

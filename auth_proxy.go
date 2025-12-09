@@ -2,6 +2,7 @@ package main
 
 import (
 	"aggregator/auth"
+	"aggregator/httpclient"
 	"bufio"
 	"context"
 	"encoding/json"
@@ -488,7 +489,7 @@ func (ap *AuthProxy) pipeSSE(w http.ResponseWriter, r *http.Request, registratio
 	}
 	upReq.Host = targetURL.Host
 
-	upRes, err := (&http.Client{}).Do(upReq)
+	upRes, err := httpclient.DefaultClient.Do(upReq)
 	if err != nil {
 		if isContextCanceledError(err) {
 			logrus.WithFields(logrus.Fields{"target": targetHost, "path": backendPath}).Error("Upstream SSE context canceled")
