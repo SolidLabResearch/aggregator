@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "scripts": {
     "build": "tsc",
-    "start": "node main.js",
+    "start": "node --max-old-space-size=8192 main.js",
     "test": "jest --runInBand"
   },
   "dependencies": {

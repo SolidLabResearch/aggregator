@@ -55,11 +55,15 @@ class SSEConnectionManager {
     }
   }
 
-  sendToConnection(res: http.ServerResponse, event: string, data?: any): void {
+  sendToConnection(res: http.ServerResponse, event: string, data?: any | string): void {
     logger.debug({ event }, 'Sending event to connection');
     let message = `event: ${event}\n`
-    if (data) {
-      message += `data: ${JSON.stringify(data)}\n`;
+    if (data !== undefined && data !== null) {
+      if (typeof data === 'string') {
+        message = `data: ${data}\n`;
+      } else {
+        message += `data: ${JSON.stringify(data)}\n`;
+      }
     }
     message += `\n`;
     try {
@@ -402,6 +406,8 @@ class UpToDateTimeout {
 
 async function main() {
   const materializedView: Map<string,{bindings: any, count: number}> = new Map();
+  let cachedSerializedSparql: string | undefined = undefined;
+  let isCacheDirty = true;
   let server: http.Server;
   const deferredEvaluationTrigger = new EventEmitter();
   const sseManager = new SSEConnectionManager();
@@ -414,8 +420,16 @@ async function main() {
       if (req.method === "GET" && req.url === "/") {
         res.writeHead(200, { "Content-Type": "application/sparql-results+json" });
         deferredEvaluationTrigger.emit("update");
-        const sparqlJson = materializedViewToSparqlJson(materializedView);
-        res.end(JSON.stringify(sparqlJson, null, 2));
+
+        if (isCacheDirty) {
+          cachedSerializedSparql = JSON.stringify(materializedViewToSparqlJson(materializedView));
+          isCacheDirty = false;
+          logger.debug('Materialized view cached');
+        } else {
+          logger.debug('Using cached materialized view');
+        }
+
+        res.end(cachedSerializedSparql);
       } else if (req.method === "GET" && req.url === "/events") {
         // Handle SSE connection
         res.writeHead(200, {
@@ -429,7 +443,13 @@ async function main() {
 
         sseManager.addConnection(res);
 
-        sseManager.sendToConnection(res, "initial", materializedViewToSparqlJson(materializedView));
+        if (isCacheDirty) {
+          cachedSerializedSparql = JSON.stringify(materializedViewToSparqlJson(materializedView));
+          isCacheDirty = false;
+          logger.debug('Materialized view cached');
+        }
+
+        sseManager.sendToConnection(res, "initial", cachedSerializedSparql);
         if (upToDateTimeout.isUpToDate()) {
           sseManager.sendToConnection(res, "up-to-date", { timestamp: new Date().toISOString() });
         }
@@ -585,7 +605,7 @@ SELECT ?queryString ?source ?endpoint ?variable WHERE {
       } else {
         materializedView.set(key, { bindings: bindings, count: 1 });
       }
-
+      isCacheDirty = true;
       sseManager.queueUpdate(true, bindingToSparqlJson(bindings).bindings[0]);
     } else {
       if (materializedView.has(key)) {
@@ -594,7 +614,7 @@ SELECT ?queryString ?source ?endpoint ?variable WHERE {
         if (existingElement.count <= 0) {
           materializedView.delete(key);
         }
-
+        isCacheDirty = true;
         sseManager.queueUpdate(false, bindingToSparqlJson(bindings).bindings[0]);
       } else {
         throw new Error('Received a deletion for a binding that was not in the materialized view:' + key);
