@@ -26,6 +26,8 @@ type SolidAuth struct {
 	mu                  sync.RWMutex
 	refreshTimer        *time.Timer
 	umaPermissionTokens map[string]UmaTokenEntry
+	refreshing          bool
+	refreshCond         *sync.Cond
 }
 
 // UmaTokenEntry represents a cached UMA permission token
@@ -37,10 +39,12 @@ type UmaTokenEntry struct {
 
 // NewSolidAuth creates a new SolidAuth instance
 func NewSolidAuth(webId string) *SolidAuth {
-	return &SolidAuth{
+	sa := &SolidAuth{
 		webId:               webId,
 		umaPermissionTokens: make(map[string]UmaTokenEntry),
 	}
+	sa.refreshCond = sync.NewCond(&sa.mu)
+	return sa
 }
 
 // Init initializes the client credentials
@@ -268,11 +272,17 @@ func (sa *SolidAuth) refreshAccessToken() error {
 		return fmt.Errorf("not initialized")
 	}
 
+	sa.refreshing = true
+	defer func() {
+		sa.refreshing = false
+		sa.refreshCond.Broadcast()
+	}()
+
 	if err := sa.performAuthFlow(); err != nil {
 		return err
 	}
 
-	refreshIn := time.Until(sa.expiresAt) - 500*time.Millisecond
+	refreshIn := time.Until(sa.expiresAt) - 2000*time.Millisecond
 	if refreshIn < 0 {
 		refreshIn = 0
 	}
@@ -291,16 +301,24 @@ func (sa *SolidAuth) refreshAccessToken() error {
 
 // GetAccessToken returns the current access token (thread-safe)
 func (sa *SolidAuth) GetAccessToken() string {
-	sa.mu.RLock()
-	defer sa.mu.RUnlock()
+	sa.mu.Lock()
+	defer sa.mu.Unlock()
+
+	for sa.refreshing {
+		sa.refreshCond.Wait()
+	}
+
 	return sa.accessToken
 }
 
 // CreateClaimToken creates a claim token with DPoP for UMA flow
 func (sa *SolidAuth) CreateClaimToken() (string, error) {
-	sa.mu.RLock()
+	sa.mu.Lock()
+	for sa.refreshing {
+		sa.refreshCond.Wait()
+	}
 	accessToken := sa.accessToken
-	sa.mu.RUnlock()
+	sa.mu.Unlock()
 
 	if accessToken == "" {
 		return "", fmt.Errorf("not initialized")
@@ -318,6 +336,11 @@ func (sa *SolidAuth) buildUmaKey(method, resourceURL string) string {
 func (sa *SolidAuth) getUmaToken(method, resourceURL string) (tokenType, accessToken string, ok bool) {
 	sa.mu.Lock()
 	defer sa.mu.Unlock()
+
+	for sa.refreshing {
+		sa.refreshCond.Wait()
+	}
+
 	entry, exists := sa.umaPermissionTokens[sa.buildUmaKey(method, resourceURL)]
 	if !exists {
 		return "", "", false

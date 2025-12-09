@@ -16,7 +16,7 @@ import (
 var client = &http.Client{} // restored global HTTP client
 var solidAuth *SolidAuth    // restored global SolidAuth instance
 
-const maxConcurrentRequestsPerEndpoint = 20
+const maxConcurrentRequestsPerEndpoint = 30
 
 type endpointThrottler struct {
 	mu         sync.Mutex
