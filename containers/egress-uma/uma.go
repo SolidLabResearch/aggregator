@@ -17,8 +17,8 @@ type UMAConfig struct {
 	TokenEndpoint string `json:"token_endpoint"`
 }
 
-// UMAResponse represents the RPT response from the Authorization Server
-type UMAResponse struct {
+// TokenResponse represents the RPT response from the Authorization Server
+type TokenResponse struct {
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
 	ExpiresIn   int    `json:"expires_in,omitempty"`
@@ -35,7 +35,7 @@ func RequestWithUMA(client *http.Client, r *http.Request) (*http.Response, error
 
 	// --- Step 1: Build destination URL ---
 	dest := &url.URL{
-		Scheme:   "http",
+		Scheme:   "https",
 		Host:     r.Host,
 		Path:     r.URL.Path,
 		RawQuery: r.URL.RawQuery,
@@ -146,7 +146,7 @@ func RequestWithUMA(client *http.Client, r *http.Request) (*http.Response, error
 		return nil, errors.New("UMA token request failed: " + string(bodyBytes))
 	}
 
-	var rpt UMAResponse
+	var rpt TokenResponse
 	if err := json.NewDecoder(umaResp.Body).Decode(&rpt); err != nil {
 		logrus.WithError(err).Error("Failed to decode UMA token endpoint response")
 		return nil, err

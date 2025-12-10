@@ -4,10 +4,7 @@ import (
 	"aggregator/auth"
 	"aggregator/model"
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -73,10 +70,51 @@ func createDeployment(actor *model.Actor, replicas int32, ctx context.Context) e
 
 	container := corev1.Container{
 		Name:            actor.Id,
-		Image:           "fetch",
+		Image:           actor.Id,
 		ImagePullPolicy: corev1.PullNever,
 		Env: []corev1.EnvVar{
-			{Name: "GET_URL", Value: "http://wsl.local:6000/"},
+			{Name: "QUERY", Value: `
+				PREFIX ex: <http://example.org/>
+				SELECT ?value ?unit
+				WHERE {
+					?obs ex:value ?value ;
+							ex:unit  ?unit .
+				}`,
+			},
+			{Name: "SOURCE", Value: "https://pacsoi-kvasir.faqir.org/patient0/slices/AggregatorDemoSlice/query"},
+			{Name: "SCHEMA", Value: `type Query {
+					observations: [ex_Observation]!
+					observation(id: ID!): ex_Observation
+				}
+
+				type ex_Observation {
+					id: ID!
+					ex_value: Int!
+					ex_unit: String!
+					ex_timestamp: DateTime!
+				}
+
+				type Mutation {
+					add(obs: [ObservationInput!]!): ID!
+				}
+
+				type Subscription {
+					observationAdded: ex_Observation!
+				}
+					
+				input ObservationInput @class(iri: "ex:Observation") {
+					id: ID!
+					ex_value: Int!
+					ex_unit: String!
+					ex_timestamp: DateTime!
+				}`,
+			},
+			{Name: "CONTEXT", Value: `{
+  				"kss": "https://kvasir.discover.ilabt.imec.be/vocab#",
+  				"schema": "http://schema.org/",
+  				"ex": "http://example.org/"
+				}`,
+			},
 			{Name: "HTTP_PROXY", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", actor.Namespace)},
 			{Name: "http_proxy", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", actor.Namespace)},
 			{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
@@ -141,7 +179,7 @@ func createService(actor *model.Actor, ctx context.Context) error {
 			},
 			Ports: []corev1.ServicePort{
 				{
-					Port:       80,
+					Port:       8080,
 					TargetPort: intstr.FromInt(8080),
 				},
 			},
@@ -156,7 +194,7 @@ func createService(actor *model.Actor, ctx context.Context) error {
 	actor.Services = append(actor.Services, *svc)
 
 	// Register endpoint
-	actor.PrivEndpoints = append(actor.PrivEndpoints, fmt.Sprintf("%s.%s.svc.cluster.local", svcName, actor.Namespace))
+	actor.PrivEndpoints = append(actor.PrivEndpoints, fmt.Sprintf("http://%s.%s.svc.cluster.local:8080", svcName, actor.Namespace))
 
 	return nil
 }
@@ -175,7 +213,7 @@ func createIngressRoute(actor *model.Actor, owner model.User, ctx context.Contex
 
 	_, err := model.DynamicClient.
 		Resource(ingressRouteGVR).
-		Namespace("aggregator-app").
+		Namespace(namespace).
 		Get(ctx, irName, metav1.GetOptions{})
 	if err == nil {
 		return fmt.Errorf("IngressRoute %s already exists in namespace %s", irName, namespace)
@@ -185,10 +223,10 @@ func createIngressRoute(actor *model.Actor, owner model.User, ctx context.Contex
 	}
 
 	// Create Rewrite Middleware
-	rewriteMiddleware, err := createRewriteMiddleware("/", ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create rewrite middleware: %w", err)
-	}
+	// rewriteMiddleware, err := createRewriteMiddleware(actor, ctx)
+	//if err != nil {
+	//	return fmt.Errorf("failed to create rewrite middleware: %w", err)
+	//}
 
 	// Define IngressRoute spec
 	obj := &unstructured.Unstructured{
@@ -197,10 +235,10 @@ func createIngressRoute(actor *model.Actor, owner model.User, ctx context.Contex
 			"kind":       "IngressRoute",
 			"metadata": map[string]interface{}{
 				"name":      irName,
-				"namespace": "aggregator-app",
+				"namespace": namespace,
 			},
 			"spec": map[string]interface{}{
-				"entryPoints": []string{"web"}, // adjust to websecure if needed
+				"entryPoints": []string{"web"},
 				"routes": []interface{}{
 					map[string]interface{}{
 						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/actors/" + namespace + "/" + actor.Id + "`)",
@@ -209,7 +247,7 @@ func createIngressRoute(actor *model.Actor, owner model.User, ctx context.Contex
 							map[string]interface{}{
 								"name":      svcName,
 								"namespace": namespace,
-								"port":      80,
+								"port":      8080,
 							},
 						},
 						"middlewares": []interface{}{
@@ -218,7 +256,7 @@ func createIngressRoute(actor *model.Actor, owner model.User, ctx context.Contex
 								"namespace": "aggregator-app",
 							},
 							map[string]interface{}{
-								"name":      rewriteMiddleware,
+								"name":      "replace-path",
 								"namespace": "aggregator-app",
 							},
 						},
@@ -231,7 +269,7 @@ func createIngressRoute(actor *model.Actor, owner model.User, ctx context.Contex
 	// Create IngressRoute
 	_, err = model.DynamicClient.
 		Resource(ingressRouteGVR).
-		Namespace("aggregator-app").
+		Namespace(namespace).
 		Create(ctx, obj, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create IngressRoute %s: %w", irName, err)
@@ -252,17 +290,12 @@ func createIngressRoute(actor *model.Actor, owner model.User, ctx context.Contex
 }
 
 // createRewriteMiddleware creates a Traefik IngressRoute Middleware to rewrite paths.
-func createRewriteMiddleware(path string, ctx context.Context) (string, error) {
+func createRewriteMiddleware(actor *model.Actor, ctx context.Context) (string, error) {
 	// Use aggregator-app namespace for middlewares
 	namespace := "aggregator-app"
-
-	// Sanitize path for name (remove /, replace with -) and hash to avoid collisions / length issues
-	cleanPath := strings.ReplaceAll(path, "/", "-")
-	if cleanPath == "" {
-		cleanPath = "root"
-	}
-	hash := sha1.Sum([]byte(path))
-	mwName := fmt.Sprintf("rewrite-%s%s", cleanPath, hex.EncodeToString(hash[:4])) // short hash for uniqueness
+	// Middleware name based on path
+	prefix := fmt.Sprintf("/actors/%s/%s", actor.Namespace, actor.Id)
+	mwName := fmt.Sprintf("rewrite-%s-%s", actor.Namespace, actor.Id)
 
 	// Traefik Middleware GVR
 	middlewareGVR := schema.GroupVersionResource{
@@ -295,8 +328,9 @@ func createRewriteMiddleware(path string, ctx context.Context) (string, error) {
 				"namespace": namespace,
 			},
 			"spec": map[string]interface{}{
-				"replacePath": map[string]interface{}{
-					"path": path,
+				"replacePathRegex": map[string]interface{}{
+					"regex":       "^" + prefix + "(/.*|$)",
+					"replacement": "/$1",
 				},
 			},
 		},

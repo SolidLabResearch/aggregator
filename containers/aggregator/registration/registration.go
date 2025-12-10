@@ -67,6 +67,14 @@ func RegistrationHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	req.OIDCConfig = *oidcConfig
 
+	// Generate PKCE code challenge and verifier
+	codeVerifier, codeChallenge, err := generatePKCE()
+	if err != nil {
+		logrus.WithError(err).Error("PKCE failed")
+		http.Error(w, "Failed to generate PKCE code challenge and verifier", http.StatusInternalServerError)
+	}
+	req.CodeVerifier = codeVerifier
+
 	// Generate random state
 	state, err := generateRandomState()
 	if err != nil {
@@ -87,11 +95,13 @@ func RegistrationHandler(w http.ResponseWriter, r *http.Request) {
 	// Construct response metadata
 	callbackURI := fmt.Sprintf("%s://%s/registration/callback", model.Protocol, model.ExternalHost)
 	response := map[string]string{
-		"callback_uri":  callbackURI,
-		"state":         state,
-		"scope":         "openid profile email offline_access",
-		"response_type": "code",
-		"client_id":     model.ClientId,
+		"callback_uri":          callbackURI,
+		"state":                 state,
+		"scope":                 "openid profile email offline_access",
+		"response_type":         "code",
+		"client_id":             model.ClientId,
+		"code_challenge_method": "S256",
+		"code_challenge":        codeChallenge,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -161,6 +171,7 @@ func RegistrationCallback(w http.ResponseWriter, r *http.Request, mux *http.Serv
 		"redirect_uri":  {reqBody.RedirectUri},
 		"client_id":     {model.ClientId},
 		"client_secret": {model.ClientSecret},
+		"code_verifier": {regReq.CodeVerifier},
 	}
 
 	resp, err := http.PostForm(tokenEndpoint, data)

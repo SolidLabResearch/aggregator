@@ -163,28 +163,47 @@ func (config *UserConfigData) postActor(w http.ResponseWriter, r *http.Request) 
 }
 
 func (config *UserConfigData) HandleStatusEndpoint(w http.ResponseWriter, r *http.Request) {
+	logrusEntry := logrus.WithFields(logrus.Fields{
+		"method": r.Method,
+		"path":   r.URL.Path,
+	})
+
+	logrusEntry.Debug("Handling status endpoint request")
+
 	parts := strings.Split(r.URL.Path, "/")
 	if len(parts) < 5 {
+		logrusEntry.Error("Invalid URL format: expected at least 5 parts")
 		http.Error(w, "Invalid URL", http.StatusBadRequest)
 		return
 	}
 
 	id := parts[4]
+	logrusEntry = logrusEntry.WithField("actor_id", id)
+
 	actor, ok := config.actors[id]
 	if !ok {
+		logrusEntry.Error("Actor not found")
 		http.Error(w, "Actor not found", http.StatusNotFound)
 		return
 	}
 
+	logrusEntry.Debug("Found actor, checking status")
 	ready := actor.Status()
 
 	w.Header().Set("Content-Type", "application/json")
+
 	if ready {
+		logrusEntry.Info("Actor ready")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]bool{"ready": true})
+		if err := json.NewEncoder(w).Encode(map[string]bool{"ready": true}); err != nil {
+			logrusEntry.Error("Failed to encode JSON response: ", err)
+		}
 	} else {
+		logrusEntry.Warn("Actor not ready")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]bool{"ready": false})
+		if err := json.NewEncoder(w).Encode(map[string]bool{"ready": false}); err != nil {
+			logrusEntry.Error("Failed to encode JSON response: ", err)
+		}
 	}
 }
 

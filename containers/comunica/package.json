@@ -1,0 +1,19 @@
+{
+  "name": "aggregator-comunica-kvasir",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node index.js"
+  },
+  "author": "Pol Nachtergaele",
+  "license": "MIT",
+  "description": "",
+  "dependencies": {
+    "@comunica-graphql/query-sparql-graphql": "^4.2.10",
+    "n3": "^1.26.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

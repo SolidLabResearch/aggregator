@@ -9,7 +9,8 @@ type OIDCConfig struct {
 }
 
 type RegistrationRequest struct {
-	AuthzServerURL string     `json:"as_url"`
-	UserIdp        string     `json:"openid_provider"`
-	OIDCConfig     OIDCConfig `json:"oidc_config"`
+	AuthzServerURL string `json:"as_url"`
+	UserIdp        string `json:"openid_provider"`
+	OIDCConfig     OIDCConfig
+	CodeVerifier   string
 }

@@ -7,6 +7,8 @@ export interface RegistrationResponse {
   scope: string;
   response_type: string;
   client_id: string;
+  code_challenge_method: string;
+  code_challenge: string;
 }
 
 export interface OIDCConfigResponse {
@@ -49,6 +51,8 @@ export const buildRedirectUri = (authUrl: string, res: RegistrationResponse) => 
   uri.searchParams.append("scope", res.scope);
   uri.searchParams.append("response_type", res.response_type);
   uri.searchParams.append("client_id", res.client_id);
+  uri.searchParams.append("code_challenge_method", res.code_challenge_method),
+  uri.searchParams.append("code_challenge", res.code_challenge)
   return uri
 }
 

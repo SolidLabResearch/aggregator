@@ -4,6 +4,7 @@ import (
 	"aggregator/model"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -24,6 +25,25 @@ var (
 	stateStore   = make(map[string]storedState)
 	stateStoreMu sync.Mutex
 )
+
+func generatePKCE() (verifier string, challenge string, err error) {
+	// 32 bytes = 43-character URL-safe string
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", "", err
+	}
+
+	// Code verifier (Base64 URL-safe, no padding)
+	verifier = base64.RawURLEncoding.EncodeToString(b)
+
+	// SHA256 hash of the verifier
+	sum := sha256.Sum256([]byte(verifier))
+
+	// Code challenge (Base64 URL-safe, no padding)
+	challenge = base64.RawURLEncoding.EncodeToString(sum[:])
+
+	return verifier, challenge, nil
+}
 
 func generateRandomState() (string, error) {
 	b := make([]byte, 32)

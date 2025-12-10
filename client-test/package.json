@@ -13,14 +13,19 @@
     "kc-create-actor": "tsc && node dist/keycloak/create-actor.js",
     "kc-get-actor": "tsc && node dist/keycloak/get-actor.js",
     "kc-get-trans": "tsc && node dist/keycloak/get-trans.js",
-    "stream-actor-demo": "tsc && node dist/stream-actor-demo.js"
+    "stream-actor-demo": "tsc && node dist/stream-actor-demo.js",
+    "kv-create-pod": "tsc && node dist/kvasir/create-pod.js",
+    "kv-delete-pod": "tsc && node dist/kvasir/delete-pod.js",
+    "kv-setup-pod": "tsc && node dist/kvasir/setup-pod.js"
   },
   "dependencies": {
     "@inrupt/solid-client-authn-core": "^3.1.0",
     "cross-fetch": "^4.0.0",
-    "eventsource-parser": "^3.0.6"
+    "eventsource-parser": "^3.0.6",
+    "n3": "^1.26.0"
   },
   "devDependencies": {
+    "@types/n3": "^1.26.1",
     "@types/node": "^20.0.0",
     "typescript": "^5.0.0"
   },

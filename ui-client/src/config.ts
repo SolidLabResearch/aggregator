@@ -12,7 +12,7 @@ export interface AppConfig {
 
 export const config: AppConfig = {
   aggregatorBaseUrl: "http://aggregator.local",
-  asDefaultUrl: "https://pacsoi-uma.faqir.org",
+  asDefaultUrl: "http://wsl.local:4000/uma",
   redirectUriBase: "http://127.0.0.1:5173",
   keycloak: {
     clientId: "moveup-app",

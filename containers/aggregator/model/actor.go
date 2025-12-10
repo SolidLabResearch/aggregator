@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -62,11 +63,19 @@ func (actor *Actor) Stop() error {
 }
 
 func (actor *Actor) Status() bool {
+	logEntry := logrus.WithField("actor_id", actor.Id)
+	logEntry.Debug("Checking actor status")
+
 	for _, dep := range actor.Deployments {
+		logEntry := logEntry.WithField("deployment", dep.Name)
+		logEntry.Debugf("Deployment available replicas: %d", dep.Status.AvailableReplicas)
 		if dep.Status.AvailableReplicas == 0 {
+			logEntry.Warn("Deployment has zero available replicas, actor not ready")
 			return false
 		}
 	}
+
+	logEntry.Info("All deployments have available replicas, actor ready")
 	return true
 }
 

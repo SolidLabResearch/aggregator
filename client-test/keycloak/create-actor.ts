@@ -1,13 +1,13 @@
 import { KeycloakOIDCAuth } from "../util.js";
 
-const ACTORS_ENDPOINT = "http://aggregator.local/config/7275e5fb-ffd5-4478-8e72-7770b411386c/actors";
+const ACTORS_ENDPOINT = "http://aggregator.local/config/8eef3823-5cbf-447c-abd9-9c848de3b402/actors";
 
 const USERNAME = "doctor@example.com";
 const PASSWORD = "doctor";
 const CLIENT_ID = "moveup-app";
 const CLIENT_SECRET = "Yg8rGkQNQ4OqDh3AUR81EoSJtjPDXH4n";
 
-const ACTOR_ID = "fetch";
+const ACTOR_ID = "comunica";
 const DESCRIPTION = `
 @prefix config: <http://localhost:5000/config#> .
 @prefix fno: <https://w3id.org/function/ontology#> .
@@ -91,6 +91,7 @@ async function waitForActorReady(statusUrl: string, intervalMs = 3000, timeoutMs
 
 async function main() {
     await createActor(ACTOR_ID, DESCRIPTION);
+    //await waitForActorReady("http://aggregator.local/config/a6785d0b-c31c-48f4-bb93-6ba25f105bf0/actors/comunica/status");
 }
 
 main().catch(console.error);

@@ -1,6 +1,6 @@
 import {fetch} from 'cross-fetch';
 
-async function getUMAConfig(as_uri: string) {
+export async function getUMAConfig(as_uri: string) {
     const config_uri = `${as_uri}/.well-known/uma2-configuration`;
 
     const response = await fetch(config_uri, {
@@ -361,7 +361,7 @@ export class KeycloakOIDCAuth {
      * Create the claim token used for UMA
      * (For Keycloak this is simply the OIDC access token)
      */
-    private async createClaimToken(issuer: string): Promise<string> {
+    public async createClaimToken(issuer: string): Promise<string> {
         await this.ensureValidToken();
 
         if (!this.accessToken || !this.idToken) throw new Error("Not initialized");

@@ -18,7 +18,8 @@
   "include": [
     "*.ts", 
     "solid/*.ts", 
-    "keycloak/*.ts"  
+    "keycloak/*.ts",
+    "kvasir/*.ts"
   ],
   "exclude": [
     "node_modules",
