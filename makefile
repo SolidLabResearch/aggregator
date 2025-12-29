@@ -21,10 +21,6 @@ kind-start:
 	else \
 		echo "Kind cluster 'aggregator' already exists."; \
 	fi
-	@echo "🚀 Configuring kubernetes dashboard"
-	@helm repo add kubernetes-dashboard https://kubernetes.github.io/dashboard/
-	@helm upgrade --install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard --create-namespace --namespace kubernetes-dashboard
-	@kubectl apply -f k8s/dashboard-admin.yaml
 
 # Stop and delete kind cluster
 kind-stop:
@@ -34,11 +30,20 @@ kind-stop:
 # Optional: dashboard (kubectl proxy)
 # Get token: kubectl get secret admin-user -n kubernetes-dashboard -o jsonpath="{.data.token}" | base64 -d
 kind-dashboard:
+	@echo "🚀 Configuring kubernetes dashboard"
+	@if ! helm repo list | grep -q "kubernetes-dashboard"; then \
+		helm repo add kubernetes-dashboard https://kubernetes.github.io/dashboard/; \
+	fi
+	@helm repo update
+	@helm upgrade --install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard --create-namespace --namespace kubernetes-dashboard
+	@kubectl apply -f k8s/dashboard-admin.yaml
 	@echo "🚀 Starting kubectl proxy for Kubernetes dashboard..."
 	@kubectl wait --namespace kubernetes-dashboard \
   	--for=condition=ready pod \
   	--selector=app.kubernetes.io/instance=kubernetes-dashboard \
   	--timeout=120s
+	@echo "🔑 The token is:"
+	@kubectl get secret admin-user -n kubernetes-dashboard -o jsonpath="{.data.token}" | base64 -d && echo ""
 	@kubectl -n kubernetes-dashboard port-forward svc/kubernetes-dashboard-kong-proxy 8443:443
 	
 
@@ -61,13 +66,12 @@ containers-build:
 			exit 1; \
 		fi \
 	else \
-		for dir in containers/*; do \
-			if [ -d "$$dir" ]; then \
-				name=$$(basename $$dir); \
-				echo "📦 Building $$name..."; \
-				docker build "$$dir" -t "$$name:latest"; \
-			fi \
-		done \
+		find containers -maxdepth 1 -mindepth 1 -type d | \
+		xargs -I {} -P $$(nproc) sh -c '\
+			name=$$(basename {}); \
+			echo "📦 Building $$name..."; \
+			docker build {} -t "$$name:latest" && echo "✅ Built $$name" || echo "❌ Failed to build $$name"; \
+		'; \
 	fi
 
 # Load Docker images into kind
@@ -78,13 +82,12 @@ containers-load:
 		echo "📥 Loading $$name into kind..."; \
 		kind load docker-image "$$name:latest" --name aggregator; \
 	else \
-		for dir in containers/*; do \
-			if [ -d "$$dir" ]; then \
-				name=$$(basename $$dir); \
-				echo "📥 Loading $$name into kind..."; \
-				kind load docker-image "$$name:latest" --name aggregator; \
-			fi \
-		done \
+		find containers -maxdepth 1 -mindepth 1 -type d | \
+		xargs -I {} -P 4 sh -c '\
+			name=$$(basename {}); \
+			echo "📥 Loading $$name into kind..."; \
+			kind load docker-image "$$name:latest" --name aggregator && echo "✅ Loaded $$name" || echo "❌ Failed to load $$name"; \
+		'; \
 	fi
 
 # Build and load all containers
@@ -131,16 +134,16 @@ kind-deploy:
 
 	@echo "📄 Creating secret for ingress-uma..."
 	@kubectl -n aggregator-app create secret generic ingress-uma-key \
-		--from-file=private_key.pem=k8s/uma/private_key.pem \
+		--from-file=private_key.pem=private_key.pem \
 		--dry-run=client -o yaml | kubectl apply -f -
-	
+
 	@echo "📄 Applying aggregator ConfigMap..."
 	@kubectl apply -f k8s/app/config.yaml
 
 	@echo "📄 Adding localhost entries for ingress hosts..."
 	@grep -qxF "127.0.0.1 aggregator.local" /etc/hosts || sudo -- sh -c "echo '127.0.0.1 aggregator.local' >> /etc/hosts"
 	@grep -qxF "127.0.0.1 wsl.local" /etc/hosts || sudo -- sh -c "echo '127.0.0.1 wsl.local' >> /etc/hosts"
-	
+
 	@echo "📄 Applying ingress-uma..."
 	@kubectl apply -f k8s/app/ingress-uma.yaml
 	@echo "⏳ Waiting for ingress-uma deployment to be ready..."
@@ -178,7 +181,7 @@ kind-stop-traefik:
 	@echo "🧹 Deleting Traefik Ingress Controller..."
 	# Delete the namespace (optional, removes all resources inside)
 	@kubectl delete namespace aggregator-traefik --ignore-not-found
-	@echo "✅ Traefik Ingress Controller removed successfully.
+	@echo "✅ Traefik Ingress Controller removed successfully."
 
 kind-clean:
 	@echo "🧹 Deleting aggregator cluster-wide roles..."
