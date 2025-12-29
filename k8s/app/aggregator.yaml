@@ -1,0 +1,166 @@
+# ========================
+# 1 Service Account
+# ========================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aggregator-sa
+  namespace: aggregator-app
+---
+# ========================
+# 2 ClusterRole: namespace management + Traefik middleware
+# ========================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aggregator-namespace-manager
+rules:
+  # Built-in resources
+  - apiGroups: [""]
+    resources: ["namespaces", "pods", "services", "configmaps"]
+    verbs: ["get", "list", "create", "delete", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "delete", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "create", "delete", "watch"]
+  # Traefik CRDs
+  - apiGroups: ["traefik.io"]
+    resources: ["middlewares", "ingressroutes"]
+    verbs: ["get", "list", "create", "update", "delete"]
+  # Istio CRDs
+  - apiGroups: ["networking.istio.io"]
+    resources: ["serviceentries", "virtualservices", "destinationrules", "gateways", "envoyfilters"]
+    verbs: ["get", "list", "create", "update", "delete", "watch"]
+---
+# ========================
+# 3 ClusterRoleBinding: bind SA to role
+# ========================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aggregator-namespace-manager-binding
+subjects:
+  - kind: ServiceAccount
+    name: aggregator-sa
+    namespace: aggregator-app
+roleRef:
+  kind: ClusterRole
+  name: aggregator-namespace-manager
+  apiGroup: rbac.authorization.k8s.io
+---
+# ========================
+# 4 Deployment
+# ========================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aggregator
+  namespace: aggregator-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aggregator
+  template:
+    metadata:
+      labels:
+        app: aggregator
+    spec:
+      serviceAccountName: aggregator-sa
+      containers:
+        - name: aggregator
+          image: aggregator
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 5000
+          env:
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: log_level
+            - name: AS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: as_url
+            - name: ADMIN_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: admin
+            - name: CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: client_id
+            - name: CLIENT_SECRET
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: client_secret
+            - name: IDP
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: idp
+            - name: AGGREGATOR_EXTERNAL_HOST
+              value: "aggregator.local"
+---
+# ========================
+# 5 Service: expose aggregator
+# ========================
+apiVersion: v1
+kind: Service
+metadata:
+  name: aggregator-svc
+  namespace: aggregator-app
+spec:
+  type: ClusterIP
+  selector:
+      app: aggregator
+  ports:
+    - port: 5000       
+      targetPort: 5000
+---
+# =======================
+# 6 Ingress
+# ========================
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aggregator-ingressroute
+  namespace: aggregator-app
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`aggregator.local`) && PathPrefix(`/`)
+      kind: Rule
+      services:
+        - name: aggregator-svc
+          port: 5000
+      middlewares:
+        - name: ingress-uma
+          namespace: aggregator-app
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aggregator-registration-ingressroute
+  namespace: aggregator-app
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`aggregator.local`) && PathPrefix(`/registration`)
+      kind: Rule
+      services:
+        - name: aggregator-svc
+          port: 5000
+      middlewares:
+        - name: cors
+          namespace: aggregator-app
+---
