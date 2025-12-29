@@ -1,0 +1,62 @@
+
+# ------------------------
+# 2️⃣ Service Account (optional, use default if not needed)
+# ------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: uma-proxy-sa
+  namespace: uma-proxy-ns
+---
+# ------------------------
+# 3️⃣ Pod
+# ------------------------
+apiVersion: v1
+kind: Pod
+metadata:
+  name: uma-proxy
+  namespace: uma-proxy-ns
+  labels:
+    app: uma-proxy
+spec:
+  serviceAccountName: uma-proxy-sa
+  containers:
+    - name: uma-proxy
+      image: uma-proxy
+      imagePullPolicy: Never
+      ports:
+        - containerPort: 8080
+        - containerPort: 8443
+      volumeMounts:
+        - name: key-pair
+          mountPath: /key-pair
+          readOnly: true
+      env:
+        - name: CERT_PATH
+          value: "/key-pair/uma-proxy.crt"
+        - name: KEY_PATH
+          value: "/key-pair/uma-proxy.key"
+  volumes:
+    - name: key-pair
+      secret:
+        secretName: uma-proxy-key-pair
+---
+# ------------------------
+# 4️⃣ Service
+# ------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: uma-proxy
+  namespace: uma-proxy-ns
+spec:
+  type: ClusterIP
+  selector:
+    app: uma-proxy
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+    - name: https
+      port: 8443
+      targetPort: 8443

@@ -1,0 +1,7 @@
+# ------------------------
+# 1️⃣ Namespace
+# ------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: uma-proxy-ns
