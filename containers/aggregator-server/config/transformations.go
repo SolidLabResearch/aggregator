@@ -46,27 +46,31 @@ func (config TransformationsConfigData) HandleTransformationsEndpoint(w http.Res
 // getAvailableTransformations HEAD /config/transformations retrieves all available transformations
 func (config *TransformationsConfigData) headAvailableTransformations(w http.ResponseWriter, r *http.Request) {
 	accept := r.Header.Get("Accept")
-	if accept != "" && accept != "*/*" && accept != "text/turtle" {
+	contentType := negotiateContentType(accept, []string{"text/turtle"})
+
+	if contentType == "" {
 		http.Error(w, "Unsupported Media Type. Only text/turtle is supported.", http.StatusUnsupportedMediaType)
 		return
 	}
 
 	header := w.Header()
 	header.Set("ETag", strconv.Itoa(config.etagTransformations))
-	header.Set("Content-Type", "text/turtle")
+	header.Set("Content-Type", contentType)
 }
 
 // getAvailableTransformations GET /config/transformations retrieves all available transformations
 func (config *TransformationsConfigData) getAvailableTransformations(w http.ResponseWriter, r *http.Request) {
 	accept := r.Header.Get("Accept")
-	if accept != "" && accept != "*/*" && accept != "text/turtle" {
+	contentType := negotiateContentType(accept, []string{"text/turtle"})
+
+	if contentType == "" {
 		http.Error(w, "Unsupported Media Type. Only text/turtle is supported.", http.StatusUnsupportedMediaType)
 		return
 	}
 
 	header := w.Header()
 	header.Set("ETag", strconv.Itoa(config.etagTransformations))
-	header.Set("Content-Type", "text/turtle")
+	header.Set("Content-Type", contentType)
 	_, err := w.Write([]byte(config.transformations))
 	if err != nil {
 		http.Error(w, "error when writing body", http.StatusInternalServerError)

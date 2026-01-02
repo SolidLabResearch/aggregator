@@ -39,7 +39,7 @@ func handleServerDescription(w http.ResponseWriter, r *http.Request) {
 			"authorization_code",
 		},
 		Version:               "1.0.0",
-		ClientIdentifier:      fmt.Sprintf("%s://%s/client.json", model.Protocol, model.ExternalHost), // Placeholder, not implemented yet
+		ClientIdentifier:      fmt.Sprintf("%s://%s/client.json", model.Protocol, model.ExternalHost),
 		TransformationCatalog: fmt.Sprintf("%s://%s/config/transformations", model.Protocol, model.ExternalHost),
 	}
 
