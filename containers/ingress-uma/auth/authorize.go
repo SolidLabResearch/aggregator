@@ -56,8 +56,8 @@ func HandleAuthorizationRequest(w http.ResponseWriter, r *http.Request) {
 		"resource": resourceId,
 		"uma_id":   umaId,
 		"method":   method,
-		"as_url":   issuer},
-	).Info("Authorize request")
+		"as_url":   issuer,
+	}).Info("Authorize request")
 
 	// Always authorize if disabled for testing
 	if DisableAuth {

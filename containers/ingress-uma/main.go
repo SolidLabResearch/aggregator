@@ -15,7 +15,6 @@ import (
 )
 
 var ExternalHost = os.Getenv("EXTERNAL_HOST")
-var ASURL = os.Getenv("AS_URL")
 var DisableAuth = strings.ToLower(os.Getenv("DISABLE_AUTH")) == "true"
 
 func init() {

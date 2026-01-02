@@ -81,16 +81,6 @@ spec:
                 configMapKeyRef:
                   name: aggregator-config
                   key: log_level
-            - name: AS_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: aggregator-config
-                  key: as_url
-            - name: ADMIN_ID
-              valueFrom:
-                configMapKeyRef:
-                  name: aggregator-config
-                  key: admin
             - name: CLIENT_ID
               valueFrom:
                 configMapKeyRef:
@@ -101,11 +91,6 @@ spec:
                 configMapKeyRef:
                   name: aggregator-config
                   key: client_secret
-            - name: IDP
-              valueFrom:
-                configMapKeyRef:
-                  name: aggregator-config
-                  key: idp
             - name: AGGREGATOR_EXTERNAL_HOST
               value: "aggregator.local"
 ---
