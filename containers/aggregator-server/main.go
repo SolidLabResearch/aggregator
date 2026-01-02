@@ -65,7 +65,7 @@ func main() {
 	serverMux := http.NewServeMux()
 
 	// Configuration endpoint
-	err = config.InitAdminConfiguration(serverMux)
+	err = config.InitTransformationsConfiguration(serverMux)
 	if err != nil {
 		logrus.WithError(err).Warn("Failed to set up configuration endpoint (UMA might be down)")
 	}
