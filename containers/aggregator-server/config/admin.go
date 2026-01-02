@@ -1,7 +1,6 @@
 package config
 
 import (
-	"aggregator/auth"
 	"aggregator/model"
 	"fmt"
 	"net/http"
@@ -18,31 +17,15 @@ type AdminConfigData struct {
 func InitAdminConfiguration(mux *http.ServeMux) error {
 	logrus.Info("Initializing admin configuration")
 
+	transformations := fmt.Sprintf(hardcodedAvailableTransformationsTemplate, model.ExternalHost)
+
 	config := AdminConfigData{
 		etagTransformations: 0,
-		transformations:     hardcodedAvailableTransformations,
+		transformations:     transformations,
 	}
 
 	// Register HTTP handler
 	mux.HandleFunc("/config/transformations", config.HandleTransformationsEndpoint)
-
-	// Build full URL
-	fullURL := fmt.Sprintf("%s://%s/config", model.Protocol, model.ExternalHost)
-
-	// Register resource
-	if err := auth.RegisterResource(fullURL, model.AggregatorASURL, []model.Scope{model.Read, model.Write}); err != nil {
-		return fmt.Errorf("failed to register config resource %s: %w", fullURL, err)
-	}
-
-	// Define public policy
-	if err := auth.DefinePublicPolicy(fullURL, model.AggregatorASURL, []model.Scope{model.Read}); err != nil {
-		return fmt.Errorf("failed to define public read policy for resource %s: %w", fullURL, err)
-	}
-
-	// Define admin policy
-	if err := auth.DefinePolicy(fullURL, model.AdminId, model.AggregatorASURL, []model.Scope{model.Write}); err != nil {
-		return fmt.Errorf("failed to define admin write policy for resource %s", fullURL)
-	}
 
 	logrus.Info("Admin configuration initialization completed")
 	return nil
@@ -78,8 +61,8 @@ func (config *AdminConfigData) getAvailableTransformations(w http.ResponseWriter
 	}
 }
 
-const hardcodedAvailableTransformations = `
-@base <http://localhost:5000/config/transformations#> .
+const hardcodedAvailableTransformationsTemplate = `
+@base <http://%s/config/transformations#> .
 @prefix fno: <https://w3id.org/function/ontology#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .

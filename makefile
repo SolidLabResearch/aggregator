@@ -164,7 +164,7 @@ kind-deploy:
 	@echo "📄 Applying aggregator deployment and service..."
 	@kubectl apply -f k8s/app/aggregator.yaml
 	@echo "⏳ Waiting for aggregator deployment to be ready..."
-	@kubectl rollout status deployment aggregator -n aggregator-app --timeout=120s
+	@kubectl rollout status deployment aggregator-server -n aggregator-app --timeout=120s
 
 	@echo "✅ Resources deployed to kind"
 

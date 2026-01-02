@@ -1,7 +1,6 @@
 package registration
 
 import (
-	"aggregator/config"
 	"aggregator/model"
 	"context"
 	"encoding/json"
@@ -114,7 +113,7 @@ func RegistrationHandler(w http.ResponseWriter, r *http.Request) {
 	logrus.Infof("Registration initialization successful (state=%s)", state)
 }
 
-func RegistrationCallback(w http.ResponseWriter, r *http.Request, mux *http.ServeMux) {
+func RegistrationCallback(w http.ResponseWriter, r *http.Request) {
 	logrus.Debug("Entered RegistrationCallback")
 
 	// Method check
@@ -247,17 +246,10 @@ func RegistrationCallback(w http.ResponseWriter, r *http.Request, mux *http.Serv
 	}
 	user.Namespace = ns
 
-	// Deploy UMA proxy
-	if err := createUMAProxy(1, ns, tokenEndpoint, user.RefreshToken, ctx); err != nil {
-		logrus.WithError(err).Errorf("Failed to deploy Egress UMA for user: %s", user.UserId)
-		http.Error(w, "Failed to deploy UMA proxy", http.StatusInternalServerError)
-		return
-	}
-
-	// Initialize user configuration
-	if err := config.InitUserConfiguration(mux, user); err != nil {
-		logrus.WithError(err).Errorf("Failed to initialize user configuration for user: %s", user.UserId)
-		http.Error(w, "Failed to initialize user configuration", http.StatusInternalServerError)
+	// Deploy Aggregator Instance & UMA Proxy
+	if err := createAggregatorInstance(1, ns, user, tokenEndpoint, ctx); err != nil {
+		logrus.WithError(err).Errorf("Failed to deploy Aggregator Instance for user: %s", user.UserId)
+		http.Error(w, "Failed to deploy Aggregator Instance", http.StatusInternalServerError)
 		return
 	}
 
