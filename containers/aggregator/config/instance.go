@@ -32,12 +32,12 @@ func InitInstanceConfiguration(mux *http.ServeMux, user model.User) error {
 	fullURL := fmt.Sprintf("%s://%s/transformations", model.Protocol, model.ExternalHost)
 
 	// Register resource
-	if err := auth.RegisterResource(fullURL, model.AggregatorASURL, []model.Scope{model.Read}); err != nil {
+	if err := auth.RegisterResource(fullURL, user.AuthzServerURL, []model.Scope{model.Read}); err != nil {
 		return fmt.Errorf("failed to register config resource %s: %w", fullURL, err)
 	}
 
 	// Define policy (owner only)
-	if err := auth.DefinePolicy(fullURL, user.UserId, model.AggregatorASURL, []model.Scope{model.Read}); err != nil {
+	if err := auth.DefinePolicy(fullURL, user.UserId, user.AuthzServerURL, []model.Scope{model.Read}); err != nil {
 		return fmt.Errorf("failed to define policy for resource %s", fullURL)
 	}
 
