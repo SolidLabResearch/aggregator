@@ -70,6 +70,9 @@ func main() {
 		logrus.WithError(err).Warn("Failed to set up configuration endpoint (UMA might be down)")
 	}
 
+	// Client Identifier endpoint
+	config.InitClientIdentifier(serverMux)
+
 	// Server Description endpoint
 	config.InitServerDescription(serverMux)
 
