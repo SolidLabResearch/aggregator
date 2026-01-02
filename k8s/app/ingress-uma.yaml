@@ -35,11 +35,6 @@ spec:
                   key: disable_auth
             - name: EXTERNAL_HOST
               value: "aggregator.local"
-            - name: AS_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: aggregator-config
-                  key: as_url
           volumeMounts:
             - name: uma-key-volume
               mountPath: /keys
