@@ -9,17 +9,17 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type AdminConfigData struct {
+type TransformationsConfigData struct {
 	etagTransformations int
 	transformations     string
 }
 
-func InitAdminConfiguration(mux *http.ServeMux) error {
-	logrus.Info("Initializing admin configuration")
+func InitTransformationsConfiguration(mux *http.ServeMux) error {
+	logrus.Info("Initializing transformations configuration")
 
 	transformations := fmt.Sprintf(hardcodedAvailableTransformationsTemplate, model.ExternalHost)
 
-	config := AdminConfigData{
+	config := TransformationsConfigData{
 		etagTransformations: 0,
 		transformations:     transformations,
 	}
@@ -27,12 +27,12 @@ func InitAdminConfiguration(mux *http.ServeMux) error {
 	// Register HTTP handler
 	mux.HandleFunc("/config/transformations", config.HandleTransformationsEndpoint)
 
-	logrus.Info("Admin configuration initialization completed")
+	logrus.Info("Transformations configuration initialization completed")
 	return nil
 }
 
 // HandleTransformationsEndpoint handles requests to the /config/transformations endpoint
-func (config AdminConfigData) HandleTransformationsEndpoint(w http.ResponseWriter, r *http.Request) {
+func (config TransformationsConfigData) HandleTransformationsEndpoint(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "HEAD":
 		config.headAvailableTransformations(w, r)
@@ -44,14 +44,26 @@ func (config AdminConfigData) HandleTransformationsEndpoint(w http.ResponseWrite
 }
 
 // getAvailableTransformations HEAD /config/transformations retrieves all available transformations
-func (config *AdminConfigData) headAvailableTransformations(w http.ResponseWriter, _ *http.Request) {
+func (config *TransformationsConfigData) headAvailableTransformations(w http.ResponseWriter, r *http.Request) {
+	accept := r.Header.Get("Accept")
+	if accept != "" && accept != "*/*" && accept != "text/turtle" {
+		http.Error(w, "Unsupported Media Type. Only text/turtle is supported.", http.StatusUnsupportedMediaType)
+		return
+	}
+
 	header := w.Header()
 	header.Set("ETag", strconv.Itoa(config.etagTransformations))
 	header.Set("Content-Type", "text/turtle")
 }
 
 // getAvailableTransformations GET /config/transformations retrieves all available transformations
-func (config *AdminConfigData) getAvailableTransformations(w http.ResponseWriter, _ *http.Request) {
+func (config *TransformationsConfigData) getAvailableTransformations(w http.ResponseWriter, r *http.Request) {
+	accept := r.Header.Get("Accept")
+	if accept != "" && accept != "*/*" && accept != "text/turtle" {
+		http.Error(w, "Unsupported Media Type. Only text/turtle is supported.", http.StatusUnsupportedMediaType)
+		return
+	}
+
 	header := w.Header()
 	header.Set("ETag", strconv.Itoa(config.etagTransformations))
 	header.Set("Content-Type", "text/turtle")
