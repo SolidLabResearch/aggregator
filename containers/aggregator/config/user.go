@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"aggregator/actors"
-	"aggregator/auth"
 	"aggregator/model"
 
 	"github.com/google/uuid"
@@ -51,20 +50,6 @@ func (config *UserConfigData) HandleFunc(pattern string, handler func(http.Respo
 	// Register HTTP handler
 	config.serveMux.HandleFunc(pattern, handler)
 	logrus.Infof("Handler registered for pattern: %s", pattern)
-
-	// Register the resource with the Authorization Server
-	if err := auth.RegisterResource(fullURL, model.AggregatorASURL, scopes); err != nil {
-		logrus.WithError(err).Errorf("Failed to register resource for URL '%s'", fullURL)
-		return fmt.Errorf("HandleFunc: registerResource failed for %s: %w", fullURL, err)
-	}
-	logrus.Debugf("Resource registered successfully for URL '%s'", fullURL)
-
-	// Define policy for the resource
-	if err := auth.DefinePolicy(fullURL, config.owner.UserId, model.AggregatorASURL, scopes); err != nil {
-		logrus.WithError(err).Errorf("Failed to define policy for URL '%s' and user '%s'", fullURL, config.owner.UserId)
-		return fmt.Errorf("HandleFunc: definePolicy failed for %s: %w", fullURL, err)
-	}
-	logrus.Debugf("Policy defined successfully for URL '%s' and user '%s'", fullURL, config.owner.UserId)
 
 	logrus.Info("HandleFunc setup completed for pattern: ", pattern)
 	return nil

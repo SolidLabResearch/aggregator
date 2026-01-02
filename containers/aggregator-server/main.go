@@ -3,6 +3,7 @@ package main
 import (
 	"aggregator/config"
 	"aggregator/model"
+	reg "aggregator/registration"
 	"context"
 	"net/http"
 	"os"
@@ -45,20 +46,6 @@ func main() {
 		logrus.Fatal("Environment variable CLIENT_SECRET must be set")
 	}
 
-	// Read Instance Identity
-	userNamespace := os.Getenv("USER_NAMESPACE")
-	if userNamespace == "" {
-		logrus.Fatal("Environment variable USER_NAMESPACE must be set")
-	}
-	userId := os.Getenv("USER_ID")
-	if userId == "" {
-		logrus.Fatal("Environment variable USER_ID must be set")
-	}
-	asUrl := os.Getenv("AS_URL")
-	if asUrl == "" {
-		logrus.Fatal("Environment variable USER_ID must be set")
-	}
-
 	// Load in-cluster kubeConfig
 	kubeConfig, err := rest.InClusterConfig()
 	if err != nil {
@@ -77,25 +64,17 @@ func main() {
 	// Configure HTTP server
 	serverMux := http.NewServeMux()
 
-	// Initialize User Configuration
-	user := model.User{
-		UserId:         userId,
-		Namespace:      userNamespace,
-		AuthzServerURL: asUrl,
-	}
-	err = config.InitUserConfiguration(serverMux, user)
+	// Configuration endpoint
+	err = config.InitAdminConfiguration(serverMux)
 	if err != nil {
-		logrus.WithError(err).Fatalf("Failed to set up user configuration endpoint")
+		logrus.WithError(err).Warn("Failed to set up configuration endpoint (UMA might be down)")
 	}
 
-	// Initialize Aggregator Description
-	config.InitAggregatorDescription(serverMux, user)
+	// Server Description endpoint
+	config.InitServerDescription(serverMux)
 
-	// Initialize Instance Transformations
-	err = config.InitInstanceConfiguration(serverMux, user)
-	if err != nil {
-		logrus.WithError(err).Fatalf("Failed to set up instance configuration endpoint")
-	}
+	// Registration endpoint
+	initRegistration(serverMux)
 
 	// Start HTTP server
 	srv := &http.Server{
@@ -125,4 +104,9 @@ func main() {
 	}
 
 	logrus.Info("Server stopped gracefully")
+}
+
+func initRegistration(mux *http.ServeMux) {
+	mux.HandleFunc("/registration", reg.RegistrationHandler)
+	mux.HandleFunc("/registration/callback", reg.RegistrationCallback)
 }

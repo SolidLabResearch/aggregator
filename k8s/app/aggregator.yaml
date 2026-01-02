@@ -25,6 +25,9 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "list", "create", "delete", "watch"]
+  - apiGroups: [ "discovery.k8s.io" ]
+    resources: [ "endpointslices" ]
+    verbs: [ "get", "list", "watch" ]
   # Traefik CRDs
   - apiGroups: ["traefik.io"]
     resources: ["middlewares", "ingressroutes"]
@@ -56,22 +59,22 @@ roleRef:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: aggregator
+  name: aggregator-server
   namespace: aggregator-app
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: aggregator
+      app: aggregator-server
   template:
     metadata:
       labels:
-        app: aggregator
+        app: aggregator-server
     spec:
       serviceAccountName: aggregator-sa
       containers:
-        - name: aggregator
-          image: aggregator
+        - name: aggregator-server
+          image: aggregator-server
           imagePullPolicy: Never
           ports:
             - containerPort: 5000
@@ -100,14 +103,14 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: aggregator-svc
+  name: aggregator-server-svc
   namespace: aggregator-app
 spec:
   type: ClusterIP
   selector:
-      app: aggregator
+    app: aggregator-server
   ports:
-    - port: 5000       
+    - port: 5000
       targetPort: 5000
 ---
 # =======================
@@ -116,7 +119,7 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: aggregator-ingressroute
+  name: aggregator-server-ingressroute
   namespace: aggregator-app
 spec:
   entryPoints:
@@ -125,16 +128,13 @@ spec:
     - match: Host(`aggregator.local`) && PathPrefix(`/`)
       kind: Rule
       services:
-        - name: aggregator-svc
+        - name: aggregator-server-svc
           port: 5000
-      middlewares:
-        - name: ingress-uma
-          namespace: aggregator-app
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: aggregator-registration-ingressroute
+  name: aggregator-server-registration-ingressroute
   namespace: aggregator-app
 spec:
   entryPoints:
@@ -143,9 +143,6 @@ spec:
     - match: Host(`aggregator.local`) && PathPrefix(`/registration`)
       kind: Rule
       services:
-        - name: aggregator-svc
+        - name: aggregator-server-svc
           port: 5000
-      middlewares:
-        - name: cors
-          namespace: aggregator-app
 ---
