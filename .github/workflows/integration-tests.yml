@@ -31,8 +31,11 @@ jobs:
       - name: Set up Docker (Windows)
         if: runner.os == 'Windows'
         run: |
-          # Docker Desktop should already be available on windows-latest
+          # Ensure Docker Desktop is using WSL2 backend for Linux containers
           docker version
+          docker info | Select-String -Pattern "OSType"
+          # Verify we can build Linux containers
+          docker pull alpine:latest
 
       - name: Install Kind (Linux)
         if: runner.os == 'Linux'
@@ -90,12 +93,16 @@ jobs:
       - name: Build Docker images (Windows)
         if: runner.os == 'Windows'
         run: |
-          # Build containers sequentially on Windows
+          # Build Linux containers on Windows using WSL2 backend
           Get-ChildItem -Path containers -Directory | ForEach-Object {
             $name = $_.Name
             Write-Host "Building $name..."
-            docker build "containers/$name" -t "${name}:latest"
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            docker build --platform linux/amd64 "containers/$name" -t "${name}:latest"
+            if ($LASTEXITCODE -ne 0) { 
+              Write-Host "Failed to build $name"
+              exit $LASTEXITCODE 
+            }
+            Write-Host "Successfully built $name"
           }
         shell: powershell
         timeout-minutes: 30
