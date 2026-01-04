@@ -31,11 +31,10 @@ jobs:
       - name: Set up Docker (Windows)
         if: runner.os == 'Windows'
         run: |
-          # Ensure Docker Desktop is using WSL2 backend for Linux containers
           docker version
           docker info | Select-String -Pattern "OSType"
-          # Verify we can build Linux containers
           docker pull alpine:latest
+        shell: powershell
 
       - name: Install Kind (Linux)
         if: runner.os == 'Linux'
@@ -82,7 +81,6 @@ jobs:
           kind version
           kubectl version --client
           helm version
-        shell: bash
 
       - name: Build Docker images (Linux)
         if: runner.os == 'Linux'
@@ -93,7 +91,6 @@ jobs:
       - name: Build Docker images (Windows)
         if: runner.os == 'Windows'
         run: |
-          # Build Linux containers on Windows using WSL2 backend
           Get-ChildItem -Path containers -Directory | ForEach-Object {
             $name = $_.Name
             Write-Host "Building $name..."
@@ -109,7 +106,7 @@ jobs:
 
       - name: Create Kind cluster
         run: |
-          kind create cluster --name aggregator-test --config integration-test/kind-test-config.yaml --wait 120s
+          kind create cluster --name aggregator --config k8s/kind-config.yaml --wait 120s
         timeout-minutes: 10
 
       - name: Load images into Kind (Linux)
@@ -119,12 +116,9 @@ jobs:
             if [ -d "$dir" ]; then
               name=$(basename "$dir")
               echo "Loading $name into kind..."
-              kind load docker-image "$name:latest" --name aggregator-test
+              kind load docker-image "$name:latest" --name aggregator
             fi
           done
-        shell: bash
-        shell: bash
-        shell: bash
         timeout-minutes: 20
 
       - name: Load images into Kind (Windows)
@@ -133,16 +127,15 @@ jobs:
           Get-ChildItem -Path containers -Directory | ForEach-Object {
             $name = $_.Name
             Write-Host "Loading $name into kind..."
-            kind load docker-image "${name}:latest" --name aggregator-test
             kind load docker-image "${name}:latest" --name aggregator
+          }
         shell: powershell
         timeout-minutes: 20
 
-      - name: Wait for cluster to be ready
       - name: Generate key pair for UMA proxy
-          kubectl config use-context kind-aggregator-test
+        run: |
           kubectl config use-context kind-aggregator
-        shell: bash
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s
           openssl genrsa -out uma-proxy.key 4096
           openssl req -x509 -new -nodes -key uma-proxy.key -sha256 -days 3650 -out uma-proxy.crt -subj "/CN=Aggregator MITM CA"
           kubectl delete secret uma-proxy-key-pair -n default --ignore-not-found
@@ -159,7 +152,7 @@ jobs:
         run: |
           helm repo add traefik https://traefik.github.io/charts
           helm repo update
-          kind export logs ./kind-logs --name aggregator || true
+          helm upgrade --install aggregator-traefik traefik/traefik \
             --namespace aggregator-traefik \
             --create-namespace \
             --set ingressClass.enabled=true \
@@ -168,7 +161,7 @@ jobs:
             --set ports.websecure.hostPort=443 \
             --set service.type=ClusterIP \
             --set providers.kubernetesCRD.allowCrossNamespace=true \
-          kind export logs ./kind-logs --name aggregator
+            --wait --timeout=3m
           kubectl rollout status deployment aggregator-traefik -n aggregator-traefik --timeout=180s
 
       - name: Deploy aggregator
@@ -178,13 +171,21 @@ jobs:
           kubectl apply -f k8s/app/aggregator.yaml
           kubectl rollout status deployment aggregator-server -n aggregator-app --timeout=120s
 
-      - name: Add /etc/hosts entry
+      - name: Add /etc/hosts entry (Linux)
+        if: runner.os == 'Linux'
         run: |
           echo "127.0.0.1 aggregator.local" | sudo tee -a /etc/hosts
+
+      - name: Add hosts entry (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          Add-Content -Path C:\Windows\System32\drivers\etc\hosts -Value "127.0.0.1 aggregator.local"
+        shell: powershell
+
       - name: Run integration tests
         run: |
           cd integration-test
-          kind delete cluster --name aggregator || true
+          go test -v -timeout 30m ./...
         timeout-minutes: 35
 
       - name: Collect logs on failure (Linux)
@@ -195,7 +196,7 @@ jobs:
           echo "=== Docker Containers ==="
           docker ps -a
           echo "=== Kind Logs ==="
-          kind export logs ./kind-logs --name aggregator-test || true
+          kind export logs ./kind-logs --name aggregator || true
 
       - name: Collect logs on failure (Windows)
         if: failure() && runner.os == 'Windows'
@@ -205,7 +206,7 @@ jobs:
           Write-Host "=== Docker Containers ==="
           docker ps -a
           Write-Host "=== Kind Logs ==="
-          kind export logs ./kind-logs --name aggregator-test
+          kind export logs ./kind-logs --name aggregator
         shell: powershell
         continue-on-error: true
 
@@ -222,8 +223,7 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          kind delete cluster --name aggregator-test || true
-        shell: bash
+          kind delete cluster --name aggregator || true
 
   notify:
     name: Notify Results
