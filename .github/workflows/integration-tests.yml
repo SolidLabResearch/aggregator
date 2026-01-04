@@ -31,8 +31,18 @@ jobs:
       - name: Set up Docker (Windows)
         if: runner.os == 'Windows'
         run: |
+          Write-Host "Checking Docker version..."
           docker version
+          
+          Write-Host "Switching to Linux containers..."
+          & "C:\Program Files\Docker\Docker\DockerCli.exe" -SwitchLinuxEngine
+          
+          Start-Sleep -Seconds 10
+          
+          Write-Host "Verifying Docker is in Linux mode..."
           docker info | Select-String -Pattern "OSType"
+          
+          Write-Host "Testing Linux container pull..."
           docker pull alpine:latest
         shell: powershell
 
