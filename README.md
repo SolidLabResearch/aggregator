@@ -16,7 +16,7 @@ An aggregator using uma: https://github.com/SolidLabResearch/user-managed-access
 
 ```bash
 # Full setup: Create cluster, build containers, deploy everything
-make kind-init
+make init
 make deploy
 
 # Access at http://aggregator.local
@@ -49,7 +49,7 @@ curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
 ```bash
 # Create Kind cluster and load containers
-make kind-init
+make init
 
 # Deploy aggregator with Traefik
 make deploy
@@ -68,7 +68,7 @@ make clean            # Delete everything including cluster
 
 ### Cluster Management
 ```bash
-make kind-init          # Create cluster, build & load containers, start cleaner
+make init          # Create cluster, build & load containers, start cleaner
 make kind-start         # Create/start Kind cluster only
 make kind-stop          # Delete Kind cluster
 make kind-dashboard     # Deploy Kubernetes dashboard
@@ -160,11 +160,11 @@ Automated tests run on GitHub Actions for Linux and Windows on every push and pu
 
 ### Run Locally
 
-Integration tests use the existing Kind cluster and deployment created by `make kind-init` and `make deploy`.
+Integration tests use the existing Kind cluster and deployment created by `make init` and `make deploy`.
 
 ```bash
 # First-time setup
-make kind-init
+make init
 make deploy
 
 # Run tests (uses existing cluster)
@@ -193,7 +193,7 @@ The GitHub Actions workflow automatically:
 ```bash
 # Recreate cluster
 make clean
-make kind-init
+make init
 make deploy
 ```
 

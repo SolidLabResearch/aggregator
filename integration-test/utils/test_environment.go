@@ -50,7 +50,7 @@ func SetupTestEnvironment(ctx context.Context) (*TestEnvironment, error) {
 	cmd := exec.CommandContext(ctx, "kind", "get", "clusters")
 	output, err := cmd.CombinedOutput()
 	if err != nil || !strings.Contains(string(output), env.ClusterName) {
-		return nil, fmt.Errorf("kind cluster '%s' not found. Please run 'make kind-init' first", env.ClusterName)
+		return nil, fmt.Errorf("kind cluster '%s' not found. Please run 'make init' first", env.ClusterName)
 	}
 
 	if err := env.setupKubeClient(); err != nil {

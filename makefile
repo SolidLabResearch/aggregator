@@ -1,4 +1,4 @@
-.PHONY: kind-init kind-start kind-stop kind-dashboard \
+.PHONY: init kind-start kind-stop kind-dashboard \
 	containers-build containers-load containers-all \
 	kind-generate-key-pair \
 	kind-deploy kind-start-traefik kind-start-cleaner \
@@ -13,7 +13,7 @@
 # ------------------------
 
 # Initialize kind cluster, build/load containers, generate keys, start cleaner
-kind-init: kind-start containers-all kind-generate-key-pair kind-start-cleaner
+init: kind-start containers-all kind-generate-key-pair kind-start-cleaner
 
 # Start kind cluster
 kind-start:
