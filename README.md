@@ -1,61 +1,217 @@
 # Aggregator
 
+[![Integration Tests](https://github.com/SolidLabResearch/aggregator/actions/workflows/integration-tests.yml/badge.svg)](https://github.com/SolidLabResearch/aggregator/actions/workflows/integration-tests.yml)
+
 An aggregator using uma: https://github.com/SolidLabResearch/user-managed-access as the authorization server.
 
 ## Requirements
-This project requires a kubernetes cluster and a running uma server.
 
-### Kubernetes Cluster
-install a kubernetes cluster with minikube:
-```bash
-curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-sudo install minikube-linux-amd64 /usr/local/bin/minikube
-```
+- Docker
+- Kind (Kubernetes in Docker)
+- kubectl
+- Helm
+- Make
 
-when minikube is installed, initialize it:
+## Quick Start
+
 ```bash
-make minikube-init
-```
-This will start the minikube cluster, build all the containers, and load them into the minikube cluster.
-To only build or load the containers without starting the cluster, you can run:
-```bash
-make containers-build # Build the containers
-make containers-load # Load the containers into the minikube cluster
-make containers-all # Build and load the containers
-```
-It is also possible to specify a certain container to build, load, or both by using the `name` parameter. For example, to build and load only the aggregator container, you can run:
-```bash
-make containers-all name=uma-proxy
-```
-And to start or stop the minikube cluster, you can run:
-```bash
-make minikube-start
-make minikube-clean
+# Full setup: Create cluster, build containers, deploy everything
+make kind-init
+make deploy
+
+# Access at http://aggregator.local
 ```
 
-### uma Server
-To install the uma server, you first need to clone the uma repository:
+## Setup
+
+### 1. Install Dependencies
+
+**Kind:**
 ```bash
-git clone https://github.com/SolidLabResearch/user-managed-access
-cd user-managed-access/packages/uma
-```
-Make sure you have node.js and npm installed with a version of at least 20.0.0, and run `corepack enable`.
-Then install the dependencies:
-```bash
-yarn install
-```
-Finally, the uma server can be started with:
-```bash
-yarn start
+curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+chmod +x ./kind
+sudo mv ./kind /usr/local/bin/kind
 ```
 
-### Run the Aggregator
-To run the aggregator, you can use the following command:
+**kubectl:**
 ```bash
-make run
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/
 ```
 
-### Demo
-An easy way to test the aggregator is by running `node client-test create-actor.js` to create an actor.
-Do make sure the uma server is running before you do this, and that it has the correct policies so you can access the correct endpoints.
-After that, you can run `node client-test get-actor.js` to retrieve the info on the actor you just created and its results.
+**Helm:**
+```bash
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+```
+
+### 2. Deploy the Aggregator
+
+```bash
+# Create Kind cluster and load containers
+make kind-init
+
+# Deploy aggregator with Traefik
+make deploy
+```
+
+The aggregator is now accessible at `http://aggregator.local`
+
+### 3. Stop/Clean-up the Deployment
+
+```bash
+make stop             # Stop services (cluster stays alive)
+make clean            # Delete everything including cluster
+```
+
+## Makefile Commands
+
+### Cluster Management
+```bash
+make kind-init          # Create cluster, build & load containers, start cleaner
+make kind-start         # Create/start Kind cluster only
+make kind-stop          # Delete Kind cluster
+make kind-dashboard     # Deploy Kubernetes dashboard
+```
+
+### Container Management
+```bash
+make containers-build              # Build all containers (parallel)
+make containers-build CONTAINER=X  # Build specific container
+make containers-load               # Load all images into Kind
+make containers-load CONTAINER=X   # Load specific image
+make containers-all                # Build and load all
+make containers-all CONTAINER=X    # Build and load specific image
+```
+
+### Deployment
+```bash
+make deploy            # Deploy Traefik + aggregator
+make kind-deploy       # Deploy aggregator only
+make kind-undeploy     # Remove aggregator (keep Traefik & cleaner)
+make stop              # Stop aggregator + Traefik (keep cluster & cleaner)
+```
+
+### Cleanup
+```bash
+make stop              # Stop services (cluster stays alive)
+make kind-clean        # Remove all deployments (cluster stays alive)
+make clean             # Delete everything including cluster
+make docker-clean      # Clean up Docker images
+```
+
+### Testing
+```bash
+make integration-test  # Run full integration test suite
+```
+
+### Utilities
+```bash
+make hosts-add         # Add aggregator.local to /etc/hosts
+make hosts-remove      # Remove aggregator.local from /etc/hosts
+make enable-wsl        # Configure CoreDNS for WSL2
+```
+
+## Development Workflow
+
+### Making Changes
+
+```bash
+# Rebuild specific container
+make containers-build CONTAINER=aggregator-server
+make containers-load CONTAINER=aggregator-server
+
+# Restart deployment
+kubectl rollout restart deployment aggregator-server -n aggregator-app
+
+# Or rebuild everything
+make stop
+make containers-all
+make deploy
+```
+
+### Quick Iteration
+
+```bash
+# After code changes
+make stop              # Stop current deployment
+make containers-all    # Rebuild & reload
+make deploy            # Redeploy
+```
+
+## Architecture
+
+- **Kind Cluster**: Local Kubernetes cluster in Docker
+- **Traefik**: Ingress controller (HTTP port 80)
+- **Aggregator Server**: Registration and metadata service
+- **Aggregator Cleaner**: Auto-cleanup controller for actor namespaces
+- **Dynamic Actors**: Created per user in separate namespaces
+
+## Ports
+
+- **Port 80**: HTTP traffic to aggregator (via Traefik)
+- **Port 443**: HTTPS traffic (available but not configured)
+
+Access: `http://aggregator.local`
+
+## Integration Tests
+
+Automated tests run on GitHub Actions for Linux and Windows on every push and pull request.
+
+### Run Locally
+
+Integration tests use the existing Kind cluster and deployment created by `make kind-init` and `make deploy`.
+
+```bash
+# First-time setup
+make kind-init
+make deploy
+
+# Run tests (uses existing cluster)
+make integration-test
+```
+
+The tests will:
+- Verify the existing `aggregator` cluster is running
+- Check that the aggregator is deployed
+- Run all integration tests against `http://aggregator.local`
+- Leave the cluster running after tests complete
+
+### CI/CD
+
+The GitHub Actions workflow automatically:
+1. Creates a test cluster
+2. Builds and loads containers
+3. Deploys Traefik and the aggregator
+4. Runs the full test suite
+5. Cleans up the test cluster
+
+## Troubleshooting
+
+### Cluster Issues
+
+```bash
+# Recreate cluster
+make clean
+make kind-init
+make deploy
+```
+
+### Container Build Failures
+
+```bash
+# Build specific container with verbose output
+docker build containers/aggregator-server -t aggregator-server:latest
+
+# Check logs
+docker logs <container-id>
+```
+
+## Contributing
+
+Integration tests run automatically on all pushes and pull requests.
+Ensure tests pass before merging.
+
+## License
+
+See LICENSE file for details.
