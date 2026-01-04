@@ -1,178 +1,87 @@
 name: Integration Tests
-
 on:
   push:
   pull_request:
   workflow_dispatch:
-
 jobs:
   integration-tests:
-    name: Integration Tests - ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-
+    name: Integration Tests
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
+          cache: true
           cache-dependency-path: integration-test/go.sum
-
-      - name: Set up Docker (Linux)
-        if: runner.os == 'Linux'
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('integration-test/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+      - name: Set up Docker
         uses: docker/setup-buildx-action@v3
-
-      - name: Set up Docker (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          Write-Host "Checking Docker version..."
-          docker version
-          
-          Write-Host "Checking Docker daemon info..."
-          docker info
-          
-          $osType = docker info --format '{{.OSType}}'
-          Write-Host "Current OSType: $osType"
-          
-          if ($osType -ne "linux") {
-            Write-Host "Docker is in Windows mode, switching to Linux mode..."
-            
-            # Stop Docker service
-            Stop-Service -Name docker -Force -ErrorAction SilentlyContinue
-            
-            # Wait for service to stop
-            Start-Sleep -Seconds 5
-            
-            # Start Docker service
-            Start-Service -Name docker
-            
-            # Wait for Docker to be ready
-            $maxAttempts = 30
-            $attempt = 0
-            while ($attempt -lt $maxAttempts) {
-              try {
-                docker info | Out-Null
-                Write-Host "Docker is ready"
-                break
-              } catch {
-                $attempt++
-                Write-Host "Waiting for Docker to be ready... (attempt $attempt/$maxAttempts)"
-                Start-Sleep -Seconds 2
-              }
-            }
-            
-            $osType = docker info --format '{{.OSType}}'
-            Write-Host "OSType after restart: $osType"
-          } else {
-            Write-Host "Docker is already in Linux mode"
-          }
-          
-          Write-Host "Testing Linux container pull..."
-          docker pull alpine:latest
-        shell: powershell
-
-      - name: Install Kind (Linux)
-        if: runner.os == 'Linux'
+        with:
+          driver-opts: network=host
+      - name: Cache Docker layers
+        uses: actions/cache@v3
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+      - name: Install Kind
         run: |
           curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
-
-      - name: Install Kind (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          curl.exe -Lo kind-windows-amd64.exe https://kind.sigs.k8s.io/dl/v0.20.0/kind-windows-amd64
-          Move-Item .\kind-windows-amd64.exe C:\Windows\System32\kind.exe
-        shell: powershell
-
-      - name: Install kubectl (Linux)
-        if: runner.os == 'Linux'
+      - name: Install kubectl
         run: |
           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/
-
-      - name: Install kubectl (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          curl.exe -LO "https://dl.k8s.io/release/v1.28.0/bin/windows/amd64/kubectl.exe"
-          Move-Item .\kubectl.exe C:\Windows\System32\kubectl.exe
-        shell: powershell
-
-      - name: Install Helm (Linux)
-        if: runner.os == 'Linux'
+      - name: Install Helm
         run: |
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-
-      - name: Install Helm (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          choco install kubernetes-helm -y
-        shell: powershell
-
       - name: Verify installations
         run: |
           docker version
           kind version
           kubectl version --client
           helm version
-
-      - name: Build Docker images (Linux)
-        if: runner.os == 'Linux'
+      - name: Build Docker images
         run: |
+          export DOCKER_BUILDKIT=1
+          export BUILDKIT_PROGRESS=plain
           make containers-build
         timeout-minutes: 30
-
-      - name: Build Docker images (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          Get-ChildItem -Path containers -Directory | ForEach-Object {
-            $name = $_.Name
-            Write-Host "Building $name..."
-            docker build --platform linux/amd64 "containers/$name" -t "${name}:latest"
-            if ($LASTEXITCODE -ne 0) { 
-              Write-Host "Failed to build $name"
-              exit $LASTEXITCODE 
-            }
-            Write-Host "Successfully built $name"
-          }
-        shell: powershell
-        timeout-minutes: 30
-
+        env:
+          DOCKER_BUILDKIT: 1
       - name: Create Kind cluster
         run: |
           kind create cluster --name aggregator --config k8s/kind-config.yaml --wait 120s
         timeout-minutes: 10
-
-      - name: Load images into Kind (Linux)
-        if: runner.os == 'Linux'
+      - name: Load images into Kind
         run: |
-          for dir in containers/*; do
-            if [ -d "$dir" ]; then
-              name=$(basename "$dir")
-              echo "Loading $name into kind..."
-              kind load docker-image "$name:latest" --name aggregator
+          echo "Loading images in parallel..."
+          find containers -maxdepth 1 -mindepth 1 -type d | \
+          xargs -I {} -P 4 sh -c '
+            name=$(basename {})
+            echo "📥 Loading $name..."
+            if kind load docker-image "$name:latest" --name aggregator; then
+              echo "✅ Loaded $name"
+            else
+              echo "❌ Failed to load $name"
+              exit 1
             fi
-          done
-        timeout-minutes: 20
-
-      - name: Load images into Kind (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          Get-ChildItem -Path containers -Directory | ForEach-Object {
-            $name = $_.Name
-            Write-Host "Loading $name into kind..."
-            kind load docker-image "${name}:latest" --name aggregator
-          }
-        shell: powershell
-        timeout-minutes: 20
-
+          '
+        timeout-minutes: 10
       - name: Generate key pair for UMA proxy
         run: |
           kubectl config use-context kind-aggregator
@@ -182,13 +91,11 @@ jobs:
           kubectl delete secret uma-proxy-key-pair -n default --ignore-not-found
           kubectl create secret generic uma-proxy-key-pair --from-file=uma-proxy.crt=uma-proxy.crt --from-file=uma-proxy.key=uma-proxy.key -n default
           rm uma-proxy.crt uma-proxy.key
-
       - name: Deploy aggregator-cleaner
         run: |
           kubectl apply -f k8s/ops/ns.yaml
           kubectl apply -f k8s/ops/cleaner.yaml
           kubectl wait --namespace aggregator-ops --for=condition=available deployment/aggregator-cleaner --timeout=60s || true
-
       - name: Deploy Traefik
         run: |
           helm repo add traefik https://traefik.github.io/charts
@@ -204,33 +111,22 @@ jobs:
             --set providers.kubernetesCRD.allowCrossNamespace=true \
             --wait --timeout=3m
           kubectl rollout status deployment aggregator-traefik -n aggregator-traefik --timeout=180s
-
       - name: Deploy aggregator
         run: |
           kubectl apply -f k8s/app/ns.yaml
           kubectl apply -f k8s/app/config.yaml
           kubectl apply -f k8s/app/aggregator.yaml
           kubectl rollout status deployment aggregator-server -n aggregator-app --timeout=120s
-
-      - name: Add /etc/hosts entry (Linux)
-        if: runner.os == 'Linux'
+      - name: Add /etc/hosts entry
         run: |
           echo "127.0.0.1 aggregator.local" | sudo tee -a /etc/hosts
-
-      - name: Add hosts entry (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          Add-Content -Path C:\Windows\System32\drivers\etc\hosts -Value "127.0.0.1 aggregator.local"
-        shell: powershell
-
       - name: Run integration tests
         run: |
           cd integration-test
           go test -v -timeout 30m ./...
         timeout-minutes: 35
-
-      - name: Collect logs on failure (Linux)
-        if: failure() && runner.os == 'Linux'
+      - name: Collect logs on failure
+        if: failure()
         run: |
           echo "=== Cluster Info ==="
           kubectl cluster-info dump --output-directory=./cluster-logs --namespaces aggregator-app,aggregator-ops 2>&1 || true
@@ -238,34 +134,19 @@ jobs:
           docker ps -a
           echo "=== Kind Logs ==="
           kind export logs ./kind-logs --name aggregator || true
-
-      - name: Collect logs on failure (Windows)
-        if: failure() && runner.os == 'Windows'
-        run: |
-          Write-Host "=== Cluster Info ==="
-          kubectl cluster-info dump --output-directory=./cluster-logs --namespaces aggregator-app,aggregator-ops
-          Write-Host "=== Docker Containers ==="
-          docker ps -a
-          Write-Host "=== Kind Logs ==="
-          kind export logs ./kind-logs --name aggregator
-        shell: powershell
-        continue-on-error: true
-
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs-${{ matrix.os }}
+          name: test-logs
           path: |
             cluster-logs/
             kind-logs/
           retention-days: 7
-
       - name: Cleanup
         if: always()
         run: |
           kind delete cluster --name aggregator || true
-
   notify:
     name: Notify Results
     needs: integration-tests
@@ -280,4 +161,3 @@ jobs:
             echo "❌ Integration tests failed"
             exit 1
           fi
-
