@@ -1,0 +1,39 @@
+package integration_test
+
+import (
+	"context"
+	"os"
+	"testing"
+	"time"
+
+	"aggregator-integration-test/utils"
+)
+
+var testEnv *utils.TestEnvironment
+
+func TestMain(m *testing.M) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	var err error
+	testEnv, err = utils.SetupTestEnvironment(ctx)
+	if err != nil {
+		panic("Failed to setup test environment: " + err.Error())
+	}
+
+	if err := testEnv.WaitForAggregatorReady(ctx); err != nil {
+		panic("Aggregator not ready: " + err.Error())
+	}
+
+	if err := testEnv.SetupPortForward(ctx); err != nil {
+		panic("Failed to setup port forward: " + err.Error())
+	}
+
+	code := m.Run()
+
+	if err := testEnv.Cleanup(); err != nil {
+		panic("Failed to cleanup test environment: " + err.Error())
+	}
+
+	os.Exit(code)
+}

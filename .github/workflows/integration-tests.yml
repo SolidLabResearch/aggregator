@@ -1,0 +1,197 @@
+name: Integration Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  integration-tests:
+    name: Integration Tests - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache-dependency-path: integration-test/go.sum
+
+      - name: Set up Docker (Linux)
+        if: runner.os == 'Linux'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up Docker (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          # Docker Desktop should already be available on windows-latest
+          docker version
+
+      - name: Install Kind (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Install Kind (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          curl.exe -Lo kind-windows-amd64.exe https://kind.sigs.k8s.io/dl/v0.20.0/kind-windows-amd64
+          Move-Item .\kind-windows-amd64.exe C:\Windows\System32\kind.exe
+        shell: powershell
+
+      - name: Install kubectl (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Install kubectl (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          curl.exe -LO "https://dl.k8s.io/release/v1.28.0/bin/windows/amd64/kubectl.exe"
+          Move-Item .\kubectl.exe C:\Windows\System32\kubectl.exe
+        shell: powershell
+
+      - name: Install Helm (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Install Helm (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install kubernetes-helm -y
+        shell: powershell
+
+      - name: Verify installations
+        run: |
+          docker version
+          kind version
+          kubectl version --client
+          helm version
+        shell: bash
+
+      - name: Build Docker images (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          make containers-build
+        timeout-minutes: 30
+
+      - name: Build Docker images (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          # Build containers sequentially on Windows
+          Get-ChildItem -Path containers -Directory | ForEach-Object {
+            $name = $_.Name
+            Write-Host "Building $name..."
+            docker build "containers/$name" -t "${name}:latest"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+        shell: powershell
+        timeout-minutes: 30
+
+      - name: Create Kind cluster
+        run: |
+          kind create cluster --name aggregator-test --config integration-test/kind-test-config.yaml --wait 120s
+        timeout-minutes: 10
+
+      - name: Load images into Kind (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          for dir in containers/*; do
+            if [ -d "$dir" ]; then
+              name=$(basename "$dir")
+              echo "Loading $name into kind..."
+              kind load docker-image "$name:latest" --name aggregator-test
+            fi
+          done
+        shell: bash
+        timeout-minutes: 20
+
+      - name: Load images into Kind (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          Get-ChildItem -Path containers -Directory | ForEach-Object {
+            $name = $_.Name
+            Write-Host "Loading $name into kind..."
+            kind load docker-image "${name}:latest" --name aggregator-test
+          }
+        shell: powershell
+        timeout-minutes: 20
+
+      - name: Wait for cluster to be ready
+        run: |
+          kubectl config use-context kind-aggregator-test
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s
+        shell: bash
+
+      - name: Run integration tests
+        run: |
+          cd integration-test
+          go test -v -timeout 30m ./...
+        shell: bash
+        timeout-minutes: 35
+
+      - name: Collect logs on failure (Linux)
+        if: failure() && runner.os == 'Linux'
+        run: |
+          echo "=== Cluster Info ==="
+          kubectl cluster-info dump --output-directory=./cluster-logs --namespaces aggregator-app,aggregator-ops 2>&1 || true
+          echo "=== Docker Containers ==="
+          docker ps -a
+          echo "=== Kind Logs ==="
+          kind export logs ./kind-logs --name aggregator-test || true
+
+      - name: Collect logs on failure (Windows)
+        if: failure() && runner.os == 'Windows'
+        run: |
+          Write-Host "=== Cluster Info ==="
+          kubectl cluster-info dump --output-directory=./cluster-logs --namespaces aggregator-app,aggregator-ops
+          Write-Host "=== Docker Containers ==="
+          docker ps -a
+          Write-Host "=== Kind Logs ==="
+          kind export logs ./kind-logs --name aggregator-test
+        shell: powershell
+        continue-on-error: true
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-${{ matrix.os }}
+          path: |
+            cluster-logs/
+            kind-logs/
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          kind delete cluster --name aggregator-test || true
+        shell: bash
+
+  notify:
+    name: Notify Results
+    needs: integration-tests
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check test results
+        run: |
+          if [ "${{ needs.integration-tests.result }}" == "success" ]; then
+            echo "✅ All integration tests passed!"
+          else
+            echo "❌ Integration tests failed"
+            exit 1
+          fi
+
