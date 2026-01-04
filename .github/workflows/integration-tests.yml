@@ -34,13 +34,44 @@ jobs:
           Write-Host "Checking Docker version..."
           docker version
           
-          Write-Host "Switching to Linux containers..."
-          & "C:\Program Files\Docker\Docker\DockerCli.exe" -SwitchLinuxEngine
+          Write-Host "Checking Docker daemon info..."
+          docker info
           
-          Start-Sleep -Seconds 10
+          $osType = docker info --format '{{.OSType}}'
+          Write-Host "Current OSType: $osType"
           
-          Write-Host "Verifying Docker is in Linux mode..."
-          docker info | Select-String -Pattern "OSType"
+          if ($osType -ne "linux") {
+            Write-Host "Docker is in Windows mode, switching to Linux mode..."
+            
+            # Stop Docker service
+            Stop-Service -Name docker -Force -ErrorAction SilentlyContinue
+            
+            # Wait for service to stop
+            Start-Sleep -Seconds 5
+            
+            # Start Docker service
+            Start-Service -Name docker
+            
+            # Wait for Docker to be ready
+            $maxAttempts = 30
+            $attempt = 0
+            while ($attempt -lt $maxAttempts) {
+              try {
+                docker info | Out-Null
+                Write-Host "Docker is ready"
+                break
+              } catch {
+                $attempt++
+                Write-Host "Waiting for Docker to be ready... (attempt $attempt/$maxAttempts)"
+                Start-Sleep -Seconds 2
+              }
+            }
+            
+            $osType = docker info --format '{{.OSType}}'
+            Write-Host "OSType after restart: $osType"
+          } else {
+            Write-Host "Docker is already in Linux mode"
+          }
           
           Write-Host "Testing Linux container pull..."
           docker pull alpine:latest
