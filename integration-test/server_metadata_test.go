@@ -80,7 +80,6 @@ func TestClientIdentifierDocument(t *testing.T) {
 		t.Fatal("client_identifier field missing or not a string")
 	}
 
-	// 2. GET the client identifier document
 	clientResp, err := http.Get(clientIdentifierURL)
 	if err != nil {
 		t.Fatalf("Failed to get client identifier document: %v", err)
