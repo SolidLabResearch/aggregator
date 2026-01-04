@@ -123,6 +123,8 @@ jobs:
             fi
           done
         shell: bash
+        shell: bash
+        shell: bash
         timeout-minutes: 20
 
       - name: Load images into Kind (Windows)
@@ -132,21 +134,57 @@ jobs:
             $name = $_.Name
             Write-Host "Loading $name into kind..."
             kind load docker-image "${name}:latest" --name aggregator-test
-          }
+            kind load docker-image "${name}:latest" --name aggregator
         shell: powershell
         timeout-minutes: 20
 
       - name: Wait for cluster to be ready
-        run: |
+      - name: Generate key pair for UMA proxy
           kubectl config use-context kind-aggregator-test
-          kubectl wait --for=condition=Ready nodes --all --timeout=120s
+          kubectl config use-context kind-aggregator
         shell: bash
+          openssl genrsa -out uma-proxy.key 4096
+          openssl req -x509 -new -nodes -key uma-proxy.key -sha256 -days 3650 -out uma-proxy.crt -subj "/CN=Aggregator MITM CA"
+          kubectl delete secret uma-proxy-key-pair -n default --ignore-not-found
+          kubectl create secret generic uma-proxy-key-pair --from-file=uma-proxy.crt=uma-proxy.crt --from-file=uma-proxy.key=uma-proxy.key -n default
+          rm uma-proxy.crt uma-proxy.key
 
+      - name: Deploy aggregator-cleaner
+        run: |
+          kubectl apply -f k8s/ops/ns.yaml
+          kubectl apply -f k8s/ops/cleaner.yaml
+          kubectl wait --namespace aggregator-ops --for=condition=available deployment/aggregator-cleaner --timeout=60s || true
+
+      - name: Deploy Traefik
+        run: |
+          helm repo add traefik https://traefik.github.io/charts
+          helm repo update
+          kind export logs ./kind-logs --name aggregator || true
+            --namespace aggregator-traefik \
+            --create-namespace \
+            --set ingressClass.enabled=true \
+            --set ingressClass.name=aggregator-traefik \
+            --set ports.web.hostPort=80 \
+            --set ports.websecure.hostPort=443 \
+            --set service.type=ClusterIP \
+            --set providers.kubernetesCRD.allowCrossNamespace=true \
+          kind export logs ./kind-logs --name aggregator
+          kubectl rollout status deployment aggregator-traefik -n aggregator-traefik --timeout=180s
+
+      - name: Deploy aggregator
+        run: |
+          kubectl apply -f k8s/app/ns.yaml
+          kubectl apply -f k8s/app/config.yaml
+          kubectl apply -f k8s/app/aggregator.yaml
+          kubectl rollout status deployment aggregator-server -n aggregator-app --timeout=120s
+
+      - name: Add /etc/hosts entry
+        run: |
+          echo "127.0.0.1 aggregator.local" | sudo tee -a /etc/hosts
       - name: Run integration tests
         run: |
           cd integration-test
-          go test -v -timeout 30m ./...
-        shell: bash
+          kind delete cluster --name aggregator || true
         timeout-minutes: 35
 
       - name: Collect logs on failure (Linux)

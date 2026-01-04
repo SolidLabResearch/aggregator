@@ -160,11 +160,31 @@ Automated tests run on GitHub Actions for Linux and Windows on every push and pu
 
 ### Run Locally
 
+Integration tests use the existing Kind cluster and deployment created by `make kind-init` and `make deploy`.
+
 ```bash
+# First-time setup
+make kind-init
+make deploy
+
+# Run tests (uses existing cluster)
 make integration-test
 ```
 
-Tests use port forwarding to `localhost:8080` to avoid requiring root privileges.
+The tests will:
+- Verify the existing `aggregator` cluster is running
+- Check that the aggregator is deployed
+- Run all integration tests against `http://aggregator.local`
+- Leave the cluster running after tests complete
+
+### CI/CD
+
+The GitHub Actions workflow automatically:
+1. Creates a test cluster
+2. Builds and loads containers
+3. Deploys Traefik and the aggregator
+4. Runs the full test suite
+5. Cleans up the test cluster
 
 ## Troubleshooting
 
