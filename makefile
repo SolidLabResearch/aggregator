@@ -1,6 +1,6 @@
 .PHONY: init kind-start kind-stop kind-dashboard \
 	containers-build containers-load containers-all \
-	kind-generate-key-pair \
+	kind-generate-key-pair generate-ingress-key \
 	kind-deploy kind-start-traefik kind-start-cleaner \
 	kind-clean clean kind-stop-traefik \
 	kind-undeploy stop \
@@ -13,7 +13,7 @@
 # ------------------------
 
 # Initialize kind cluster, build/load containers, generate keys, start cleaner
-init: kind-start containers-all kind-generate-key-pair kind-start-cleaner
+init: kind-start containers-all kind-generate-key-pair generate-ingress-key kind-start-cleaner
 
 # Start kind cluster
 kind-start:
@@ -72,6 +72,16 @@ kind-generate-key-pair:
 	@kubectl create secret generic uma-proxy-key-pair --from-file=uma-proxy.crt=uma-proxy.crt --from-file=uma-proxy.key=uma-proxy.key -n default
 	@echo "🗑️ Cleaning up generated key pair files..."
 	@rm uma-proxy.crt uma-proxy.key
+
+# Generate RSA private key for ingress-uma
+generate-ingress-key:
+	@echo "🔑 Generating RSA private key for ingress-uma..."
+	@if [ ! -f private_key.pem ]; then \
+		openssl genrsa -out private_key.pem 2048; \
+		echo "✅ Generated private_key.pem"; \
+	else \
+		echo "ℹ️  private_key.pem already exists, skipping generation"; \
+	fi
 
 # ------------------------
 # Container targets
@@ -269,6 +279,8 @@ kind-clean:
 	@echo "🧹 Removing localhost entries..."
 	@sudo sed -i.bak '/aggregator\.local/d' /etc/hosts || true
 	@sudo sed -i.bak '/wsl\.local/d' /etc/hosts || true
+	@echo "🗑️ Removing generated key files..."
+	@rm -f private_key.pem
 	@echo "✅ Cleanup complete"
 
 # Clean everything and delete the entire kind cluster

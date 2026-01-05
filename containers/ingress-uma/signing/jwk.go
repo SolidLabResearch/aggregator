@@ -81,15 +81,24 @@ func readPrivateKeyFromFile(path string) (*rsa.PrivateKey, string) {
 		log.WithError(err).Fatal("Failed to read private key file")
 	}
 	block, _ := pem.Decode(data)
-	if block == nil || block.Type != "RSA PRIVATE KEY" {
-		log.Fatal("Invalid PEM block in private key file")
-	}
-	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-	if err != nil {
-		log.WithError(err).Fatal("Failed to parse RSA private key")
+	if block == nil {
+		log.Fatal("No valid PEM block found in private key file")
 	}
 
-	// Compute stable keyID
+	if block.Type != "PRIVATE KEY" {
+		log.Fatalf("Expected PEM block type 'PRIVATE KEY' (PKCS#8), got '%s'", block.Type)
+	}
+
+	parsedKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		log.WithError(err).Fatal("Failed to parse PKCS#8 private key")
+	}
+
+	key, ok := parsedKey.(*rsa.PrivateKey)
+	if !ok {
+		log.Fatal("PKCS#8 key is not an RSA private key")
+	}
+
 	pubBytes := x509.MarshalPKCS1PublicKey(&key.PublicKey)
 	hash := sha256.Sum256(pubBytes)
 	kid := fmt.Sprintf("%x", hash[:8])
@@ -97,11 +106,15 @@ func readPrivateKeyFromFile(path string) (*rsa.PrivateKey, string) {
 	return key, kid
 }
 
-// savePrivateKeyToFile writes PEM-encoded RSA key to disk
+// savePrivateKeyToFile writes PEM-encoded RSA key to disk in PKCS#8 format
 func savePrivateKeyToFile(key *rsa.PrivateKey, path string) {
+	keyBytes, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		log.WithError(err).Fatal("Failed to marshal private key to PKCS#8")
+	}
 	pemData := pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(key),
+		Type:  "PRIVATE KEY",
+		Bytes: keyBytes,
 	})
 	if err := os.WriteFile(path, pemData, 0600); err != nil {
 		log.WithError(err).Fatal("Failed to write private key to file")
