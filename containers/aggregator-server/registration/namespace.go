@@ -16,9 +16,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-func createNamespace(user model.User, ctx context.Context) (string, error) {
+func createNamespaceForAggregator(ownerWebID string, authzServerURL string, ctx context.Context) (string, error) {
 	nsName := uuid.NewString()
-	// Create namespace with labels/annotations
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nsName,
@@ -27,8 +26,8 @@ func createNamespace(user model.User, ctx context.Context) (string, error) {
 				"istio-injection": "enabled",
 			},
 			Annotations: map[string]string{
-				"owner":  user.UserId,
-				"as_url": user.AuthzServerURL,
+				"owner":  ownerWebID,
+				"as_url": authzServerURL,
 			},
 		},
 	}
@@ -38,13 +37,25 @@ func createNamespace(user model.User, ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to create namespace %s: %w", nsName, err)
 	}
 
-	logrus.Infof("Namespace %s created successfully ✅", nsName)
-
+	logrus.Infof("Namespace %s created for aggregator ✅", nsName)
 	return nsName, nil
 }
 
-// createAggregatorInstance deploys the Egress UMA and Aggregator Instance
-func createAggregatorInstance(replicas int32, namespace string, user model.User, tokenEndpoint string, ctx context.Context) error {
+// deleteNamespaceResources deletes a namespace and all its resources
+func deleteNamespaceResources(namespace string, ctx context.Context) error {
+	err := model.Clientset.CoreV1().Namespaces().Delete(ctx, namespace, metav1.DeleteOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to delete namespace %s: %w", namespace, err)
+	}
+
+	logrus.Infof("Namespace %s deleted ✅", namespace)
+	return nil
+}
+
+// deployAggregatorResources deploys the Egress UMA and Aggregator Instance
+func deployAggregatorResources(namespace string, tokenEndpoint string, refreshToken string, ownerWebID string, authzServerURL string, ctx context.Context) error {
+	replicas := int32(1)
+
 	// --- Egress UMA Deployment ---
 	umaDeploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -79,7 +90,7 @@ func createAggregatorInstance(replicas int32, namespace string, user model.User,
 							Env: []corev1.EnvVar{
 								{Name: "CLIENT_ID", Value: model.ClientId},
 								{Name: "CLIENT_SECRET", Value: model.ClientSecret},
-								{Name: "REFRESH_TOKEN", Value: user.RefreshToken},
+								{Name: "REFRESH_TOKEN", Value: refreshToken},
 								{Name: "TOKEN_ENDPOINT", Value: tokenEndpoint},
 								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 							},
@@ -162,8 +173,8 @@ func createAggregatorInstance(replicas int32, namespace string, user model.User,
 								{Name: "CLIENT_SECRET", Value: model.ClientSecret},
 								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 								{Name: "USER_NAMESPACE", Value: namespace},
-								{Name: "USER_ID", Value: user.UserId},
-								{Name: "AS_URL", Value: user.AuthzServerURL},
+								{Name: "USER_ID", Value: ownerWebID},
+								{Name: "AS_URL", Value: authzServerURL},
 							},
 						},
 					},

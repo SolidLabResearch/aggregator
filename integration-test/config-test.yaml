@@ -1,0 +1,14 @@
+# ------------------------
+# 🔹 ConfigMap for Integration Tests
+# ------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aggregator-config
+  namespace: aggregator-app
+data:
+  log_level: "debug"                             # Set log level (debug, info, warn, error)
+  disable_auth: "true"                           # ⚠️ DISABLE authentication for integration testing
+  client_id: "http://aggregator.local/client.json" # OAuth2 Client ID (dereferenceable)
+  client_secret: "AtctW4sdbmjcfF9gQJIf5RoK6T6wetwG"      # OAuth2 Client Secret
+  allowed_registration_types: "authorization_code,client_credentials" # Comma-separated registration types
