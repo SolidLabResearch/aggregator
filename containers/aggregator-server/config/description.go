@@ -32,12 +32,14 @@ func handleServerDescription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// TODO: semantic representations need to be added at some point
-	// TODO: make the SupportedRegistrationTypes configurable
+	supported := model.AllowedRegistrationTypes
+	if len(supported) == 0 {
+		supported = []string{"authorization_code"}
+	}
+
 	desc := AggregatorServerDescription{
 		RegistrationEndpoint: fmt.Sprintf("%s://%s/registration", model.Protocol, model.ExternalHost),
-		SupportedRegistrationTypes: []string{
-			"authorization_code",
-		},
+		SupportedRegistrationTypes: supported,
 		Version:               "1.0.0",
 		ClientIdentifier:      fmt.Sprintf("%s://%s/client.json", model.Protocol, model.ExternalHost),
 		TransformationCatalog: fmt.Sprintf("%s://%s/config/transformations", model.Protocol, model.ExternalHost),

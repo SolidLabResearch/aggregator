@@ -11,6 +11,8 @@ var ExternalHost string
 
 var ClientId string
 var ClientSecret string
+var DisableAuth bool
+var AllowedRegistrationTypes []string
 
 var Clientset *kubernetes.Clientset
 var DynamicClient *dynamic.DynamicClient

@@ -46,6 +46,16 @@ func main() {
 		logrus.Fatal("Environment variable CLIENT_SECRET must be set")
 	}
 
+	allowedTypes := parseAllowedRegistrationTypes(os.Getenv("ALLOWED_REGISTRATION_TYPES"))
+	model.AllowedRegistrationTypes = allowedTypes
+
+	// Read disable_auth config (for testing)
+	disableAuthStr := strings.ToLower(os.Getenv("DISABLE_AUTH"))
+	model.DisableAuth = disableAuthStr == "true"
+	if model.DisableAuth {
+		logrus.Warn("⚠️  Authentication is DISABLED (DISABLE_AUTH=true) - FOR TESTING ONLY!")
+	}
+
 	// Load in-cluster kubeConfig
 	kubeConfig, err := rest.InClusterConfig()
 	if err != nil {
@@ -111,5 +121,26 @@ func main() {
 
 func initRegistration(mux *http.ServeMux) {
 	mux.HandleFunc("/registration", reg.RegistrationHandler)
-	mux.HandleFunc("/registration/callback", reg.RegistrationCallback)
+}
+
+func parseAllowedRegistrationTypes(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return []string{"authorization_code"}
+	}
+
+	parts := strings.Split(raw, ",")
+	allowed := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.ToLower(strings.TrimSpace(part))
+		if trimmed == "" {
+			continue
+		}
+		allowed = append(allowed, trimmed)
+	}
+
+	if len(allowed) == 0 {
+		return []string{"authorization_code"}
+	}
+
+	return allowed
 }

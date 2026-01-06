@@ -6,7 +6,7 @@
 	kind-undeploy stop \
 	enable-wsl \
 	docker-clean deploy \
-	integration-test
+	integration-test unit-test
 
 # ------------------------
 # Kind targets
@@ -328,8 +328,18 @@ enable-wsl:
 	@echo "✅ Done! 'wsl.local' now resolves to $(WSL_IP)"
 
 # ------------------------
-# Integration Tests
+# Tests
 # ------------------------
 integration-test:
 	@echo "🧪 Running integration tests..."
 	@cd integration-test && go mod download && go test -v -timeout 20m ./...
+
+unit-test:
+	@echo "🧪 Running container unit tests (Go only)..."
+	@for dir in containers/*; do \
+		if [ -f "$$dir/go.mod" ]; then \
+			echo "➡️  $$dir"; \
+			( cd "$$dir" && go test ./... ); \
+		fi; \
+	done
+

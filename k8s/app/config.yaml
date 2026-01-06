@@ -11,3 +11,4 @@ data:
   disable_auth: "false"                         # Disable authentication for testing purposes (true, false)
   client_id: "aggregator"                       # OAuth2 Client ID
   client_secret: "AtctW4sdbmjcfF9gQJIf5RoK6T6wetwG"      # OAuth2 Client Secret
+  allowed_registration_types: "authorization_code,client_credentials" # Comma-separated registration types

@@ -2,7 +2,6 @@ package registration
 
 import (
 	"aggregator/model"
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -11,14 +10,18 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
-	"github.com/lestrrat-go/jwx/jwk"
-	"github.com/lestrrat-go/jwx/jwt"
 )
 
 type storedState struct {
-	Req       model.RegistrationRequest
-	ExpiresAt time.Time
+	OwnerWebID          string
+	AuthorizationServer string
+	AggregatorID        string // empty for new, set for updates
+	ClientID            string
+	CodeVerifier        string
+	IDPIssuer           string
+	TokenEndpoint       string
+	TokenEndpointAuthMethodsSupported []string
+	ExpiresAt           time.Time
 }
 
 var (
@@ -79,52 +82,4 @@ func fetchOIDCConfig(idpURL string) (*model.OIDCConfig, error) {
 	}
 
 	return &cfg, nil
-}
-
-// verifyToken verifies the JWT using the issuer's JWKS endpoint.
-// Returns the parsed token if valid.
-func verifyToken(tokenString string, issuer string) (jwt.Token, error) {
-	// Build JWKS URL from issuer
-	jwksURL := fmt.Sprintf("%s/protocol/openid-connect/certs", issuer)
-
-	// Fetch JWKS from IdP
-	keySet, err := jwk.Fetch(context.Background(), jwksURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch JWKS: %w", err)
-	}
-
-	// Parse and verify token using the key set
-	token, err := jwt.Parse([]byte(tokenString), jwt.WithKeySet(keySet))
-	if err != nil {
-		return nil, fmt.Errorf("invalid token: %w", err)
-	}
-
-	return token, nil
-}
-
-// validateToken checks standard claims of the token. and returns the user id if valid.
-func validateToken(token jwt.Token, idp string) (string, error) {
-	// Check expiration
-	exp := token.Expiration()
-	if time.Now().After(exp) {
-		return "", fmt.Errorf("token has expired")
-	}
-
-	// Check issuer
-	iss, ok := token.Get("iss")
-	if !ok || iss.(string) != idp {
-		return "", fmt.Errorf("invalid issuer")
-	}
-	// Extract user id (sub claim)
-	sub, ok := token.Get("sub")
-	if !ok {
-		return "", fmt.Errorf("sub claim not found")
-	}
-
-	userID, ok := sub.(string)
-	if !ok {
-		return "", fmt.Errorf("invalid sub claim type")
-	}
-
-	return userID, nil
 }

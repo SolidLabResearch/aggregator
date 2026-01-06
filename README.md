@@ -57,6 +57,16 @@ make deploy
 
 The aggregator is now accessible at `http://aggregator.local`
 
+## Configuration
+
+The Kubernetes ConfigMap at `k8s/app/config.yaml` controls aggregator behavior:
+
+- `log_level`: Logging verbosity (`debug`, `info`, `warn`, `error`).
+- `disable_auth`: Set to `true` to bypass auth checks (testing only).
+- `client_id`: OAuth2 client ID (dereferenceable URL in Solid-OIDC setups).
+- `client_secret`: OAuth2 client secret.
+- `allowed_registration_types`: Comma-separated list of allowed registration types (e.g., `authorization_code,client_credentials`).
+
 ### 3. Stop/Clean-up the Deployment
 
 ```bash

@@ -17,7 +17,7 @@ metadata:
 rules:
   # Built-in resources
   - apiGroups: [""]
-    resources: ["namespaces", "pods", "services", "configmaps"]
+    resources: ["namespaces", "pods", "services", "configmaps", "serviceaccounts"]
     verbs: ["get", "list", "create", "delete", "watch"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
@@ -32,6 +32,13 @@ rules:
   - apiGroups: ["traefik.io"]
     resources: ["middlewares", "ingressroutes"]
     verbs: ["get", "list", "create", "update", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "create", "update", "delete", "watch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: ["admin"]
+    verbs: ["bind"]
   # Istio CRDs
   - apiGroups: ["networking.istio.io"]
     resources: ["serviceentries", "virtualservices", "destinationrules", "gateways", "envoyfilters"]
@@ -84,6 +91,11 @@ spec:
                 configMapKeyRef:
                   name: aggregator-config
                   key: log_level
+            - name: DISABLE_AUTH
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: disable_auth
             - name: CLIENT_ID
               valueFrom:
                 configMapKeyRef:
@@ -94,6 +106,11 @@ spec:
                 configMapKeyRef:
                   name: aggregator-config
                   key: client_secret
+            - name: ALLOWED_REGISTRATION_TYPES
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: allowed_registration_types
             - name: AGGREGATOR_EXTERNAL_HOST
               value: "aggregator.local"
 ---
