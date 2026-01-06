@@ -111,6 +111,26 @@ spec:
                 configMapKeyRef:
                   name: aggregator-config
                   key: allowed_registration_types
+            - name: PROVISION_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: provision_client_id
+            - name: PROVISION_CLIENT_SECRET
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: provision_client_secret
+            - name: PROVISION_WEBID
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: provision_webid
+            - name: PROVISION_AUTHORIZATION_SERVER
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: provision_authorization_server
             - name: AGGREGATOR_EXTERNAL_HOST
               value: "aggregator.local"
 ---

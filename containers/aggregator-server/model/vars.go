@@ -13,6 +13,10 @@ var ClientId string
 var ClientSecret string
 var DisableAuth bool
 var AllowedRegistrationTypes []string
+var ProvisionClientID string
+var ProvisionClientSecret string
+var ProvisionWebID string
+var ProvisionAuthorizationServer string
 
 var Clientset *kubernetes.Clientset
 var DynamicClient *dynamic.DynamicClient

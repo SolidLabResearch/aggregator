@@ -11,4 +11,8 @@ data:
   disable_auth: "true"                           # ⚠️ DISABLE authentication for integration testing
   client_id: "http://aggregator.local/client.json" # OAuth2 Client ID (dereferenceable)
   client_secret: "AtctW4sdbmjcfF9gQJIf5RoK6T6wetwG"      # OAuth2 Client Secret
-  allowed_registration_types: "authorization_code,client_credentials" # Comma-separated registration types
+  allowed_registration_types: "authorization_code,client_credentials,provision" # Comma-separated registration types
+  provision_client_id: "provision-client-id"    # Client credentials for provision flow
+  provision_client_secret: "provision-client-secret" # Client secret for provision flow
+  provision_webid: "https://provision.example/webid#me" # WebID to provision
+  provision_authorization_server: "https://uma.example" # UMA authorization server

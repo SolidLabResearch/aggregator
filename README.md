@@ -66,6 +66,10 @@ The Kubernetes ConfigMap at `k8s/app/config.yaml` controls aggregator behavior:
 - `client_id`: OAuth2 client ID (dereferenceable URL in Solid-OIDC setups).
 - `client_secret`: OAuth2 client secret.
 - `allowed_registration_types`: Comma-separated list of allowed registration types (e.g., `authorization_code,client_credentials`).
+- `provision_client_id`: Client ID used by the provision flow.
+- `provision_client_secret`: Client secret used by the provision flow.
+- `provision_webid`: WebID to provision when using the provision flow.
+- `provision_authorization_server`: UMA authorization server for provisioned aggregators.
 
 ### 3. Stop/Clean-up the Deployment
 
