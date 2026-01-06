@@ -46,8 +46,27 @@ func main() {
 		logrus.Fatal("Environment variable CLIENT_SECRET must be set")
 	}
 
+	model.ProvisionClientID = os.Getenv("PROVISION_CLIENT_ID")
+	model.ProvisionClientSecret = os.Getenv("PROVISION_CLIENT_SECRET")
+	model.ProvisionWebID = os.Getenv("PROVISION_WEBID")
+	model.ProvisionAuthorizationServer = os.Getenv("PROVISION_AUTHORIZATION_SERVER")
+
 	allowedTypes := parseAllowedRegistrationTypes(os.Getenv("ALLOWED_REGISTRATION_TYPES"))
 	model.AllowedRegistrationTypes = allowedTypes
+	if hasRegistrationType(allowedTypes, "provision") {
+		if model.ProvisionClientID == "" {
+			logrus.Fatal("Environment variable PROVISION_CLIENT_ID must be set when provision registration is allowed")
+		}
+		if model.ProvisionClientSecret == "" {
+			logrus.Fatal("Environment variable PROVISION_CLIENT_SECRET must be set when provision registration is allowed")
+		}
+		if model.ProvisionWebID == "" {
+			logrus.Fatal("Environment variable PROVISION_WEBID must be set when provision registration is allowed")
+		}
+		if model.ProvisionAuthorizationServer == "" {
+			logrus.Fatal("Environment variable PROVISION_AUTHORIZATION_SERVER must be set when provision registration is allowed")
+		}
+	}
 
 	// Read disable_auth config (for testing)
 	disableAuthStr := strings.ToLower(os.Getenv("DISABLE_AUTH"))
@@ -143,4 +162,13 @@ func parseAllowedRegistrationTypes(raw string) []string {
 	}
 
 	return allowed
+}
+
+func hasRegistrationType(allowed []string, target string) bool {
+	for _, value := range allowed {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }

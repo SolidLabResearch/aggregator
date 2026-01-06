@@ -2,18 +2,23 @@ package integration_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"aggregator-integration-test/mocks"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
 	testAggregatorClientIDURL  = "http://aggregator.local/client.json"
 	testAggregatorClientSecret = "AtctW4sdbmjcfF9gQJIf5RoK6T6wetwG"
+	testProvisionClientID      = "provision-client-id"
+	testProvisionClientSecret  = "provision-client-secret"
 )
 
 // Helper function to create a valid authentication token for tests
@@ -105,10 +110,126 @@ func assertWebIDDereferenceable(t *testing.T, webID string) {
 	}
 }
 
+func updateProvisionConfig(t *testing.T, clientID, clientSecret, webID, authorizationServer string) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	configMap, err := testEnv.KubeClient.CoreV1().ConfigMaps("aggregator-app").Get(ctx, "aggregator-config", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to fetch aggregator configmap: %v", err)
+	}
+
+	if configMap.Data == nil {
+		configMap.Data = map[string]string{}
+	}
+	configMap.Data["provision_client_id"] = clientID
+	configMap.Data["provision_client_secret"] = clientSecret
+	configMap.Data["provision_webid"] = webID
+	configMap.Data["provision_authorization_server"] = authorizationServer
+
+	if _, err := testEnv.KubeClient.CoreV1().ConfigMaps("aggregator-app").Update(ctx, configMap, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("Failed to update aggregator configmap: %v", err)
+	}
+
+	deployment, err := testEnv.KubeClient.AppsV1().Deployments("aggregator-app").Get(ctx, "aggregator-server", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to fetch aggregator deployment: %v", err)
+	}
+
+	if deployment.Spec.Template.Annotations == nil {
+		deployment.Spec.Template.Annotations = map[string]string{}
+	}
+	deployment.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"] = time.Now().Format(time.RFC3339Nano)
+
+	if _, err := testEnv.KubeClient.AppsV1().Deployments("aggregator-app").Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("Failed to restart aggregator deployment: %v", err)
+	}
+
+	waitForDeploymentReady(t, ctx, "aggregator-app", "aggregator-server")
+	waitForAggregatorReady(t, ctx, testEnv.AggregatorURL+"/")
+}
+
+func waitForDeploymentReady(t *testing.T, ctx context.Context, namespace, name string) {
+	t.Helper()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("Timed out waiting for %s deployment to be ready: %v", name, ctx.Err())
+		case <-ticker.C:
+			deployment, err := testEnv.KubeClient.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				continue
+			}
+
+			desired := int32(1)
+			if deployment.Spec.Replicas != nil {
+				desired = *deployment.Spec.Replicas
+			}
+
+			if deployment.Status.ObservedGeneration < deployment.Generation {
+				continue
+			}
+			if deployment.Status.Replicas != desired {
+				continue
+			}
+			if deployment.Status.UpdatedReplicas < desired {
+				continue
+			}
+			if deployment.Status.ReadyReplicas < desired {
+				continue
+			}
+			if deployment.Status.AvailableReplicas < desired {
+				continue
+			}
+
+			return
+		}
+	}
+}
+
+func waitForAggregatorReady(t *testing.T, ctx context.Context, url string) {
+	t.Helper()
+
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+	}
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("Timed out waiting for aggregator at %s: %v", url, ctx.Err())
+		case <-ticker.C:
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+			if err != nil {
+				continue
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				continue
+			}
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+	}
+}
+
 func createAggregatorViaProvision(t *testing.T, oidcProvider *mocks.OIDCProvider, authToken string, umaServerURL string) string {
 	t.Helper()
 
-	t.Skip("Provision flow not implemented yet")
+	targetWebID := oidcProvider.URL() + "/webid#me"
+	oidcProvider.RegisterClient(testProvisionClientID, testProvisionClientSecret, []string{}, []string{"client_credentials"})
+	oidcProvider.RegisterUser(targetWebID, "provision-user", "provision-pass")
+	updateProvisionConfig(t, testProvisionClientID, testProvisionClientSecret, targetWebID, umaServerURL)
 
 	createBody := map[string]interface{}{
 		"registration_type":    "provision",
@@ -314,7 +435,6 @@ func createAggregatorViaAuthorizationCode(t *testing.T, oidcProvider *mocks.OIDC
 }
 
 func TestRegistration_Provision_Create(t *testing.T) {
-	t.Skip("Provision flow not implemented yet")
 	oidcProvider, err := mocks.NewOIDCProvider()
 	if err != nil {
 		t.Fatalf("Failed to create OIDC provider: %v", err)
@@ -327,7 +447,10 @@ func TestRegistration_Provision_Create(t *testing.T) {
 	umaServer := mocks.NewUMAAuthorizationServer()
 	defer umaServer.Close()
 
-	oidcProvider.RegisterClient(testAggregatorClientIDURL, testAggregatorClientSecret, []string{}, []string{"client_credentials"})
+	targetWebID := oidcProvider.URL() + "/webid#me"
+	oidcProvider.RegisterClient(testProvisionClientID, testProvisionClientSecret, []string{}, []string{"client_credentials"})
+	oidcProvider.RegisterUser(targetWebID, "provision-user", "provision-pass")
+	updateProvisionConfig(t, testProvisionClientID, testProvisionClientSecret, targetWebID, umaServer.URL())
 
 	reqBody := map[string]interface{}{
 		"registration_type":    "provision",
@@ -372,14 +495,106 @@ func TestRegistration_Provision_Create(t *testing.T) {
 	if !ok || webID == "" {
 		t.Errorf("Response missing webid")
 	} else {
-		expectedWebID := oidcProvider.URL() + "/webid#me"
-		if webID != expectedWebID {
-			t.Errorf("Expected webid %s, got %s", expectedWebID, webID)
+		if webID != targetWebID {
+			t.Errorf("Expected webid %s, got %s", targetWebID, webID)
 		}
 		assertWebIDDereferenceable(t, webID)
 	}
 
 	t.Logf("Provision flow created aggregator %s", aggregatorID)
+}
+
+func TestRegistration_Provision_InvalidCredentials(t *testing.T) {
+	oidcProvider, err := mocks.NewOIDCProvider()
+	if err != nil {
+		t.Fatalf("Failed to create OIDC provider: %v", err)
+	}
+	defer oidcProvider.Close()
+
+	ownerWebID := "https://owner.example/webid#me"
+	authToken := createAuthToken(t, oidcProvider, ownerWebID)
+
+	umaServer := mocks.NewUMAAuthorizationServer()
+	defer umaServer.Close()
+
+	targetWebID := oidcProvider.URL() + "/webid#me"
+	validClientID := "provision-client-id-invalid-creds"
+	validClientSecret := "provision-client-secret-valid"
+	oidcProvider.RegisterClient(validClientID, validClientSecret, []string{}, []string{"client_credentials"})
+	oidcProvider.RegisterUser(targetWebID, "provision-user", "provision-pass")
+	updateProvisionConfig(t, validClientID, "wrong-secret", targetWebID, umaServer.URL())
+
+	reqBody := map[string]interface{}{
+		"registration_type": "provision",
+	}
+	body, _ := json.Marshal(reqBody)
+
+	req, err := http.NewRequest("POST", testEnv.AggregatorURL+"/registration", bytes.NewBuffer(body))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+authToken)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusBadGateway {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected 401/403/502 for invalid credentials, got %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	t.Logf("Provision correctly rejected invalid credentials with status %d", resp.StatusCode)
+}
+
+func TestRegistration_Provision_InvalidWebID(t *testing.T) {
+	oidcProvider, err := mocks.NewOIDCProvider()
+	if err != nil {
+		t.Fatalf("Failed to create OIDC provider: %v", err)
+	}
+	defer oidcProvider.Close()
+
+	ownerWebID := "https://owner.example/webid#me"
+	authToken := createAuthToken(t, oidcProvider, ownerWebID)
+
+	umaServer := mocks.NewUMAAuthorizationServer()
+	defer umaServer.Close()
+
+	invalidWebID := "http://127.0.0.1:1/webid#me"
+	clientID := "provision-client-id-invalid-webid"
+	clientSecret := "provision-client-secret-invalid-webid"
+	oidcProvider.RegisterClient(clientID, clientSecret, []string{}, []string{"client_credentials"})
+	updateProvisionConfig(t, clientID, clientSecret, invalidWebID, umaServer.URL())
+
+	reqBody := map[string]interface{}{
+		"registration_type": "provision",
+	}
+	body, _ := json.Marshal(reqBody)
+
+	req, err := http.NewRequest("POST", testEnv.AggregatorURL+"/registration", bytes.NewBuffer(body))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+authToken)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected 500 for invalid WebID, got %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	t.Logf("Provision correctly rejected invalid WebID with status %d", resp.StatusCode)
 }
 
 func TestRegistration_AuthorizationCode_Start(t *testing.T) {
@@ -949,7 +1164,6 @@ func TestRegistration_DeviceCode(t *testing.T) {
 }
 
 func TestRegistration_TokenUpdate_Provision(t *testing.T) {
-	t.Skip("Provision updates not implemented yet")
 	oidcProvider, err := mocks.NewOIDCProvider()
 	if err != nil {
 		t.Fatalf("Failed to create OIDC provider: %v", err)
@@ -1226,7 +1440,6 @@ func TestRegistration_TokenUpdate_AuthorizationCode(t *testing.T) {
 }
 
 func TestRegistration_Delete_Provision(t *testing.T) {
-	t.Skip("Provision flow not implemented yet")
 	oidcProvider, err := mocks.NewOIDCProvider()
 	if err != nil {
 		t.Fatalf("Failed to create OIDC provider: %v", err)
