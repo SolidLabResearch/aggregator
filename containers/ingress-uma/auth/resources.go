@@ -7,8 +7,6 @@ import (
 	"io"
 	"net/http"
 
-	"ingress-uma/signing"
-
 	"github.com/sirupsen/logrus"
 )
 
@@ -111,7 +109,7 @@ func createResource(issuer string, resourceId string, scopes []Scope) error {
 	}
 	logrus.WithFields(logrus.Fields{"action": action, "resource_id": resourceId, "endpoint": endpoint}).Info("Processing UMA resource registration")
 
-	res, err := signing.DoSignedRequest(req)
+	res, err := DoSignedRequest(req, issuer)
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err, "resource_id": resourceId, "endpoint": endpoint}).Error("Error while making UMA request")
 		return err
@@ -208,7 +206,7 @@ func deleteResource(issuer string, resourceId string) error {
 	// Set headers
 	req.Header.Set("Accept", "application/json")
 
-	res, err := signing.DoSignedRequest(req)
+	res, err := DoSignedRequest(req, issuer)
 	if err != nil {
 		return fmt.Errorf("failed to send signed DELETE request for resource %s: %w", resourceId, err)
 	}
@@ -303,7 +301,7 @@ func SynchronizeResources(issuer string) error {
 		"endpoint": config.ResourceRegistrationEndpoint,
 	}).Debug("Fetching UMA resource list")
 
-	listRes, err := signing.DoSignedRequest(listReq)
+	listRes, err := DoSignedRequest(listReq, issuer)
 	if err != nil {
 		return fmt.Errorf("failed to send signed UMA resource list request: %w", err)
 	}
@@ -336,7 +334,7 @@ func SynchronizeResources(issuer string) error {
 		}
 		detailReq.Header.Set("Accept", "application/json")
 
-		detailRes, err := signing.DoSignedRequest(detailReq)
+		detailRes, err := DoSignedRequest(detailReq, issuer)
 		if err != nil {
 			logrus.WithError(err).WithField("resource_id", resourceID).Debug("Failed to send UMA resource detail request")
 			continue

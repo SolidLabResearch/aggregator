@@ -13,6 +13,8 @@ type UmaConfig struct {
 	PermissionEndpoint           string `json:"permission_endpoint"`
 	IntrospectionEndpoint        string `json:"introspection_endpoint"`
 	ResourceRegistrationEndpoint string `json:"resource_registration_endpoint"`
+	RegistrationEndpoint         string `json:"registration_endpoint"`
+	TokenEndpoint                string `json:"token_endpoint"`
 }
 
 var requiredFields = map[string]func(UmaConfig) string{
@@ -21,6 +23,8 @@ var requiredFields = map[string]func(UmaConfig) string{
 	"permission_endpoint":            func(c UmaConfig) string { return c.PermissionEndpoint },
 	"introspection_endpoint":         func(c UmaConfig) string { return c.IntrospectionEndpoint },
 	"resource_registration_endpoint": func(c UmaConfig) string { return c.ResourceRegistrationEndpoint },
+	"registration_endpoint":          func(c UmaConfig) string { return c.RegistrationEndpoint },
+	"token_endpoint":                 func(c UmaConfig) string { return c.TokenEndpoint },
 }
 
 func fetchUmaConfig(issuer string) (UmaConfig, error) {

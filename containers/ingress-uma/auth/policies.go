@@ -125,8 +125,7 @@ func createPolicy(issuer string, resourceId string, scopes []Scope, userId strin
 		"policy":     buf.String(),
 	}).Infof(`Requesting policy for %s`, resourceId)
 
-	clientHttp := &http.Client{}
-	resp, err := clientHttp.Do(req)
+	resp, err := DoSignedRequest(req, issuer)
 	if err != nil {
 		return fmt.Errorf("policy request failed: %w", err)
 	}
