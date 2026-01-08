@@ -5,6 +5,7 @@ import (
 	"aggregator/model"
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -22,6 +23,7 @@ func CreateActor(request model.ActorRequest) (*model.Actor, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	useUMA := strings.TrimSpace(request.Owner.AuthzServerURL) != ""
 	actor := model.Actor{
 		Id:            request.Id,
 		Description:   request.Description,
@@ -41,7 +43,7 @@ func CreateActor(request model.ActorRequest) (*model.Actor, error) {
 	}
 
 	// Create Deployment
-	if err := createDeployment(&actor, 1, ctx); err != nil {
+	if err := createDeployment(&actor, 1, useUMA, ctx); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("pod creation failed: %w", err)
 	}
@@ -62,7 +64,7 @@ func CreateActor(request model.ActorRequest) (*model.Actor, error) {
 	return &actor, nil
 }
 
-func createDeployment(actor *model.Actor, replicas int32, ctx context.Context) error {
+func createDeployment(actor *model.Actor, replicas int32, useUMA bool, ctx context.Context) error {
 	labels := map[string]string{
 		"app":       actor.Id,
 		"namespace": actor.Namespace,
@@ -115,13 +117,18 @@ func createDeployment(actor *model.Actor, replicas int32, ctx context.Context) e
   				"ex": "http://example.org/"
 				}`,
 			},
-			{Name: "HTTP_PROXY", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", actor.Namespace)},
-			{Name: "http_proxy", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", actor.Namespace)},
 			{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 		},
 		Ports: []corev1.ContainerPort{
 			{ContainerPort: 8080},
 		},
+	}
+
+	if useUMA {
+		container.Env = append(container.Env,
+			corev1.EnvVar{Name: "HTTP_PROXY", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", actor.Namespace)},
+			corev1.EnvVar{Name: "http_proxy", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", actor.Namespace)},
+		)
 	}
 
 	deploySpec := &appsv1.Deployment{
@@ -228,6 +235,22 @@ func createIngressRoute(actor *model.Actor, owner model.User, ctx context.Contex
 	//	return fmt.Errorf("failed to create rewrite middleware: %w", err)
 	//}
 
+	useUMA := strings.TrimSpace(owner.AuthzServerURL) != ""
+	middlewares := []interface{}{
+		map[string]interface{}{
+			"name":      "replace-path",
+			"namespace": "aggregator-app",
+		},
+	}
+	if useUMA {
+		middlewares = append([]interface{}{
+			map[string]interface{}{
+				"name":      "ingress-uma",
+				"namespace": "aggregator-app",
+			},
+		}, middlewares...)
+	}
+
 	// Define IngressRoute spec
 	obj := &unstructured.Unstructured{
 		Object: map[string]interface{}{
@@ -250,16 +273,7 @@ func createIngressRoute(actor *model.Actor, owner model.User, ctx context.Contex
 								"port":      8080,
 							},
 						},
-						"middlewares": []interface{}{
-							map[string]interface{}{
-								"name":      "ingress-uma",
-								"namespace": "aggregator-app",
-							},
-							map[string]interface{}{
-								"name":      "replace-path",
-								"namespace": "aggregator-app",
-							},
-						},
+						"middlewares": middlewares,
 					},
 				},
 			},

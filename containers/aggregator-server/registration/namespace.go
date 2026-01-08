@@ -58,74 +58,77 @@ func deleteNamespaceResources(namespace string, ctx context.Context) error {
 func deployAggregatorResources(namespace string, tokenEndpoint string, accessToken string, refreshToken string, accessTokenExpiry string, ownerWebID string, authzServerURL string, ctx context.Context) error {
 	replicas := int32(1)
 	useUMA := authzServerURL != ""
+	var err error
 
-	if err := ensureEgressUMARbac(namespace, ctx); err != nil {
-		return fmt.Errorf("failed to ensure egress-uma RBAC: %w", err)
-	}
+	if useUMA {
+		if err := ensureEgressUMARbac(namespace, ctx); err != nil {
+			return fmt.Errorf("failed to ensure egress-uma RBAC: %w", err)
+		}
 
-	tokensPayload, err := buildTokensPayload(accessToken, refreshToken, accessTokenExpiry)
-	if err != nil {
-		return fmt.Errorf("failed to build egress-uma token payload: %w", err)
-	}
-	if err := ensureConfigMap(namespace, "egress-uma-config", tokensPayload, ctx); err != nil {
-		return fmt.Errorf("failed to ensure egress-uma configmap: %w", err)
-	}
+		tokensPayload, err := buildTokensPayload(accessToken, refreshToken, accessTokenExpiry)
+		if err != nil {
+			return fmt.Errorf("failed to build egress-uma token payload: %w", err)
+		}
+		if err := ensureConfigMap(namespace, "egress-uma-config", tokensPayload, ctx); err != nil {
+			return fmt.Errorf("failed to ensure egress-uma configmap: %w", err)
+		}
 
-	// --- Egress UMA Deployment ---
-	umaDeploy := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "egress-uma",
-			Namespace: namespace,
-			Labels: map[string]string{
-				"app": "egress-uma",
-			},
-		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: &replicas,
-			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{
+		// --- Egress UMA Deployment ---
+		umaDeploy := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "egress-uma",
+				Namespace: namespace,
+				Labels: map[string]string{
 					"app": "egress-uma",
 				},
 			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
 						"app": "egress-uma",
 					},
 				},
-				Spec: corev1.PodSpec{
-					ServiceAccountName: "egress-uma-sa",
-					Containers: []corev1.Container{
-						{
-							Name:            "egress-uma",
-							Image:           "egress-uma",
-							ImagePullPolicy: corev1.PullNever,
-							Ports: []corev1.ContainerPort{
-								{ContainerPort: 8080},
-							},
-							Env: []corev1.EnvVar{
-								{Name: "CLIENT_ID", Value: model.ClientId},
-								{Name: "CLIENT_SECRET", Value: model.ClientSecret},
-								{Name: "TOKEN_ENDPOINT", Value: tokenEndpoint},
-								{Name: "UPDATE_TOKENS_FILE", Value: "/etc/egress-uma/tokens.json"},
-								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "egress-uma-config",
-									MountPath: "/etc/egress-uma",
-									ReadOnly:  true,
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{
+							"app": "egress-uma",
+						},
+					},
+					Spec: corev1.PodSpec{
+						ServiceAccountName: "egress-uma-sa",
+						Containers: []corev1.Container{
+							{
+								Name:            "egress-uma",
+								Image:           "egress-uma",
+								ImagePullPolicy: corev1.PullNever,
+								Ports: []corev1.ContainerPort{
+									{ContainerPort: 8080},
+								},
+								Env: []corev1.EnvVar{
+									{Name: "CLIENT_ID", Value: model.ClientId},
+									{Name: "CLIENT_SECRET", Value: model.ClientSecret},
+									{Name: "TOKEN_ENDPOINT", Value: tokenEndpoint},
+									{Name: "UPDATE_TOKENS_FILE", Value: "/etc/egress-uma/tokens.json"},
+									{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
+								},
+								VolumeMounts: []corev1.VolumeMount{
+									{
+										Name:      "egress-uma-config",
+										MountPath: "/etc/egress-uma",
+										ReadOnly:  true,
+									},
 								},
 							},
 						},
-					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "egress-uma-config",
-							VolumeSource: corev1.VolumeSource{
-								ConfigMap: &corev1.ConfigMapVolumeSource{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: "egress-uma-config",
+						Volumes: []corev1.Volume{
+							{
+								Name: "egress-uma-config",
+								VolumeSource: corev1.VolumeSource{
+									ConfigMap: &corev1.ConfigMapVolumeSource{
+										LocalObjectReference: corev1.LocalObjectReference{
+											Name: "egress-uma-config",
+										},
 									},
 								},
 							},
@@ -133,41 +136,41 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 					},
 				},
 			},
-		},
-	}
+		}
 
-	_, err = model.Clientset.AppsV1().Deployments(namespace).Create(ctx, umaDeploy, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create Egress UMA deployment: %w", err)
-	}
-	logrus.Infof("Egress UMA deployment created in namespace %s ✅", namespace)
+		_, err = model.Clientset.AppsV1().Deployments(namespace).Create(ctx, umaDeploy, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to create Egress UMA deployment: %w", err)
+		}
+		logrus.Infof("Egress UMA deployment created in namespace %s ✅", namespace)
 
-	// --- Egress UMA Service ---
-	umaService := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "egress-uma",
-			Namespace: namespace,
-			Labels: map[string]string{
-				"app": "egress-uma",
-			},
-		},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{
-				"app": "egress-uma",
-			},
-			Ports: []corev1.ServicePort{
-				{
-					Protocol:   corev1.ProtocolTCP,
-					Port:       8080,
-					TargetPort: intstr.FromInt(8080),
+		// --- Egress UMA Service ---
+		umaService := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "egress-uma",
+				Namespace: namespace,
+				Labels: map[string]string{
+					"app": "egress-uma",
 				},
 			},
-		},
-	}
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{
+					"app": "egress-uma",
+				},
+				Ports: []corev1.ServicePort{
+					{
+						Protocol:   corev1.ProtocolTCP,
+						Port:       8080,
+						TargetPort: intstr.FromInt(8080),
+					},
+				},
+			},
+		}
 
-	_, err = model.Clientset.CoreV1().Services(namespace).Create(ctx, umaService, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create Egress UMA service: %w", err)
+		_, err = model.Clientset.CoreV1().Services(namespace).Create(ctx, umaService, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to create Egress UMA service: %w", err)
+		}
 	}
 
 	// --- Aggregator Instance Deployment ---
@@ -251,6 +254,45 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 	_, err = model.Clientset.RbacV1().RoleBindings(namespace).Create(ctx, roleBinding, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create RoleBinding: %w", err)
+	}
+
+	traefikRole := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "aggregator-instance-traefik-editor",
+			Namespace: namespace,
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{"traefik.io"},
+				Resources: []string{"ingressroutes", "middlewares"},
+				Verbs:     []string{"get", "list", "create", "update", "delete"},
+			},
+		},
+	}
+	if _, err := model.Clientset.RbacV1().Roles(namespace).Create(ctx, traefikRole, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create Traefik Role: %w", err)
+	}
+
+	traefikBinding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "aggregator-instance-traefik-binding",
+			Namespace: namespace,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      sa.Name,
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "Role",
+			Name:     traefikRole.Name,
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+	if _, err := model.Clientset.RbacV1().RoleBindings(namespace).Create(ctx, traefikBinding, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create Traefik RoleBinding: %w", err)
 	}
 
 	if err := ensureConfigMap(namespace, "aggregator-instance-config", map[string]string{"access_token_expiry": accessTokenExpiry}, ctx); err != nil {

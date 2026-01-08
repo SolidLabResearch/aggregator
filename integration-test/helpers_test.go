@@ -16,6 +16,10 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 // Helper function to create a valid authentication token for tests.
@@ -159,6 +163,28 @@ func waitForDeploymentReady(t *testing.T, ctx context.Context, namespace, name s
 			}
 
 			return
+		}
+	}
+}
+
+func waitForDeploymentExists(t *testing.T, ctx context.Context, namespace, name string) *appsv1.Deployment {
+	t.Helper()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("Timed out waiting for deployment %s: %v", name, ctx.Err())
+		case <-ticker.C:
+			deployment, err := testEnv.KubeClient.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+			if err == nil {
+				return deployment
+			}
+			if !apierrors.IsNotFound(err) {
+				t.Fatalf("Failed to get deployment %s: %v", name, err)
+			}
 		}
 	}
 }
@@ -552,4 +578,73 @@ func containsString(s, substr string) bool {
 			}
 			return false
 		}())
+}
+
+func getDynamicClient(t *testing.T) dynamic.Interface {
+	t.Helper()
+
+	kubeconfig := clientcmd.NewDefaultClientConfigLoadingRules().GetDefaultFilename()
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		t.Fatalf("Failed to build kubeconfig for dynamic client: %v", err)
+	}
+
+	client, err := dynamic.NewForConfig(config)
+	if err != nil {
+		t.Fatalf("Failed to create dynamic client: %v", err)
+	}
+
+	return client
+}
+
+func getIngressRoute(t *testing.T, namespace, name string) *unstructured.Unstructured {
+	t.Helper()
+
+	client := getDynamicClient(t)
+	ingressRouteGVR := schema.GroupVersionResource{
+		Group:    "traefik.io",
+		Version:  "v1alpha1",
+		Resource: "ingressroutes",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	obj, err := client.Resource(ingressRouteGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get IngressRoute %s: %v", name, err)
+	}
+
+	return obj
+}
+
+func ingressRouteHasMiddleware(t *testing.T, ingressRoute *unstructured.Unstructured, name string) bool {
+	t.Helper()
+
+	routes, found, err := unstructured.NestedSlice(ingressRoute.Object, "spec", "routes")
+	if err != nil || !found {
+		t.Fatalf("IngressRoute missing routes: %v", err)
+	}
+
+	for _, route := range routes {
+		routeMap, ok := route.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		middlewares, _, err := unstructured.NestedSlice(routeMap, "middlewares")
+		if err != nil {
+			t.Fatalf("Failed to read middlewares: %v", err)
+		}
+		for _, mw := range middlewares {
+			mwMap, ok := mw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if mwMap["name"] == name {
+				return true
+			}
+		}
+	}
+
+	return false
 }
