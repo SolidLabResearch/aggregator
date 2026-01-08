@@ -8,7 +8,7 @@ import (
 // AggregatorInstance represents a deployed aggregator for a user
 type AggregatorInstance struct {
 	AggregatorID        string
-	OwnerWebID          string
+	OwnerID             string
 	RegistrationType    string
 	AuthorizationServer string
 	Namespace           string

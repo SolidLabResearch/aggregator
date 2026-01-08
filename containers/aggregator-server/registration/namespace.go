@@ -89,7 +89,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, refreshTo
 							},
 							Env: []corev1.EnvVar{
 								{Name: "CLIENT_ID", Value: model.ClientId},
-								{Name: "CLIENT_SECRET", Value: model.ClientSecret},
+								{Name: "CLIENT_SECRET", Value: model.AggregatorSecret},
 								{Name: "REFRESH_TOKEN", Value: refreshToken},
 								{Name: "TOKEN_ENDPOINT", Value: tokenEndpoint},
 								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
@@ -170,7 +170,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, refreshTo
 							Env: []corev1.EnvVar{
 								{Name: "AGGREGATOR_EXTERNAL_HOST", Value: model.ExternalHost},
 								{Name: "CLIENT_ID", Value: model.ClientId},
-								{Name: "CLIENT_SECRET", Value: model.ClientSecret},
+								{Name: "CLIENT_SECRET", Value: model.AggregatorSecret},
 								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 								{Name: "USER_NAMESPACE", Value: namespace},
 								{Name: "USER_ID", Value: ownerWebID},

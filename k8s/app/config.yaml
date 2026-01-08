@@ -9,8 +9,9 @@ metadata:
 data:
   log_level: "debug"                                                            # Set log level (debug, info, warn, error)
   disable_auth: "false"                                                         # Disable authentication for testing purposes (true, false)
-  client_id: "aggregator"                                                       # OAuth2 Client ID
-  client_secret: "AtctW4sdbmjcfF9gQJIf5RoK6T6wetwG"                             # OAuth2 Client Secret
+  client_id: "aggregator"                                                       # Auth server client ID
+  auth_server: "https://auth.example"                                           # OIDC-compliant Authorization Server URL (optional)
+  auth_server_secret: "AtctW4sdbmjcfF9gQJIf5RoK6T6wetwG"                        # Auth server client secret (optional)
   allowed_registration_types: "authorization_code,client_credentials,provision" # Comma-separated registration types
   provision_client_id: "provision-client-id"                                    # Client credentials for provision flow
   provision_client_secret: "provision-client-secret"                            # Client secret for provision flow

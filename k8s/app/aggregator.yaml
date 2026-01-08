@@ -101,11 +101,16 @@ spec:
                 configMapKeyRef:
                   name: aggregator-config
                   key: client_id
-            - name: CLIENT_SECRET
+            - name: AUTH_SERVER
               valueFrom:
                 configMapKeyRef:
                   name: aggregator-config
-                  key: client_secret
+                  key: auth_server
+            - name: AGG_SECRET
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: auth_server_secret
             - name: ALLOWED_REGISTRATION_TYPES
               valueFrom:
                 configMapKeyRef:

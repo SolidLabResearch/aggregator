@@ -73,12 +73,12 @@ func TestHandleAuthorizationCodeFinish_AllowsMissingOptionalTokenFields(t *testi
 	defer tokenServer.Close()
 
 	originalClientID := model.ClientId
-	originalClientSecret := model.ClientSecret
+	originalClientSecret := model.AggregatorSecret
 	model.ClientId = "http://aggregator.local/client.json"
-	model.ClientSecret = "test-secret"
+	model.AggregatorSecret = "test-secret"
 	t.Cleanup(func() {
 		model.ClientId = originalClientID
-		model.ClientSecret = originalClientSecret
+		model.AggregatorSecret = originalClientSecret
 	})
 
 	instance := createAggregatorInstanceRecord(
@@ -93,7 +93,7 @@ func TestHandleAuthorizationCodeFinish_AllowsMissingOptionalTokenFields(t *testi
 	state := "state-missing-fields"
 	stateStoreMu.Lock()
 	stateStore[state] = storedState{
-		OwnerWebID:          instance.OwnerWebID,
+		OwnerId:             instance.OwnerID,
 		AuthorizationServer: instance.AuthorizationServer,
 		AggregatorID:        instance.AggregatorID,
 		CodeVerifier:        "verifier",
@@ -116,7 +116,7 @@ func TestHandleAuthorizationCodeFinish_AllowsMissingOptionalTokenFields(t *testi
 	}
 
 	rec := httptest.NewRecorder()
-	handleAuthorizationCodeFinish(rec, req, instance.OwnerWebID)
+	handleAuthorizationCodeFinish(rec, req, instance.OwnerID, "solid-oidc")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Expected 200 OK, got %d", rec.Code)
@@ -150,12 +150,12 @@ func TestHandleAuthorizationCodeFinish_UsesStoredClientIDForRedirectValidation(t
 	defer tokenServer.Close()
 
 	originalClientID := model.ClientId
-	originalClientSecret := model.ClientSecret
+	originalClientSecret := model.AggregatorSecret
 	model.ClientId = otherClientServer.URL
-	model.ClientSecret = "test-secret"
+	model.AggregatorSecret = "test-secret"
 	t.Cleanup(func() {
 		model.ClientId = originalClientID
-		model.ClientSecret = originalClientSecret
+		model.AggregatorSecret = originalClientSecret
 	})
 
 	instance := createAggregatorInstanceRecord(
@@ -170,7 +170,7 @@ func TestHandleAuthorizationCodeFinish_UsesStoredClientIDForRedirectValidation(t
 	state := "state-redirect-validation"
 	stateStoreMu.Lock()
 	stateStore[state] = storedState{
-		OwnerWebID:          instance.OwnerWebID,
+		OwnerId:             instance.OwnerID,
 		AuthorizationServer: instance.AuthorizationServer,
 		AggregatorID:        instance.AggregatorID,
 		ClientID:            allowedClientServer.URL,
@@ -194,7 +194,7 @@ func TestHandleAuthorizationCodeFinish_UsesStoredClientIDForRedirectValidation(t
 	}
 
 	rec := httptest.NewRecorder()
-	handleAuthorizationCodeFinish(rec, req, instance.OwnerWebID)
+	handleAuthorizationCodeFinish(rec, req, instance.OwnerID, "solid-oidc")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Expected 200 OK, got %d", rec.Code)
