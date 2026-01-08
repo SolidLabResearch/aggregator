@@ -3,8 +3,9 @@ package config
 import (
 	"aggregator/model"
 	"encoding/json"
-	"github.com/sirupsen/logrus"
 	"net/http"
+
+	"github.com/sirupsen/logrus"
 )
 
 type ClientIdentifierDocument struct {

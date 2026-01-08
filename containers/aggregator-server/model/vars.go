@@ -9,10 +9,15 @@ import (
 var Protocol string
 var ExternalHost string
 
+// Standard OIDC Authorization Server configuration
+var AuthServer string
 var ClientId string
-var ClientSecret string
+var AggregatorSecret string
+
 var DisableAuth bool
 var AllowedRegistrationTypes []string
+
+// Provisioning credentials for "provision" registration type
 var ProvisionClientID string
 var ProvisionClientSecret string
 var ProvisionWebID string

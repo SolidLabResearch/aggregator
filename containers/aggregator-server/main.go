@@ -41,9 +41,16 @@ func main() {
 	if model.ClientId == "" {
 		logrus.Fatal("Environment variable CLIENT_ID must be set")
 	}
-	model.ClientSecret = os.Getenv("CLIENT_SECRET")
-	if model.ClientSecret == "" {
-		logrus.Fatal("Environment variable CLIENT_SECRET must be set")
+
+	// Standard OIDC Authorization Server configuration
+	model.AuthServer = os.Getenv("AUTH_SERVER")
+	if model.AuthServer == "" {
+		logrus.Info("Only Solid-OIDC with Web IDs is supported (no standard OIDC Authorization Server configured)")
+	} else {
+		model.AggregatorSecret = os.Getenv("AGG_SECRET")
+		if model.AggregatorSecret == "" {
+			logrus.Fatal("Environment variable AGG_SECRET must be set")
+		}
 	}
 
 	model.ProvisionClientID = os.Getenv("PROVISION_CLIENT_ID")

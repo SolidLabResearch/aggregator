@@ -33,31 +33,53 @@ func extractBearerToken(r *http.Request) (string, error) {
 }
 
 // authenticateRequest validates the IDP_client_token and extracts the WebID
-func authenticateRequest(r *http.Request) (webID string, err error) {
+func authenticateRequest(r *http.Request) (issuer string, id string, mode string, err error) {
 	tokenString, err := extractBearerToken(r)
 	if err != nil {
-		return "", err
+		return "", "", "", err
 	}
 
 	// If authentication is disabled (for testing), just parse and extract WebID without validation
 	if model.DisableAuth {
 		token, err := jwt.Parse([]byte(tokenString), jwt.WithValidate(false))
 		if err != nil {
-			return "", errors.New("invalid token format")
+			return "", "", "", errors.New("invalid token format")
 		}
 
-		// Extract WebID from token
+		// Extract issuer from token
+		if iss, ok := token.Get("iss"); ok {
+			if issStr, ok := iss.(string); ok {
+				issuer = issStr
+			}
+		}
+
+		// Standard OIDC Auth Server mode
+		if model.AuthServer != "" && model.AuthServer == issuer {
+			// Extract subject as ID
+			if sub, ok := token.Get("sub"); ok {
+				if subStr, ok := sub.(string); ok {
+					return issuer, subStr, "oidc", nil
+				}
+			}
+
+			return "", "", "", errors.New("no subject claim in token")
+		}
+
+		// Solid-OIDC mode: extract WebID from token
 		if webidClaim, ok := token.Get("webid"); ok {
 			if webidStr, ok := webidClaim.(string); ok {
-				return webidStr, nil
+				return issuer, webidStr, "solid-oidc", nil
 			}
 		}
+
+		// Fallback to subject claim
 		if sub, ok := token.Get("sub"); ok {
 			if subStr, ok := sub.(string); ok {
-				return subStr, nil
+				return issuer, subStr, "solid-oidc", nil
 			}
 		}
-		return "", errors.New("no webid or sub claim in token")
+
+		return "", "", "", errors.New("no webid or subject claim in token")
 	}
 
 	// Production mode: full token validation
@@ -65,55 +87,66 @@ func authenticateRequest(r *http.Request) (webID string, err error) {
 	unverifiedToken, err := jwt.Parse([]byte(tokenString), jwt.WithValidate(false))
 	if err != nil {
 		logrus.WithError(err).Warn("Failed to parse IDP client token")
-		return "", errors.New("invalid token format")
+		return "", "", "", errors.New("invalid token format")
 	}
 
 	// Get issuer from token
-	issuer, ok := unverifiedToken.Get("iss")
+	iss, ok := unverifiedToken.Get("iss")
 	if !ok {
-		return "", errors.New("token missing issuer claim")
+		return "", "", "", errors.New("token missing issuer claim")
 	}
-	issuerStr, ok := issuer.(string)
+	issStr, ok := iss.(string)
 	if !ok {
-		return "", errors.New("invalid issuer claim")
+		return "", "", "", errors.New("invalid issuer claim")
 	}
 
 	// Construct JWKS URL from issuer
 	// Try standard OIDC discovery first
-	jwksURL, err := discoverJWKSURL(issuerStr)
+	jwksURL, err := discoverJWKSURL(issStr)
 	if err != nil {
-		logrus.WithError(err).Warnf("Failed to discover JWKS URL for issuer %s", issuerStr)
-		return "", errors.New("failed to discover JWKS endpoint")
+		logrus.WithError(err).Warnf("Failed to discover JWKS URL for issuer %s", issStr)
+		return "", "", "", errors.New("failed to discover JWKS endpoint")
 	}
 
 	// Verify token signature using JWKS
 	verifiedToken, err := verifyTokenWithJWKS(tokenString, jwksURL)
 	if err != nil {
 		logrus.WithError(err).Warn("Token signature verification failed")
-		return "", errors.New("invalid token signature")
+		return "", "", "", errors.New("invalid token signature")
 	}
 
 	// Validate token claims
-	if err := validateTokenClaims(verifiedToken, issuerStr); err != nil {
+	if err := validateTokenClaims(verifiedToken, issStr); err != nil {
 		logrus.WithError(err).Warn("Token validation failed")
-		return "", err
+		return "", "", "", err
 	}
 
-	// Extract WebID from verified token
-	// Try 'webid' claim first, then 'sub'
+	if model.AuthServer != "" && model.AuthServer == issStr {
+		// Standard OIDC Auth Server mode: extract subject as ID
+		if sub, ok := verifiedToken.Get("sub"); ok {
+			if subStr, ok := sub.(string); ok {
+				return issStr, subStr, "oidc", nil
+			}
+		}
+
+		return "", "", "", errors.New("token missing subject claim")
+	}
+
+	// Solid-OIDC mode: extract WebID from token
 	if webidClaim, ok := verifiedToken.Get("webid"); ok {
 		if webidStr, ok := webidClaim.(string); ok {
-			return webidStr, nil
+			return issStr, webidStr, "solid-oidc", nil
 		}
 	}
 
+	// Fallback to subject claim
 	if sub, ok := verifiedToken.Get("sub"); ok {
 		if subStr, ok := sub.(string); ok {
-			return subStr, nil
+			return issStr, subStr, "solid-oidc", nil
 		}
 	}
 
-	return "", errors.New("no webid or sub claim in token")
+	return "", "", "", errors.New("token missing webid or subject claim")
 }
 
 // discoverJWKSURL discovers the JWKS URL from an OIDC issuer

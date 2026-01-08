@@ -14,25 +14,25 @@ import (
 )
 
 // handleAuthorizationCodeFlow handles the authorization_code registration type
-func handleAuthorizationCodeFlow(w http.ResponseWriter, req model.RegistrationRequest, ownerWebID string) {
+func handleAuthorizationCodeFlow(w http.ResponseWriter, req model.RegistrationRequest, issuer string, id string, mode string) {
 	// Check if this is start or finish phase
 	if req.Code == "" {
 		// Start phase
-		handleAuthorizationCodeStart(w, req, ownerWebID)
+		handleAuthorizationCodeStart(w, req, issuer, id, mode)
 	} else {
 		// Finish phase
-		handleAuthorizationCodeFinish(w, req, ownerWebID)
+		handleAuthorizationCodeFinish(w, req, id, mode)
 	}
 }
 
 // handleAuthorizationCodeStart handles the start phase of authorization_code flow
-func handleAuthorizationCodeStart(w http.ResponseWriter, req model.RegistrationRequest, ownerWebID string) {
+func handleAuthorizationCodeStart(w http.ResponseWriter, req model.RegistrationRequest, issuer string, id string, mode string) {
 	// Check if this is an update
 	isUpdate := req.AggregatorID != ""
 
 	if isUpdate {
 		// Verify ownership
-		if err := checkOwnership(req.AggregatorID, ownerWebID); err != nil {
+		if err := checkOwnership(req.AggregatorID, id); err != nil {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -43,22 +43,22 @@ func handleAuthorizationCodeStart(w http.ResponseWriter, req model.RegistrationR
 		http.Error(w, "authorization_server is required", http.StatusBadRequest)
 		return
 	}
-	if req.ClientID == "" {
+	if mode == "solid-oidc" && req.ClientID == "" {
 		http.Error(w, "client_id is required", http.StatusBadRequest)
 		return
 	}
 
 	// Step 1: Dereference WebID to discover IDP
 	// The WebID should contain a solid:oidcIssuer claim pointing to the IDP
-	idpIssuer, err := discoverIDPFromWebID(ownerWebID)
-	if err != nil {
-		logrus.WithError(err).Errorf("Failed to discover IDP from WebID: %s", ownerWebID)
-		http.Error(w, "Failed to discover IDP from WebID", http.StatusInternalServerError)
-		return
-	}
+	// idpIssuer, err := discoverIDPFromWebID(ownerWebID)
+	// if err != nil {
+	// 	logrus.WithError(err).Errorf("Failed to discover IDP from WebID: %s", ownerWebID)
+	// 	http.Error(w, "Failed to discover IDP from WebID", http.StatusInternalServerError)
+	// 	return
+	// }
 
 	// Step 2: Fetch OIDC configuration
-	oidcConfig, err := fetchOIDCConfig(idpIssuer)
+	oidcConfig, err := fetchOIDCConfig(issuer)
 	if err != nil {
 		logrus.WithError(err).Error("Unable to fetch OIDC configuration")
 		http.Error(w, "Unable to fetch OIDC configuration", http.StatusInternalServerError)
@@ -84,18 +84,18 @@ func handleAuthorizationCodeStart(w http.ResponseWriter, req model.RegistrationR
 	// Step 5: Store state with PKCE verifier and request details
 	stateStoreMu.Lock()
 	stateStore[state] = storedState{
-		OwnerWebID:          ownerWebID,
+		OwnerId:             id,
 		AuthorizationServer: req.AuthorizationServer,
 		AggregatorID:        req.AggregatorID,
 		ClientID:            req.ClientID,
 		CodeVerifier:        codeVerifier,
-		IDPIssuer:           idpIssuer,
+		IDPIssuer:           issuer,
 		TokenEndpoint:       oidcConfig.TokenEndpoint,
 		ExpiresAt:           time.Now().Add(10 * time.Minute),
 	}
 	stateStoreMu.Unlock()
 
-	logrus.Infof("Authorization code flow started for WebID %s (state=%s)", ownerWebID, state)
+	logrus.Infof("Authorization code flow started for WebID %s (state=%s)", id, state)
 
 	// Step 6: Return public parameters to client
 	response := model.AuthorizationCodeStartResponse{
@@ -113,7 +113,7 @@ func handleAuthorizationCodeStart(w http.ResponseWriter, req model.RegistrationR
 }
 
 // handleAuthorizationCodeFinish handles the finish phase of authorization_code flow
-func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.RegistrationRequest, ownerWebID string) {
+func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.RegistrationRequest, id string, mode string) {
 	// Validate required fields
 	if req.Code == "" {
 		http.Error(w, "code is required", http.StatusBadRequest)
@@ -148,16 +148,18 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 	}
 
 	// Verify the request is from the same user
-	if storedData.OwnerWebID != ownerWebID {
-		logrus.Warnf("WebID mismatch: stored=%s, request=%s", storedData.OwnerWebID, ownerWebID)
+	if storedData.OwnerId != id {
+		logrus.Warnf("WebID mismatch: stored=%s, request=%s", storedData.OwnerId, id)
 		http.Error(w, "Unauthorized", http.StatusForbidden)
 		return
 	}
 
-	if err := validateRedirectURI(req.RedirectURI, storedData.ClientID); err != nil {
-		logrus.WithError(err).Warn("Redirect URI validation failed")
-		http.Error(w, "redirect_uri not allowed", http.StatusBadRequest)
-		return
+	if mode == "solid-oidc" {
+		if err := validateRedirectURI(req.RedirectURI, storedData.ClientID); err != nil {
+			logrus.WithError(err).Warn("Redirect URI validation failed")
+			http.Error(w, "redirect_uri not allowed", http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Exchange authorization code for tokens
@@ -166,7 +168,7 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 		"code":          {req.Code},
 		"redirect_uri":  {req.RedirectURI},
 		"client_id":     {model.ClientId},
-		"client_secret": {model.ClientSecret},
+		"client_secret": {model.AggregatorSecret},
 		"code_verifier": {storedData.CodeVerifier},
 	}
 
@@ -218,7 +220,7 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 		defer cancel()
 
 		// Create namespace
-		namespace, err := createNamespaceForAggregator(ownerWebID, storedData.AuthorizationServer, ctx)
+		namespace, err := createNamespaceForAggregator(id, storedData.AuthorizationServer, ctx)
 		if err != nil {
 			logrus.WithError(err).Error("Failed to create namespace")
 			http.Error(w, "Failed to create namespace", http.StatusInternalServerError)
@@ -226,7 +228,7 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 		}
 
 		// Deploy aggregator instance
-		if err := deployAggregatorResources(namespace, storedData.TokenEndpoint, tokenResp.RefreshToken, ownerWebID, storedData.AuthorizationServer, ctx); err != nil {
+		if err := deployAggregatorResources(namespace, storedData.TokenEndpoint, tokenResp.RefreshToken, id, storedData.AuthorizationServer, ctx); err != nil {
 			logrus.WithError(err).Error("Failed to deploy aggregator")
 			http.Error(w, "Failed to deploy aggregator", http.StatusInternalServerError)
 			return
@@ -234,7 +236,7 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 
 		// Create aggregator record
 		instance = createAggregatorInstanceRecord(
-			ownerWebID,
+			id,
 			"authorization_code",
 			storedData.AuthorizationServer,
 			namespace,
@@ -242,7 +244,7 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 			tokenResp.RefreshToken,
 		)
 
-		logrus.Infof("Aggregator created: %s for WebID %s", instance.AggregatorID, ownerWebID)
+		logrus.Infof("Aggregator created: %s for WebID %s", instance.AggregatorID, id)
 	}
 
 	// Return response
