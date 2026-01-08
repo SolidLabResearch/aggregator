@@ -508,21 +508,31 @@ func ensureConfigMap(namespace string, name string, data map[string]string, ctx 
 		return err
 	}
 
-	existing, err := model.Clientset.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-	if existing.Data == nil {
-		existing.Data = map[string]string{}
-	}
-	for key, value := range data {
-		if value == "" {
-			continue
+	var lastErr error
+	for i := 0; i < 3; i++ {
+		existing, err := model.Clientset.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
 		}
-		existing.Data[key] = value
+		if existing.Data == nil {
+			existing.Data = map[string]string{}
+		}
+		for key, value := range data {
+			if value == "" {
+				continue
+			}
+			existing.Data[key] = value
+		}
+		_, err = model.Clientset.CoreV1().ConfigMaps(namespace).Update(ctx, existing, metav1.UpdateOptions{})
+		if err == nil {
+			return nil
+		}
+		if !apierrors.IsConflict(err) {
+			return err
+		}
+		lastErr = err
 	}
-	_, err = model.Clientset.CoreV1().ConfigMaps(namespace).Update(ctx, existing, metav1.UpdateOptions{})
-	return err
+	return lastErr
 }
 
 func ensureEgressUMARbac(namespace string, ctx context.Context) error {
