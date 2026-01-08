@@ -168,13 +168,21 @@ make deploy            # Redeploy
 
 Access: `http://aggregator.local`
 
-## Integration Tests
+## Tests
 
-Automated tests run on GitHub Actions for Linux and Windows on every push and pull request.
+Automated tests run on GitHub Actions for Linux on every push and pull request.
 
 ### Run Locally
 
-Integration tests use the existing Kind cluster and deployment created by `make init` and `make deploy`.
+Ensure Go is installed (required for running the tests):
+
+```bash
+sudo apt install -y golang-go
+```
+
+### Integration Tests
+
+Integration tests use the existing Kind cluster created by `make init`.
 
 ```bash
 # First-time setup
@@ -185,11 +193,19 @@ make deploy
 make integration-test
 ```
 
-The tests will:
-- Verify the existing `aggregator` cluster is running
-- Check that the aggregator is deployed
+The Integration tests will:
+- deploy a test setup with mock OIDC and UMA servers
 - Run all integration tests against `http://aggregator.local`
 - Leave the cluster running after tests complete
+
+### Unit Tests
+
+Unit tests only test the functions so no cluster is needed.
+The following make target will run all unit tests in all containers:
+
+```bash
+make unit-test
+```
 
 ### CI/CD
 
