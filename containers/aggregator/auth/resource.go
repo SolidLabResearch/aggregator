@@ -12,6 +12,11 @@ import (
 )
 
 func RegisterResource(resourceId string, issuer string, scopes []model.Scope) error {
+	if issuer == "" {
+		logrus.Debugf("Skipping resource registration for %s (no issuer)", resourceId)
+		return nil
+	}
+
 	logrus.Infof("Registering resource %s with scopes %v", resourceId, scopes)
 	body := map[string]interface{}{
 		"issuer":      issuer,

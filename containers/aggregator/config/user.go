@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"aggregator/actors"
+	"aggregator/auth"
 	"aggregator/model"
 
 	"github.com/google/uuid"
@@ -46,6 +47,13 @@ func InitUserConfiguration(mux *http.ServeMux, user model.User) error {
 func (config *UserConfigData) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), scopes []model.Scope) error {
 	fullURL := fmt.Sprintf("%s://%s%s", model.Protocol, model.ExternalHost, pattern)
 	logrus.Debugf("Registering handler for pattern '%s' at URL '%s'", pattern, fullURL)
+
+	if err := auth.RegisterResource(fullURL, config.owner.AuthzServerURL, scopes); err != nil {
+		return fmt.Errorf("failed to register resource %s: %w", fullURL, err)
+	}
+	if err := auth.DefinePolicy(fullURL, config.owner.UserId, config.owner.AuthzServerURL, scopes); err != nil {
+		return fmt.Errorf("failed to define policy for %s: %w", fullURL, err)
+	}
 
 	// Register HTTP handler
 	config.serveMux.HandleFunc(pattern, handler)

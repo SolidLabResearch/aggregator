@@ -44,7 +44,7 @@ func determineScopes(method string) ([]Scope, error) {
 	case "POST", "PUT", "DELETE":
 		logrus.WithFields(logrus.Fields{"method": method}).Debug("🔧 Requesting 'modify' permissions")
 		return []Scope{Write}, nil
-	case "GET":
+	case "GET", "HEAD":
 		logrus.WithFields(logrus.Fields{"method": method}).Debug("📖 Requesting 'read' permissions")
 		return []Scope{Read}, nil
 	default:

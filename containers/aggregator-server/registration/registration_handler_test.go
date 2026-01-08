@@ -129,6 +129,22 @@ func TestRegistrationHandler_Post_ProvisionUpdateNotSupported(t *testing.T) {
 	}
 }
 
+func TestRegistrationHandler_Post_NoneUpdateNotSupported(t *testing.T) {
+	setDisableAuth(t, true)
+	setAllowedRegistrationTypes(t, "none")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/registration", bytes.NewBufferString(`{"registration_type":"none","aggregator_id":"agg-1"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+authToken(t, "https://alice.example/webid#me"))
+
+	RegistrationHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400 Bad Request, got %d", rec.Code)
+	}
+}
+
 func TestRegistrationHandler_Post_DeviceCode_NotImplemented(t *testing.T) {
 	setDisableAuth(t, true)
 	setAllowedRegistrationTypes(t, "provision", "authorization_code", "client_credentials", "device_code")

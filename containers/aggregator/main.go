@@ -56,7 +56,7 @@ func main() {
 	}
 	asUrl := os.Getenv("AS_URL")
 	if asUrl == "" {
-		logrus.Fatal("Environment variable USER_ID must be set")
+		logrus.Warn("Environment variable AS_URL is empty; UMA registration is disabled")
 	}
 
 	// Load in-cluster kubeConfig
@@ -89,7 +89,9 @@ func main() {
 	}
 
 	// Initialize Aggregator Description
-	config.InitAggregatorDescription(serverMux, user)
+	if err := config.InitAggregatorDescription(serverMux, user); err != nil {
+		logrus.WithError(err).Fatalf("Failed to set up aggregator description endpoint")
+	}
 
 	// Initialize Instance Transformations
 	err = config.InitInstanceConfiguration(serverMux, user)

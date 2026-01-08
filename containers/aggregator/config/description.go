@@ -1,11 +1,16 @@
 package config
 
 import (
+	"aggregator/auth"
 	"aggregator/model"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // AggregatorDescription represents the aggregator instance description
@@ -18,10 +23,20 @@ type AggregatorDescription struct {
 	ServiceCollection     string `json:"service_collection"`
 }
 
-func InitAggregatorDescription(mux *http.ServeMux, user model.User) {
+func InitAggregatorDescription(mux *http.ServeMux, user model.User) error {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		handleAggregatorDescription(w, r, user)
 	})
+
+	fullURL := fmt.Sprintf("%s://%s/config/%s", model.Protocol, model.ExternalHost, user.Namespace)
+	if err := auth.RegisterResource(fullURL, user.AuthzServerURL, []model.Scope{model.Read}); err != nil {
+		return fmt.Errorf("failed to register aggregator description %s: %w", fullURL, err)
+	}
+	if err := auth.DefinePolicy(fullURL, user.UserId, user.AuthzServerURL, []model.Scope{model.Read}); err != nil {
+		return fmt.Errorf("failed to define policy for aggregator description %s: %w", fullURL, err)
+	}
+
+	return nil
 }
 
 func handleAggregatorDescription(w http.ResponseWriter, r *http.Request, user model.User) {
@@ -35,13 +50,22 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request, user mo
 		return
 	}
 
+	tokenExpiry, err := fetchAccessTokenExpiry(user.Namespace)
+	loginStatus := false
+	if err == nil && tokenExpiry != "" {
+		parsed, parseErr := time.Parse(time.RFC3339, tokenExpiry)
+		if parseErr == nil {
+			loginStatus = time.Now().Before(parsed)
+		}
+	}
+
 	// TODO: semantic representations need to be added at some point
-	// TODO: fetch actual login status and token expiry
 	desc := AggregatorDescription{
-		ID:                    fmt.Sprintf("%s://%s/", model.Protocol, model.ExternalHost),
+		ID:                    fmt.Sprintf("%s://%s/config/%s", model.Protocol, model.ExternalHost, user.Namespace),
 		CreatedAt:             time.Now().Format(time.RFC3339), // Placeholder, should be persisted
-		LoginStatus:           true,                            // Placeholder
-		TransformationCatalog: fmt.Sprintf("%s://%s/transformations", model.Protocol, model.ExternalHost),
+		LoginStatus:           loginStatus,
+		TokenExpiry:           tokenExpiry,
+		TransformationCatalog: fmt.Sprintf("%s://%s/config/%s/transformations", model.Protocol, model.ExternalHost, user.Namespace),
 		ServiceCollection:     fmt.Sprintf("%s://%s/config/%s/actors", model.Protocol, model.ExternalHost, user.Namespace),
 	}
 
@@ -49,4 +73,16 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request, user mo
 	if err := json.NewEncoder(w).Encode(desc); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
+}
+
+func fetchAccessTokenExpiry(namespace string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	cm, err := model.Clientset.CoreV1().ConfigMaps(namespace).Get(ctx, "aggregator-instance-config", metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(cm.Data["access_token_expiry"]), nil
 }

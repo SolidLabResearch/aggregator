@@ -3,6 +3,7 @@ package registration
 import (
 	"aggregator/model"
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -10,6 +11,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -53,8 +55,21 @@ func deleteNamespaceResources(namespace string, ctx context.Context) error {
 }
 
 // deployAggregatorResources deploys the Egress UMA and Aggregator Instance
-func deployAggregatorResources(namespace string, tokenEndpoint string, refreshToken string, ownerWebID string, authzServerURL string, ctx context.Context) error {
+func deployAggregatorResources(namespace string, tokenEndpoint string, accessToken string, refreshToken string, accessTokenExpiry string, ownerWebID string, authzServerURL string, ctx context.Context) error {
 	replicas := int32(1)
+	useUMA := authzServerURL != ""
+
+	if err := ensureEgressUMARbac(namespace, ctx); err != nil {
+		return fmt.Errorf("failed to ensure egress-uma RBAC: %w", err)
+	}
+
+	tokensPayload, err := buildTokensPayload(accessToken, refreshToken, accessTokenExpiry)
+	if err != nil {
+		return fmt.Errorf("failed to build egress-uma token payload: %w", err)
+	}
+	if err := ensureConfigMap(namespace, "egress-uma-config", tokensPayload, ctx); err != nil {
+		return fmt.Errorf("failed to ensure egress-uma configmap: %w", err)
+	}
 
 	// --- Egress UMA Deployment ---
 	umaDeploy := &appsv1.Deployment{
@@ -79,6 +94,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, refreshTo
 					},
 				},
 				Spec: corev1.PodSpec{
+					ServiceAccountName: "egress-uma-sa",
 					Containers: []corev1.Container{
 						{
 							Name:            "egress-uma",
@@ -90,9 +106,28 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, refreshTo
 							Env: []corev1.EnvVar{
 								{Name: "CLIENT_ID", Value: model.ClientId},
 								{Name: "CLIENT_SECRET", Value: model.ClientSecret},
-								{Name: "REFRESH_TOKEN", Value: refreshToken},
 								{Name: "TOKEN_ENDPOINT", Value: tokenEndpoint},
+								{Name: "UPDATE_TOKENS_FILE", Value: "/etc/egress-uma/tokens.json"},
 								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "egress-uma-config",
+									MountPath: "/etc/egress-uma",
+									ReadOnly:  true,
+								},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "egress-uma-config",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: "egress-uma-config",
+									},
+								},
 							},
 						},
 					},
@@ -101,7 +136,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, refreshTo
 		},
 	}
 
-	_, err := model.Clientset.AppsV1().Deployments(namespace).Create(ctx, umaDeploy, metav1.CreateOptions{})
+	_, err = model.Clientset.AppsV1().Deployments(namespace).Create(ctx, umaDeploy, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create Egress UMA deployment: %w", err)
 	}
@@ -218,6 +253,10 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, refreshTo
 		return fmt.Errorf("failed to create RoleBinding: %w", err)
 	}
 
+	if err := ensureConfigMap(namespace, "aggregator-instance-config", map[string]string{"access_token_expiry": accessTokenExpiry}, ctx); err != nil {
+		return fmt.Errorf("failed to ensure instance configmap: %w", err)
+	}
+
 	_, err = model.Clientset.AppsV1().Deployments(namespace).Create(ctx, aggDeploy, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create Aggregator Instance deployment: %w", err)
@@ -271,7 +310,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, refreshTo
 				"entryPoints": []string{"web"},
 				"routes": []interface{}{
 					map[string]interface{}{
-						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/config/" + namespace + "`)",
+						"match": "Host(`" + model.ExternalHost + "`) && (Path(`/config/" + namespace + "`) || Path(`/config/" + namespace + "/`))",
 						"kind":  "Rule",
 						"services": []interface{}{
 							map[string]interface{}{
@@ -280,12 +319,19 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, refreshTo
 								"namespace": namespace,
 							},
 						},
-						"middlewares": []interface{}{
+						"middlewares": buildIngressMiddlewares(useUMA, namespace, true),
+					},
+					map[string]interface{}{
+						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/config/" + namespace + "/actors`)",
+						"kind":  "Rule",
+						"services": []interface{}{
 							map[string]interface{}{
-								"name":      "cors",
-								"namespace": "aggregator-app",
+								"name":      "aggregator",
+								"port":      5000,
+								"namespace": namespace,
 							},
 						},
+						"middlewares": buildIngressMiddlewares(useUMA, namespace, false),
 					},
 					map[string]interface{}{
 						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/config/" + namespace + "/transformations`)",
@@ -297,16 +343,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, refreshTo
 								"namespace": namespace,
 							},
 						},
-						"middlewares": []interface{}{
-							map[string]interface{}{
-								"name":      "strip-prefix-" + namespace, // We need to create this middleware
-								"namespace": namespace,
-							},
-							map[string]interface{}{
-								"name":      "cors",
-								"namespace": "aggregator-app",
-							},
-						},
+						"middlewares": buildIngressMiddlewares(useUMA, namespace, true),
 					},
 				},
 			},
@@ -344,6 +381,156 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, refreshTo
 	_, err = model.DynamicClient.Resource(ingressRouteGVR).Namespace(namespace).Create(ctx, obj, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create IngressRoute: %w", err)
+	}
+
+	return nil
+}
+
+func updateAggregatorInstanceDeployments(namespace string, accessToken string, refreshToken string, accessTokenExpiry string, ctx context.Context) error {
+	if model.Clientset == nil {
+		logrus.Warn("Kubernetes client not initialized; skipping instance deployment updates")
+		return nil
+	}
+
+	if accessToken != "" || refreshToken != "" {
+		tokensPayload, err := buildTokensPayload(accessToken, refreshToken, accessTokenExpiry)
+		if err != nil {
+			return fmt.Errorf("failed to build egress-uma token payload: %w", err)
+		}
+		if err := ensureConfigMap(namespace, "egress-uma-config", tokensPayload, ctx); err != nil {
+			return fmt.Errorf("failed to update egress-uma configmap: %w", err)
+		}
+	}
+
+	if accessTokenExpiry != "" {
+		if err := ensureConfigMap(namespace, "aggregator-instance-config", map[string]string{"access_token_expiry": accessTokenExpiry}, ctx); err != nil {
+			return fmt.Errorf("failed to update instance configmap: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func buildIngressMiddlewares(useUMA bool, namespace string, includeStrip bool) []interface{} {
+	middlewares := make([]interface{}, 0, 3)
+	if useUMA {
+		middlewares = append(middlewares, map[string]interface{}{
+			"name":      "ingress-uma",
+			"namespace": "aggregator-app",
+		})
+	}
+	if includeStrip {
+		middlewares = append(middlewares, map[string]interface{}{
+			"name":      "strip-prefix-" + namespace,
+			"namespace": namespace,
+		})
+	}
+	middlewares = append(middlewares, map[string]interface{}{
+		"name":      "cors",
+		"namespace": "aggregator-app",
+	})
+	return middlewares
+}
+
+func buildTokensPayload(accessToken string, refreshToken string, accessTokenExpiry string) (map[string]string, error) {
+	payload := map[string]string{
+		"access_token":        accessToken,
+		"refresh_token":       refreshToken,
+		"access_token_expiry": accessTokenExpiry,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{"tokens.json": string(data)}, nil
+}
+
+func ensureConfigMap(namespace string, name string, data map[string]string, ctx context.Context) error {
+	if len(data) == 0 {
+		return fmt.Errorf("configmap data is required")
+	}
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Data: data,
+	}
+
+	_, err := model.Clientset.CoreV1().ConfigMaps(namespace).Create(ctx, cm, metav1.CreateOptions{})
+	if err == nil {
+		return nil
+	}
+	if !apierrors.IsAlreadyExists(err) {
+		return err
+	}
+
+	existing, err := model.Clientset.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	if existing.Data == nil {
+		existing.Data = map[string]string{}
+	}
+	for key, value := range data {
+		if value == "" {
+			continue
+		}
+		existing.Data[key] = value
+	}
+	_, err = model.Clientset.CoreV1().ConfigMaps(namespace).Update(ctx, existing, metav1.UpdateOptions{})
+	return err
+}
+
+func ensureEgressUMARbac(namespace string, ctx context.Context) error {
+	sa := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "egress-uma-sa",
+			Namespace: namespace,
+		},
+	}
+	if _, err := model.Clientset.CoreV1().ServiceAccounts(namespace).Create(ctx, sa, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+		return err
+	}
+
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "egress-uma-configmap-editor",
+			Namespace: namespace,
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"configmaps"},
+				Verbs:     []string{"get", "list", "create", "update", "patch"},
+			},
+		},
+	}
+	if _, err := model.Clientset.RbacV1().Roles(namespace).Create(ctx, role, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+		return err
+	}
+
+	roleBinding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "egress-uma-configmap-binding",
+			Namespace: namespace,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      sa.Name,
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "Role",
+			Name:     role.Name,
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+	if _, err := model.Clientset.RbacV1().RoleBindings(namespace).Create(ctx, roleBinding, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+		return err
 	}
 
 	return nil

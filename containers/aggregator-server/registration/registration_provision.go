@@ -112,7 +112,12 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, o
 		return
 	}
 
-	if err := deployAggregatorResources(namespace, oidcConfig.TokenEndpoint, tokenResp.RefreshToken, webID, authorizationServer, ctx); err != nil {
+	tokenExpiry := ""
+	if tokenResp.ExpiresIn > 0 {
+		tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
+	}
+
+	if err := deployAggregatorResources(namespace, oidcConfig.TokenEndpoint, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, webID, authorizationServer, ctx); err != nil {
 		logrus.WithError(err).Error("Failed to deploy aggregator")
 		http.Error(w, "Failed to deploy aggregator", http.StatusInternalServerError)
 		return

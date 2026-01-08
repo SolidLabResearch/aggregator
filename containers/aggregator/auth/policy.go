@@ -12,6 +12,11 @@ import (
 )
 
 func DefinePolicy(resourceId string, userId string, issuer string, scopes []model.Scope) error {
+	if issuer == "" {
+		logrus.Debugf("Skipping policy creation for %s (no issuer)", resourceId)
+		return nil
+	}
+
 	body := map[string]interface{}{
 		"issuer":      issuer,
 		"resource_id": resourceId,

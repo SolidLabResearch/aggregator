@@ -12,7 +12,7 @@ var ExternalHost string
 var ClientId string
 var ClientSecret string
 
-var Clientset *kubernetes.Clientset
+var Clientset kubernetes.Interface
 var DynamicClient *dynamic.DynamicClient
 
 var LogLevel logrus.Level

@@ -2,12 +2,18 @@ package utils
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -139,26 +145,6 @@ func (env *TestEnvironment) getKindGatewayIP(ctx context.Context) (string, error
 	return fields[0], nil
 }
 
-// verifyTestConfig checks that the aggregator is using test configuration
-func (env *TestEnvironment) verifyTestConfig(ctx context.Context) error {
-	configMap, err := env.KubeClient.CoreV1().ConfigMaps("aggregator-app").Get(ctx, "aggregator-config", metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("aggregator-config ConfigMap not found: %w", err)
-	}
-
-	disableAuth, ok := configMap.Data["disable_auth"]
-	if !ok {
-		return fmt.Errorf("disable_auth not set in config")
-	}
-
-	if disableAuth != "true" {
-		return fmt.Errorf("disable_auth=%s (expected 'true' for tests)", disableAuth)
-	}
-
-	fmt.Println("✓ Test configuration active (disable_auth=true)")
-	return nil
-}
-
 // ensureHostsEntry ensures aggregator.local resolves to 127.0.0.1
 func (env *TestEnvironment) ensureHostsEntry() error {
 	// Check if already exists
@@ -247,18 +233,15 @@ func (env *TestEnvironment) checkAggregatorDeployed(ctx context.Context) error {
 
 // ensureTestDeployment checks if aggregator is deployed with test config and deploys if needed
 func (env *TestEnvironment) ensureTestDeployment(ctx context.Context) error {
-	// Check if config exists and has disable_auth=true
+	// Check if config exists and has the integration-test marker
 	configMap, err := env.KubeClient.CoreV1().ConfigMaps("aggregator-app").Get(ctx, "aggregator-config", metav1.GetOptions{})
-	if err == nil {
-		// Config exists, check if it has disable_auth=true
-		if disableAuth, ok := configMap.Data["disable_auth"]; ok && disableAuth == "true" {
-			// Check if deployment is ready
-			if err := env.checkAggregatorDeployed(ctx); err == nil {
-				return nil // Already deployed with test config
-			}
+	if err == nil && isTestConfigMap(configMap) {
+		if err := env.checkAggregatorDeployed(ctx); err == nil {
+			return nil // Already deployed with test config
 		}
+	}
 
-		// Config exists but wrong setting or deployment not ready
+	if err == nil {
 		fmt.Println("⚠️  Existing deployment found with wrong config, redeploying with test config...")
 	} else {
 		fmt.Println("📦 No aggregator deployment found, deploying with test config...")
@@ -270,7 +253,7 @@ func (env *TestEnvironment) ensureTestDeployment(ctx context.Context) error {
 	}
 
 	// Deploy with test config using kubectl
-	fmt.Println("🧪 Deploying aggregator with TEST configuration (auth disabled)...")
+	fmt.Println("🧪 Deploying aggregator with TEST configuration (UMA auth enabled)...")
 
 	// Set kubectl context
 	execCmd := exec.CommandContext(ctx, "kubectl", "config", "use-context", "kind-aggregator")
@@ -295,6 +278,10 @@ func (env *TestEnvironment) ensureTestDeployment(ctx context.Context) error {
 	if output, err := execCmd.CombinedOutput(); err != nil {
 		// Don't fail if traefik config fails, middlewares might already exist
 		fmt.Printf("Note: traefik config warnings (expected if already applied): %s\n", string(output))
+	}
+
+	if err := env.ensureIngressUMA(ctx); err != nil {
+		return fmt.Errorf("failed to deploy ingress-uma: %w", err)
 	}
 
 	// Apply aggregator deployment - filter output to ignore IngressRoute warnings
@@ -354,6 +341,87 @@ func (env *TestEnvironment) ensureTestDeployment(ctx context.Context) error {
 
 	fmt.Println("✅ Aggregator deployed with test configuration")
 	return nil
+}
+
+func isTestConfigMap(configMap *corev1.ConfigMap) bool {
+	if configMap == nil || configMap.Data == nil {
+		return false
+	}
+	if configMap.Data["config_source"] != "integration-test" {
+		return false
+	}
+	return true
+}
+
+func (env *TestEnvironment) ensureIngressUMA(ctx context.Context) error {
+	if err := env.ensureIngressUMASecret(ctx); err != nil {
+		return fmt.Errorf("failed to ensure ingress-uma secret: %w", err)
+	}
+
+	execCmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", "../k8s/app/ingress-uma.yaml")
+	if output, err := execCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to apply ingress-uma deployment: %w\nOutput: %s", err, string(output))
+	}
+
+	execCmd = exec.CommandContext(ctx, "kubectl", "rollout", "status",
+		"deployment/ingress-uma",
+		"-n", "aggregator-app",
+		"--timeout=90s")
+	if err := execCmd.Run(); err != nil {
+		return fmt.Errorf("timeout waiting for ingress-uma deployment: %w", err)
+	}
+
+	return nil
+}
+
+func (env *TestEnvironment) ensureIngressUMASecret(ctx context.Context) error {
+	_, err := env.KubeClient.CoreV1().Secrets("aggregator-app").Get(ctx, "ingress-uma-key", metav1.GetOptions{})
+	if err == nil {
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	keyPEM, err := generatePrivateKeyPEM()
+	if err != nil {
+		return err
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ingress-uma-key",
+			Namespace: "aggregator-app",
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"private_key.pem": keyPEM,
+		},
+	}
+
+	_, err = env.KubeClient.CoreV1().Secrets("aggregator-app").Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil && !apierrors.IsAlreadyExists(err) {
+		return err
+	}
+
+	return nil
+}
+
+func generatePrivateKeyPEM() ([]byte, error) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate RSA key: %w", err)
+	}
+
+	der, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal PKCS8 key: %w", err)
+	}
+
+	return pem.EncodeToMemory(&pem.Block{
+		Type:  "PRIVATE KEY",
+		Bytes: der,
+	}), nil
 }
 
 // ensureTraefikRunning checks if Traefik is deployed and starts it if needed

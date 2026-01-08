@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -20,20 +21,6 @@ const (
 	testProvisionClientID      = "provision-client-id"
 	testProvisionClientSecret  = "provision-client-secret"
 )
-
-// Helper function to create a valid authentication token for tests
-func createAuthToken(t *testing.T, oidcProvider *mocks.OIDCProvider, webID string) string {
-	// The mock provider returns the configured issuer (defaults to oidc.local).
-	// The WebID uses the provider issuer base.
-	mockWebID := oidcProvider.URL() + "/webid#me"
-
-	// Create a JWT token with the WebID claim
-	token, err := oidcProvider.IssueTokenForWebID(mockWebID)
-	if err != nil {
-		t.Fatalf("Failed to create auth token: %v", err)
-	}
-	return token
-}
 
 type authCodeStartResponse struct {
 	AggregatorClientID  string `json:"aggregator_client_id"`
@@ -60,34 +47,6 @@ func parseAuthCodeStartResponse(t *testing.T, resp *http.Response) authCodeStart
 	}
 
 	return start
-}
-
-func deleteAggregator(t *testing.T, aggregatorID string, authToken string) {
-	t.Helper()
-
-	deleteBody := map[string]interface{}{
-		"aggregator_id": aggregatorID,
-	}
-	deleteJSON, _ := json.Marshal(deleteBody)
-
-	deleteReq, err := http.NewRequest("DELETE", testEnv.AggregatorURL+"/registration", bytes.NewBuffer(deleteJSON))
-	if err != nil {
-		t.Fatalf("Failed to create delete request: %v", err)
-	}
-	deleteReq.Header.Set("Content-Type", "application/json")
-	deleteReq.Header.Set("Authorization", "Bearer "+authToken)
-
-	client := &http.Client{}
-	deleteResp, err := client.Do(deleteReq)
-	if err != nil {
-		t.Fatalf("Delete request failed: %v", err)
-	}
-	defer deleteResp.Body.Close()
-
-	if deleteResp.StatusCode != http.StatusNoContent {
-		bodyBytes, _ := io.ReadAll(deleteResp.Body)
-		t.Fatalf("Expected 204 No Content, got %d: %s", deleteResp.StatusCode, string(bodyBytes))
-	}
 }
 
 func assertWebIDDereferenceable(t *testing.T, webID string) {
@@ -149,48 +108,6 @@ func updateProvisionConfig(t *testing.T, clientID, clientSecret, webID, authoriz
 
 	waitForDeploymentReady(t, ctx, "aggregator-app", "aggregator-server")
 	waitForAggregatorReady(t, ctx, testEnv.AggregatorURL+"/")
-}
-
-func waitForDeploymentReady(t *testing.T, ctx context.Context, namespace, name string) {
-	t.Helper()
-
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			t.Fatalf("Timed out waiting for %s deployment to be ready: %v", name, ctx.Err())
-		case <-ticker.C:
-			deployment, err := testEnv.KubeClient.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
-			if err != nil {
-				continue
-			}
-
-			desired := int32(1)
-			if deployment.Spec.Replicas != nil {
-				desired = *deployment.Spec.Replicas
-			}
-
-			if deployment.Status.ObservedGeneration < deployment.Generation {
-				continue
-			}
-			if deployment.Status.Replicas != desired {
-				continue
-			}
-			if deployment.Status.UpdatedReplicas < desired {
-				continue
-			}
-			if deployment.Status.ReadyReplicas < desired {
-				continue
-			}
-			if deployment.Status.AvailableReplicas < desired {
-				continue
-			}
-
-			return
-		}
-	}
 }
 
 func waitForAggregatorReady(t *testing.T, ctx context.Context, url string) {
@@ -268,27 +185,17 @@ func createAggregatorViaProvision(t *testing.T, oidcProvider *mocks.OIDCProvider
 	return aggregatorID
 }
 
-func createAggregatorViaClientCredentials(t *testing.T, oidcProvider *mocks.OIDCProvider, authToken string, umaServerURL string) string {
+func createAggregatorViaNone(t *testing.T, authToken string) string {
 	t.Helper()
 
-	targetWebID := oidcProvider.URL() + "/webid#me"
-	targetClientID := "delete-client-id"
-	targetClientSecret := "delete-client-secret"
-	oidcProvider.RegisterClient(targetClientID, targetClientSecret, []string{}, []string{"client_credentials"})
-	oidcProvider.RegisterUser(targetWebID, "delete-user", "delete-pass")
-
 	createBody := map[string]interface{}{
-		"registration_type":    "client_credentials",
-		"authorization_server": umaServerURL,
-		"webid":                targetWebID,
-		"client_id":            targetClientID,
-		"client_secret":        targetClientSecret,
+		"registration_type": "none",
 	}
 	body, _ := json.Marshal(createBody)
 
 	req, err := http.NewRequest("POST", testEnv.AggregatorURL+"/registration", bytes.NewBuffer(body))
 	if err != nil {
-		t.Fatalf("Failed to create client_credentials request: %v", err)
+		t.Fatalf("Failed to create none request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+authToken)
@@ -296,22 +203,22 @@ func createAggregatorViaClientCredentials(t *testing.T, oidcProvider *mocks.OIDC
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		t.Fatalf("Client credentials request failed: %v", err)
+		t.Fatalf("None request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Expected 201 Created for client_credentials, got %d: %s", resp.StatusCode, string(bodyBytes))
+		t.Fatalf("Expected 201 Created for none, got %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var response map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		t.Fatalf("Failed to decode client_credentials response: %v", err)
+		t.Fatalf("Failed to decode none response: %v", err)
 	}
 	aggregatorID, ok := response["aggregator_id"].(string)
 	if !ok || aggregatorID == "" {
-		t.Fatalf("Client credentials response missing aggregator_id")
+		t.Fatalf("None response missing aggregator_id")
 	}
 
 	return aggregatorID
@@ -432,6 +339,46 @@ func createAggregatorViaAuthorizationCode(t *testing.T, oidcProvider *mocks.OIDC
 	}
 
 	return aggregatorID
+}
+
+func TestRegistration_None_Create(t *testing.T) {
+	oidcProvider, err := mocks.NewOIDCProvider()
+	if err != nil {
+		t.Fatalf("Failed to create OIDC provider: %v", err)
+	}
+	defer oidcProvider.Close()
+
+	ownerWebID := oidcProvider.URL() + "/webid#me"
+	authToken := createAuthToken(t, oidcProvider, ownerWebID)
+
+	aggregatorID := createAggregatorViaNone(t, authToken)
+	defer deleteAggregator(t, aggregatorID, authToken)
+
+	namespace := waitForAggregatorNamespace(t, ownerWebID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	waitForDeploymentReady(t, ctx, namespace, "aggregator")
+
+	baseURL := fmt.Sprintf("%s/config/%s", testEnv.AggregatorURL, namespace)
+	checkCtx, checkCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer checkCancel()
+
+	for {
+		select {
+		case <-checkCtx.Done():
+			t.Fatalf("Timed out waiting for none aggregator description: %v", checkCtx.Err())
+		default:
+			resp, err := http.Get(baseURL)
+			if err == nil {
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					return
+				}
+			}
+			time.Sleep(2 * time.Second)
+		}
+	}
 }
 
 func TestRegistration_Provision_Create(t *testing.T) {
@@ -1199,6 +1146,45 @@ func TestRegistration_TokenUpdate_Provision(t *testing.T) {
 	}
 
 	t.Logf("Provision update correctly returns 400 Bad Request")
+}
+
+func TestRegistration_TokenUpdate_None(t *testing.T) {
+	oidcProvider, err := mocks.NewOIDCProvider()
+	if err != nil {
+		t.Fatalf("Failed to create OIDC provider: %v", err)
+	}
+	defer oidcProvider.Close()
+
+	ownerWebID := oidcProvider.URL() + "/webid#me"
+	authToken := createAuthToken(t, oidcProvider, ownerWebID)
+
+	aggregatorID := createAggregatorViaNone(t, authToken)
+	defer deleteAggregator(t, aggregatorID, authToken)
+
+	updateBody := map[string]interface{}{
+		"registration_type": "none",
+		"aggregator_id":     aggregatorID,
+	}
+	body, _ := json.Marshal(updateBody)
+
+	req, err := http.NewRequest("POST", testEnv.AggregatorURL+"/registration", bytes.NewBuffer(body))
+	if err != nil {
+		t.Fatalf("Failed to create none update request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+authToken)
+
+	client := &http.Client{}
+	updateResp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("None update request failed: %v", err)
+	}
+	defer updateResp.Body.Close()
+
+	if updateResp.StatusCode != http.StatusBadRequest {
+		bodyBytes, _ := io.ReadAll(updateResp.Body)
+		t.Fatalf("Expected 400 Bad Request for none update, got %d: %s", updateResp.StatusCode, string(bodyBytes))
+	}
 }
 
 func TestRegistration_TokenUpdate_AuthorizationCode(t *testing.T) {
