@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"aggregator-integration-test/mocks"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -378,6 +379,78 @@ func TestRegistration_None_Create(t *testing.T) {
 			}
 			time.Sleep(2 * time.Second)
 		}
+	}
+}
+
+func TestRegistration_None_DisablesUMAIngressAndEgress(t *testing.T) {
+	oidcProvider, err := mocks.NewOIDCProvider()
+	if err != nil {
+		t.Fatalf("Failed to create OIDC provider: %v", err)
+	}
+	defer oidcProvider.Close()
+
+	ownerWebID := oidcProvider.URL() + "/webid#me"
+	authToken := createAuthToken(t, oidcProvider, ownerWebID)
+
+	aggregatorID := createAggregatorViaNone(t, authToken)
+	defer deleteAggregator(t, aggregatorID, authToken)
+
+	namespace := waitForAggregatorNamespace(t, ownerWebID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	waitForDeploymentReady(t, ctx, namespace, "aggregator")
+
+	if _, err := testEnv.KubeClient.AppsV1().Deployments(namespace).Get(ctx, "egress-uma", metav1.GetOptions{}); err == nil {
+		t.Fatal("Expected no egress-uma deployment for none registration type")
+	} else if !apierrors.IsNotFound(err) {
+		t.Fatalf("Failed to check egress-uma deployment: %v", err)
+	}
+
+	instanceIngress := getIngressRoute(t, namespace, "aggregator-instance-ingressroute")
+	if ingressRouteHasMiddleware(t, instanceIngress, "ingress-uma") {
+		t.Fatal("Expected no ingress-uma middleware on instance ingress routes for none registration type")
+	}
+
+	actorID := fmt.Sprintf("actor-none-%d", time.Now().UnixNano())
+	actorBody := map[string]interface{}{
+		"id":          actorID,
+		"description": "none flow actor",
+	}
+	body, _ := json.Marshal(actorBody)
+
+	actorsURL := fmt.Sprintf("%s/config/%s/actors", testEnv.AggregatorURL, namespace)
+	req, err := http.NewRequest("POST", actorsURL, bytes.NewBuffer(body))
+	if err != nil {
+		t.Fatalf("Failed to build actor request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Actor creation request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected 202 Accepted for actor creation, got %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	actorCtx, actorCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer actorCancel()
+	deployment := waitForDeploymentExists(t, actorCtx, namespace, actorID)
+
+	for _, env := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if env.Name == "HTTP_PROXY" || env.Name == "http_proxy" {
+			t.Fatalf("Expected no HTTP proxy env for none registration type, found %s", env.Name)
+		}
+	}
+
+	actorIngressName := fmt.Sprintf("%s-%s-ingressroute", namespace, actorID)
+	actorIngress := getIngressRoute(t, namespace, actorIngressName)
+	if ingressRouteHasMiddleware(t, actorIngress, "ingress-uma") {
+		t.Fatal("Expected no ingress-uma middleware on actor ingress routes for none registration type")
 	}
 }
 
