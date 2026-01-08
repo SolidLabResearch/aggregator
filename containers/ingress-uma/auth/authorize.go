@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"ingress-uma/signing"
 	"io"
 	"net/http"
 	"strings"
@@ -181,7 +180,7 @@ func fetchTicket(asUrl string, permissions map[string][]Scope) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := signing.DoSignedRequest(req)
+	resp, err := DoSignedRequest(req, asUrl)
 	if err != nil {
 		return "", fmt.Errorf("error while signing ticket request: %w", err)
 	}
