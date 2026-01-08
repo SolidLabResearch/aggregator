@@ -148,11 +148,18 @@ containers-all: containers-build containers-load
 # Clean up Docker dangling and unused images
 docker-clean:
 	@echo "🧹 Cleaning up Docker images..."
-	@echo "🗑️  Removing dangling images..."
-	@docker image prune -f
-	@echo "🗑️  Removing unused images..."
-	@docker image prune -a -f --filter "until=24h"
-	@echo "✅ Docker cleanup complete"
+	@echo "🗑️  Removing dangling images (excluding kindest/node)..."
+	@for img in $$(docker images -f dangling=true -q); do \
+		if docker image inspect $$img --format '{{join .RepoDigests " "}}' | grep -q 'kindest/node@'; then \
+			echo "↪️  Keeping kindest/node image $$img"; \
+			continue; \
+		fi; \
+		docker rmi -f $$img >/dev/null 2>&1 || true; \
+	done
+	@echo "🗑️  Removing project images..."
+	@find containers -maxdepth 1 -mindepth 1 -type d -exec basename {} \; | \
+		xargs -I {} sh -c 'docker images "{}" --format "{{.ID}}" | xargs -r docker rmi -f 2>/dev/null || true'
+	@echo "✅ Docker cleanup complete (kept cached Kind node images)"
 
 # ------------------------
 # Deploy YAML manifests with temporary key pair for uma-proxy
