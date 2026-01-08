@@ -489,23 +489,3 @@ func TestPublicTransformationCatalog(t *testing.T) {
 		})
 	}
 }
-
-// Helper function to check if a content type contains a specific type
-func containsContentType(contentType, expectedType string) bool {
-	return len(contentType) > 0 && (contentType == expectedType ||
-		len(contentType) > len(expectedType) && contentType[:len(expectedType)] == expectedType ||
-		containsString(contentType, expectedType))
-}
-
-// Helper function to check if a string contains a substring (case-insensitive)
-func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr ||
-		func() bool {
-			for i := 0; i <= len(s)-len(substr); i++ {
-				if s[i:i+len(substr)] == substr {
-					return true
-				}
-			}
-			return false
-		}())
-}

@@ -7,7 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/golang-jwt/jwt/v5"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // OIDCProvider mocks an OpenID Connect Identity Provider
@@ -23,6 +25,7 @@ type OIDCProvider struct {
 	privateKey    *rsa.PrivateKey
 	publicKey     *rsa.PublicKey
 	issuer        string
+	jwksKid       string
 	mu            sync.RWMutex
 	users         map[string]*User
 	clients       map[string]*Client
@@ -80,6 +83,7 @@ func NewOIDCProvider() (*OIDCProvider, error) {
 	provider := &OIDCProvider{
 		privateKey:    privateKey,
 		publicKey:     &privateKey.PublicKey,
+		jwksKid:       generateRandomString(8),
 		users:         make(map[string]*User),
 		clients:       make(map[string]*Client),
 		authCodes:     make(map[string]*AuthorizationCode),
@@ -304,12 +308,21 @@ func (p *OIDCProvider) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *OIDCProvider) handleJWKS(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement JWKS endpoint
-	// Return public key in JWK format for token verification
+	response := map[string]interface{}{
+		"keys": []map[string]string{
+			{
+				"kty": "RSA",
+				"kid": p.jwksKid,
+				"use": "sig",
+				"alg": "RS256",
+				"n":   base64.RawURLEncoding.EncodeToString(p.publicKey.N.Bytes()),
+				"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(p.publicKey.E)).Bytes()),
+			},
+		},
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"keys": []interface{}{},
-	})
+	json.NewEncoder(w).Encode(response)
 }
 
 func (p *OIDCProvider) handleAuthorize(w http.ResponseWriter, r *http.Request) {
@@ -811,6 +824,7 @@ func (p *OIDCProvider) generateToken(webID, clientID string, scopes []string, ex
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = p.jwksKid
 	return token.SignedString(p.privateKey)
 }
 
@@ -831,6 +845,7 @@ func (p *OIDCProvider) generateIDToken(webID, clientID string, nonce string) (st
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = p.jwksKid
 	return token.SignedString(p.privateKey)
 }
 

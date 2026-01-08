@@ -58,6 +58,8 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 
 	// Route to appropriate handler based on registration_type
 	switch registrationType {
+	case "none":
+		handleNoneFlow(w, req, ownerWebID)
 	case "provision":
 		handleProvisionFlow(w, req, ownerWebID)
 	case "authorization_code":

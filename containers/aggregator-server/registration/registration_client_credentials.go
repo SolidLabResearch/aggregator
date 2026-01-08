@@ -62,8 +62,8 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 
 	// Step 3: Perform client_credentials grant using provided client_id/client_secret
 	tokenData := url.Values{
-		"grant_type":    {"client_credentials"},
-		"scope":         {"openid webid offline_access"},
+		"grant_type": {"client_credentials"},
+		"scope":      {"openid webid offline_access"},
 	}
 
 	// Some IDPs support a webid parameter to specify which WebID to act as
@@ -118,6 +118,11 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 		return
 	}
 
+	tokenExpiry := ""
+	if tokenResp.ExpiresIn > 0 {
+		tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
+	}
+
 	var instance *model.AggregatorInstance
 	if isUpdate {
 		// Update existing aggregator tokens
@@ -127,6 +132,15 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 			return
 		}
 		instance, _ = getAggregatorInstance(req.AggregatorID)
+		if instance != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := updateAggregatorInstanceDeployments(instance.Namespace, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, ctx); err != nil {
+				logrus.WithError(err).Errorf("Failed to update aggregator deployments: %s", req.AggregatorID)
+				http.Error(w, "Failed to update aggregator", http.StatusInternalServerError)
+				return
+			}
+		}
 		logrus.Infof("Aggregator tokens updated (client_credentials): %s", req.AggregatorID)
 	} else {
 		// Create new aggregator instance
@@ -142,7 +156,7 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 		}
 
 		// Deploy aggregator resources
-		if err := deployAggregatorResources(namespace, oidcConfig.TokenEndpoint, tokenResp.RefreshToken, req.WebID, req.AuthorizationServer, ctx); err != nil {
+		if err := deployAggregatorResources(namespace, oidcConfig.TokenEndpoint, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, req.WebID, req.AuthorizationServer, ctx); err != nil {
 			logrus.WithError(err).Error("Failed to deploy aggregator")
 			http.Error(w, "Failed to deploy aggregator", http.StatusInternalServerError)
 			return

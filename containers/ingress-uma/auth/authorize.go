@@ -51,7 +51,7 @@ func HandleAuthorizationRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	method := strings.Trim(r.Header.Get("X-Forwarded-Method"), "[]")
+	method := forwardedMethod(r)
 	logrus.WithFields(logrus.Fields{
 		"resource": resourceId,
 		"uma_id":   umaId,
@@ -77,7 +77,7 @@ func HandleAuthorizationRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func ticketlessAuthorization(w http.ResponseWriter, r *http.Request, umaId string, issuer string) {
-	method := strings.Trim(r.Header.Get("X-Forwarded-Method"), "[]")
+	method := forwardedMethod(r)
 	permissions := make(map[string][]Scope)
 	scopes, err := determineScopes(method)
 	if err != nil {
@@ -111,7 +111,7 @@ func ticketlessAuthorization(w http.ResponseWriter, r *http.Request, umaId strin
 }
 
 func ticketedAuthorization(w http.ResponseWriter, r *http.Request, umaId string, issuer string) {
-	method := strings.Trim(r.Header.Get("X-Forwarded-Method"), "[]")
+	method := forwardedMethod(r)
 	logrus.WithFields(logrus.Fields{"method": method, "path": r.URL.Path}).Info("🔍 Verifying authorization token")
 	permission, err := verifyTicket(r.Header.Get("Authorization"), []string{issuer})
 	if err != nil {
@@ -320,4 +320,12 @@ func verifyTicket(token string, validIssuers []string) ([]Permission, error) {
 
 	// If we get here, the token is valid, and (if present) 'permissions' is well-formed.
 	return claims.Permissions, nil
+}
+
+func forwardedMethod(r *http.Request) string {
+	method := strings.Trim(r.Header.Get("X-Forwarded-Method"), "[]")
+	if method == "" {
+		method = r.Method
+	}
+	return method
 }

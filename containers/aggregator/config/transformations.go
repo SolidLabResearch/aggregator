@@ -29,7 +29,7 @@ func InitInstanceConfiguration(mux *http.ServeMux, user model.User) error {
 	mux.HandleFunc("/transformations", config.HandleTransformationsEndpoint)
 
 	// Build full URL
-	fullURL := fmt.Sprintf("%s://%s/transformations", model.Protocol, model.ExternalHost)
+	fullURL := fmt.Sprintf("%s://%s/config/%s/transformations", model.Protocol, model.ExternalHost, user.Namespace)
 
 	// Register resource
 	if err := auth.RegisterResource(fullURL, user.AuthzServerURL, []model.Scope{model.Read}); err != nil {

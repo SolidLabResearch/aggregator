@@ -202,6 +202,11 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 	// Determine if this is create or update
 	isUpdate := storedData.AggregatorID != ""
 
+	tokenExpiry := ""
+	if tokenResp.ExpiresIn > 0 {
+		tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
+	}
+
 	var instance *model.AggregatorInstance
 	if isUpdate {
 		// Update existing aggregator tokens
@@ -211,6 +216,15 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 			return
 		}
 		instance, _ = getAggregatorInstance(storedData.AggregatorID)
+		if instance != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := updateAggregatorInstanceDeployments(instance.Namespace, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, ctx); err != nil {
+				logrus.WithError(err).Errorf("Failed to update aggregator deployments: %s", storedData.AggregatorID)
+				http.Error(w, "Failed to update aggregator", http.StatusInternalServerError)
+				return
+			}
+		}
 		logrus.Infof("Aggregator tokens updated: %s", storedData.AggregatorID)
 	} else {
 		// Create new aggregator instance
@@ -226,7 +240,7 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 		}
 
 		// Deploy aggregator instance
-		if err := deployAggregatorResources(namespace, storedData.TokenEndpoint, tokenResp.RefreshToken, ownerWebID, storedData.AuthorizationServer, ctx); err != nil {
+		if err := deployAggregatorResources(namespace, storedData.TokenEndpoint, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, ownerWebID, storedData.AuthorizationServer, ctx); err != nil {
 			logrus.WithError(err).Error("Failed to deploy aggregator")
 			http.Error(w, "Failed to deploy aggregator", http.StatusInternalServerError)
 			return
