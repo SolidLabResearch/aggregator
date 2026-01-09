@@ -122,7 +122,7 @@ func createAggregatorInstanceRecord(
 		RegistrationType:    registrationType,
 		AuthorizationServer: authorizationServer,
 		Namespace:           namespace,
-		BaseURL:             model.GetAggregatorURL(aggregatorID),
+		BaseURL:             model.GetAggregatorURL(namespace),
 		AccessToken:         accessToken,
 		RefreshToken:        refreshToken,
 		CreatedAt:           now,

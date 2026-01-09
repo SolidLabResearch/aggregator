@@ -26,14 +26,6 @@ func RegistrationHandler(w http.ResponseWriter, r *http.Request) {
 
 // handleRegistrationPost handles POST requests for creating/updating aggregators
 func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
-	// Authentication required
-	ownerWebID, err := authenticateRequest(r)
-	if err != nil {
-		logrus.WithError(err).Warn("Authentication failed")
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
 	// Parse request body
 	var req model.RegistrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -53,6 +45,19 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 	if !isRegistrationTypeAllowed(registrationType) {
 		logrus.Warnf("Registration type not allowed: %s", registrationType)
 		http.Error(w, "Unsupported registration_type", http.StatusBadRequest)
+		return
+	}
+
+	// Authentication required for all flows except none in disable_auth mode
+	ownerWebID, err := authenticateRequest(r)
+	if err != nil {
+		logrus.WithError(err).Warn("Authentication failed")
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if ownerWebID == "" && registrationType != "none" {
+		logrus.Warn("Authentication missing for registration request")
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -80,6 +85,11 @@ func handleRegistrationDelete(w http.ResponseWriter, r *http.Request) {
 	ownerWebID, err := authenticateRequest(r)
 	if err != nil {
 		logrus.WithError(err).Warn("Authentication failed")
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if ownerWebID == "" {
+		logrus.Warn("Authentication missing for delete request")
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}

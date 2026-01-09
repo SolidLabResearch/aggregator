@@ -34,13 +34,17 @@ func extractBearerToken(r *http.Request) (string, error) {
 
 // authenticateRequest validates the IDP_client_token and extracts the WebID
 func authenticateRequest(r *http.Request) (webID string, err error) {
-	tokenString, err := extractBearerToken(r)
-	if err != nil {
-		return "", err
-	}
-
 	// If authentication is disabled (for testing), just parse and extract WebID without validation
 	if model.DisableAuth {
+		if r.Header.Get("Authorization") == "" {
+			return "", nil
+		}
+
+		tokenString, err := extractBearerToken(r)
+		if err != nil {
+			return "", err
+		}
+
 		token, err := jwt.Parse([]byte(tokenString), jwt.WithValidate(false))
 		if err != nil {
 			return "", errors.New("invalid token format")
@@ -58,6 +62,11 @@ func authenticateRequest(r *http.Request) (webID string, err error) {
 			}
 		}
 		return "", errors.New("no webid or sub claim in token")
+	}
+
+	tokenString, err := extractBearerToken(r)
+	if err != nil {
+		return "", err
 	}
 
 	// Production mode: full token validation

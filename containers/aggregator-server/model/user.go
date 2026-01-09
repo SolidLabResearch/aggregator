@@ -37,7 +37,7 @@ func (u *User) ConfigEndpoints() map[string]string {
 	}
 }
 
-// GetAggregatorURL returns the base URL for an aggregator instance
-func GetAggregatorURL(aggregatorID string) string {
-	return fmt.Sprintf("%s://%s/aggregators/%s/", Protocol, ExternalHost, aggregatorID)
+// GetAggregatorURL returns the aggregator description URL for a namespace.
+func GetAggregatorURL(namespace string) string {
+	return fmt.Sprintf("%s://%s/config/%s", Protocol, ExternalHost, namespace)
 }

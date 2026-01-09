@@ -59,3 +59,10 @@ func TestEnsureConfigMap_RetriesOnConflict(t *testing.T) {
 		t.Fatalf("ConfigMap not updated after retry, got %q", updated.Data["tokens.json"])
 	}
 }
+
+func TestResolveOwnerWebID_EmptyUsesNamespaceFallback(t *testing.T) {
+	got := resolveOwnerWebID("", "ns-test-123")
+	if got == "" {
+		t.Fatal("Expected non-empty owner WebID fallback for none flow")
+	}
+}
