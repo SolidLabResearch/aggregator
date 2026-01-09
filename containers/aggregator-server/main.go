@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -107,6 +109,40 @@ func main() {
 
 	// Registration endpoint
 	initRegistration(serverMux)
+
+	// While we wait for instance to start the aggregator server responds with 503 to config requests
+	serverMux.HandleFunc("/config/", func(w http.ResponseWriter, r *http.Request) {
+		namespace := strings.TrimPrefix(r.URL.Path, "/config/")
+		namespace = strings.TrimPrefix(namespace, "/")
+		if namespace == "" {
+			http.NotFound(w, r)
+			return
+		}
+		if idx := strings.Index(namespace, "/"); idx != -1 {
+			namespace = namespace[:idx]
+		}
+
+		if model.Clientset != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			defer cancel()
+			ns, err := model.Clientset.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+			if err != nil {
+				if apierrors.IsNotFound(err) {
+					http.NotFound(w, r)
+					return
+				}
+				http.Error(w, "Failed to check instance namespace", http.StatusInternalServerError)
+				return
+			}
+			if ns.Labels["created-by"] != "aggregator" {
+				http.NotFound(w, r)
+				return
+			}
+		}
+
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "Aggregator instance not ready", http.StatusServiceUnavailable)
+	})
 
 	// Start HTTP server
 	srv := &http.Server{

@@ -9,6 +9,13 @@ import (
 	"aggregator-integration-test/utils"
 )
 
+const (
+	testAggregatorClientIDURL  = "http://aggregator.local/client.json"
+	testAggregatorClientSecret = "AtctW4sdbmjcfF9gQJIf5RoK6T6wetwG"
+	testProvisionClientID      = "provision-client-id"
+	testProvisionClientSecret  = "provision-client-secret"
+)
+
 var testEnv *utils.TestEnvironment
 
 func TestMain(m *testing.M) {

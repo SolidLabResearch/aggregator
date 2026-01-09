@@ -183,53 +183,6 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 		}
 	}
 
-	// --- Aggregator Instance Deployment ---
-	aggDeploy := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "aggregator",
-			Namespace: namespace,
-			Labels: map[string]string{
-				"app": "aggregator",
-			},
-		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: &replicas,
-			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{
-					"app": "aggregator",
-				},
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"app": "aggregator",
-					},
-				},
-				Spec: corev1.PodSpec{
-					ServiceAccountName: "aggregator-sa", // Needs permissions? Maybe a new SA per user?
-					Containers: []corev1.Container{
-						{
-							Name:            "aggregator",
-							Image:           "aggregator", // The instance image
-							ImagePullPolicy: corev1.PullNever,
-							Ports: []corev1.ContainerPort{
-								{ContainerPort: 5000},
-							},
-							Env: []corev1.EnvVar{
-								{Name: "AGGREGATOR_EXTERNAL_HOST", Value: model.ExternalHost},
-								{Name: "CLIENT_ID", Value: model.ClientId},
-								{Name: "CLIENT_SECRET", Value: model.ClientSecret},
-								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
-								{Name: "USER_NAMESPACE", Value: namespace},
-								{Name: "USER_ID", Value: resolvedOwner},
-								{Name: "AS_URL", Value: authzServerURL},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
 	sa := &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "aggregator-instance-sa",
@@ -240,7 +193,6 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 	if err != nil {
 		return fmt.Errorf("failed to create ServiceAccount: %w", err)
 	}
-	aggDeploy.Spec.Template.Spec.ServiceAccountName = "aggregator-instance-sa"
 
 	roleBinding := &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
@@ -308,12 +260,6 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 	if err := ensureConfigMap(namespace, "aggregator-instance-config", map[string]string{"access_token_expiry": accessTokenExpiry}, ctx); err != nil {
 		return fmt.Errorf("failed to ensure instance configmap: %w", err)
 	}
-
-	_, err = model.Clientset.AppsV1().Deployments(namespace).Create(ctx, aggDeploy, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create Aggregator Instance deployment: %w", err)
-	}
-	logrus.Infof("Aggregator Instance deployment created in namespace %s ✅", namespace)
 
 	// --- Aggregator Instance Service ---
 	aggService := &corev1.Service{
@@ -434,6 +380,60 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 	if err != nil {
 		return fmt.Errorf("failed to create IngressRoute: %w", err)
 	}
+
+	// --- Aggregator Instance Deployment ---
+	aggDeploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "aggregator",
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app": "aggregator",
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "aggregator",
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app": "aggregator",
+					},
+				},
+				Spec: corev1.PodSpec{
+					ServiceAccountName: "aggregator-instance-sa",
+					Containers: []corev1.Container{
+						{
+							Name:            "aggregator",
+							Image:           "aggregator",
+							ImagePullPolicy: corev1.PullNever,
+							Ports: []corev1.ContainerPort{
+								{ContainerPort: 5000},
+							},
+							Env: []corev1.EnvVar{
+								{Name: "AGGREGATOR_EXTERNAL_HOST", Value: model.ExternalHost},
+								{Name: "CLIENT_ID", Value: model.ClientId},
+								{Name: "CLIENT_SECRET", Value: model.ClientSecret},
+								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
+								{Name: "USER_NAMESPACE", Value: namespace},
+								{Name: "USER_ID", Value: resolvedOwner},
+								{Name: "AS_URL", Value: authzServerURL},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, err = model.Clientset.AppsV1().Deployments(namespace).Create(ctx, aggDeploy, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create Aggregator Instance deployment: %w", err)
+	}
+	logrus.Infof("Aggregator Instance deployment created in namespace %s ✅", namespace)
 
 	return nil
 }
