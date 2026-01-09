@@ -22,6 +22,13 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+type authCodeStartResponse struct {
+	AggregatorClientID  string `json:"aggregator_client_id"`
+	CodeChallenge       string `json:"code_challenge"`
+	CodeChallengeMethod string `json:"code_challenge_method"`
+	State               string `json:"state"`
+}
+
 // Helper function to create a valid authentication token for tests.
 func createAuthToken(t *testing.T, oidcProvider *mocks.OIDCProvider, webID string) string {
 	t.Helper()
@@ -270,6 +277,7 @@ func setupAggregatorInstance(t *testing.T) aggregatorInstance {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	waitForDeploymentReady(t, ctx, namespace, "aggregator")
+	waitForAggregatorDescriptionReady(t, fmt.Sprintf("%s/config/%s", testEnv.AggregatorURL, namespace), authToken, 60*time.Second)
 
 	cleanup := func() {
 		deleteAggregator(t, aggregatorID, authToken)
@@ -328,6 +336,8 @@ func waitForAggregatorNamespace(t *testing.T, ownerWebID string) string {
 func fetchAggregatorDescription(t *testing.T, baseURL string, authToken string) aggregatorDescription {
 	t.Helper()
 
+	waitForAggregatorDescriptionReady(t, baseURL, authToken, 60*time.Second)
+
 	resp, bodyBytes := getWithUMA(t, strings.TrimRight(baseURL, "/"), authToken)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("Expected 200 OK, got %d: %s", resp.StatusCode, string(bodyBytes))
@@ -355,6 +365,24 @@ func fetchAggregatorDescription(t *testing.T, baseURL string, authToken string) 
 	}
 
 	return desc
+}
+
+func waitForAggregatorDescriptionReady(t *testing.T, baseURL string, authToken string, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		resp, bodyBytes := getWithUMA(t, strings.TrimRight(baseURL, "/"), authToken)
+		if resp.StatusCode == http.StatusOK {
+			return
+		}
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("Expected 200 OK or 503 while waiting for description, got %d: %s", resp.StatusCode, string(bodyBytes))
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	t.Fatalf("Timed out waiting for aggregator description at %s", baseURL)
 }
 
 func getWithUMA(t *testing.T, url string, claimToken string) (*http.Response, []byte) {
@@ -647,4 +675,316 @@ func ingressRouteHasMiddleware(t *testing.T, ingressRoute *unstructured.Unstruct
 	}
 
 	return false
+}
+
+func createAggregatorViaNone(t *testing.T, authToken string) string {
+	t.Helper()
+
+	createBody := map[string]interface{}{
+		"registration_type": "none",
+	}
+	body, _ := json.Marshal(createBody)
+
+	req, err := http.NewRequest("POST", testEnv.AggregatorURL+"/registration", bytes.NewBuffer(body))
+	if err != nil {
+		t.Fatalf("Failed to create none request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+authToken)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("None request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected 201 Created for none, got %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode none response: %v", err)
+	}
+	aggregatorID, ok := response["aggregator_id"].(string)
+	if !ok || aggregatorID == "" {
+		t.Fatalf("None response missing aggregator_id")
+	}
+
+	return aggregatorID
+}
+
+func createAggregatorViaAuthorizationCode(t *testing.T, oidcProvider *mocks.OIDCProvider, authToken string, umaServerURL string) string {
+	t.Helper()
+
+	redirectURI := "https://app.example/callback"
+	oidcProvider.RegisterClient(testAggregatorClientIDURL, testAggregatorClientSecret, []string{redirectURI}, []string{"authorization_code"})
+	appClientID := oidcProvider.ClientMetadataURL([]string{redirectURI})
+
+	startBody := map[string]interface{}{
+		"registration_type":    "authorization_code",
+		"authorization_server": umaServerURL,
+		"client_id":            appClientID,
+	}
+	startJSON, _ := json.Marshal(startBody)
+
+	client := &http.Client{}
+	startReq, err := http.NewRequest("POST", testEnv.AggregatorURL+"/registration", bytes.NewBuffer(startJSON))
+	if err != nil {
+		t.Fatalf("Failed to create authorization_code start request: %v", err)
+	}
+	startReq.Header.Set("Content-Type", "application/json")
+	startReq.Header.Set("Authorization", "Bearer "+authToken)
+
+	startResp, err := client.Do(startReq)
+	if err != nil {
+		t.Fatalf("Authorization_code start request failed: %v", err)
+	}
+	defer startResp.Body.Close()
+
+	start := parseAuthCodeStartResponse(t, startResp)
+	state := start.State
+	codeChallenge := start.CodeChallenge
+	startClientID := start.AggregatorClientID
+
+	authReq, err := http.NewRequest("GET", oidcProvider.URL()+"/authorize", nil)
+	if err != nil {
+		t.Fatalf("Failed to create authorize request: %v", err)
+	}
+	q := authReq.URL.Query()
+	q.Set("response_type", "code")
+	q.Set("client_id", startClientID)
+	q.Set("redirect_uri", redirectURI)
+	q.Set("scope", "openid webid offline_access")
+	q.Set("code_challenge", codeChallenge)
+	q.Set("code_challenge_method", "S256")
+	q.Set("state", state)
+	authReq.URL.RawQuery = q.Encode()
+
+	authClient := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	authResp, err := authClient.Do(authReq)
+	if err != nil {
+		t.Fatalf("Authorization request failed: %v", err)
+	}
+	defer authResp.Body.Close()
+
+	if authResp.StatusCode != http.StatusFound {
+		bodyBytes, _ := io.ReadAll(authResp.Body)
+		t.Fatalf("Expected 302 redirect from authorize endpoint, got %d: %s", authResp.StatusCode, string(bodyBytes))
+	}
+
+	location := authResp.Header.Get("Location")
+	if location == "" {
+		t.Fatalf("No Location header in authorize response")
+	}
+
+	redirectURL, err := http.NewRequest("GET", location, nil)
+	if err != nil {
+		t.Fatalf("Failed to parse redirect URL: %v", err)
+	}
+
+	code := redirectURL.URL.Query().Get("code")
+	if code == "" {
+		t.Fatalf("No authorization code in redirect")
+	}
+
+	finishBody := map[string]interface{}{
+		"registration_type": "authorization_code",
+		"code":              code,
+		"redirect_uri":      redirectURI,
+		"state":             state,
+	}
+	finishJSON, _ := json.Marshal(finishBody)
+
+	finishReq, err := http.NewRequest("POST", testEnv.AggregatorURL+"/registration", bytes.NewBuffer(finishJSON))
+	if err != nil {
+		t.Fatalf("Failed to create finish request: %v", err)
+	}
+	finishReq.Header.Set("Content-Type", "application/json")
+	finishReq.Header.Set("Authorization", "Bearer "+authToken)
+
+	finishResp, err := client.Do(finishReq)
+	if err != nil {
+		t.Fatalf("Finish request failed: %v", err)
+	}
+	defer finishResp.Body.Close()
+
+	if finishResp.StatusCode != http.StatusCreated {
+		bodyBytes, _ := io.ReadAll(finishResp.Body)
+		t.Fatalf("Expected 201 Created on finish, got %d: %s", finishResp.StatusCode, string(bodyBytes))
+	}
+
+	var finishResponse map[string]interface{}
+	if err := json.NewDecoder(finishResp.Body).Decode(&finishResponse); err != nil {
+		t.Fatalf("Failed to decode finish response: %v", err)
+	}
+
+	aggregatorID, ok := finishResponse["aggregator_id"].(string)
+	if !ok || aggregatorID == "" {
+		t.Fatalf("Authorization_code response missing aggregator_id")
+	}
+
+	return aggregatorID
+}
+
+func parseAuthCodeStartResponse(t *testing.T, resp *http.Response) authCodeStartResponse {
+	t.Helper()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Expected 201 Created on start, got %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var start authCodeStartResponse
+	if err := json.Unmarshal(bodyBytes, &start); err != nil {
+		t.Fatalf("Failed to decode start response: %v", err)
+	}
+
+	if start.State == "" || start.CodeChallenge == "" || start.CodeChallengeMethod == "" || start.AggregatorClientID == "" {
+		t.Fatalf("Start response missing required fields: %+v", start)
+	}
+
+	return start
+}
+
+func assertWebIDDereferenceable(t *testing.T, webID string) {
+	t.Helper()
+
+	base := webID
+	if idx := strings.Index(webID, "#"); idx != -1 {
+		base = webID[:idx]
+	}
+
+	resp, err := http.Get(base)
+	if err != nil {
+		t.Fatalf("Failed to dereference webid %s: %v", base, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected 200 OK for webid %s, got %d: %s", base, resp.StatusCode, string(bodyBytes))
+	}
+}
+
+func updateProvisionConfig(t *testing.T, clientID, clientSecret, webID, authorizationServer string) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	configMap, err := testEnv.KubeClient.CoreV1().ConfigMaps("aggregator-app").Get(ctx, "aggregator-config", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to fetch aggregator configmap: %v", err)
+	}
+
+	if configMap.Data == nil {
+		configMap.Data = map[string]string{}
+	}
+	configMap.Data["provision_client_id"] = clientID
+	configMap.Data["provision_client_secret"] = clientSecret
+	configMap.Data["provision_webid"] = webID
+	configMap.Data["provision_authorization_server"] = authorizationServer
+
+	if _, err := testEnv.KubeClient.CoreV1().ConfigMaps("aggregator-app").Update(ctx, configMap, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("Failed to update aggregator configmap: %v", err)
+	}
+
+	deployment, err := testEnv.KubeClient.AppsV1().Deployments("aggregator-app").Get(ctx, "aggregator-server", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to fetch aggregator deployment: %v", err)
+	}
+
+	if deployment.Spec.Template.Annotations == nil {
+		deployment.Spec.Template.Annotations = map[string]string{}
+	}
+	deployment.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"] = time.Now().Format(time.RFC3339Nano)
+
+	if _, err := testEnv.KubeClient.AppsV1().Deployments("aggregator-app").Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("Failed to restart aggregator deployment: %v", err)
+	}
+
+	waitForDeploymentReady(t, ctx, "aggregator-app", "aggregator-server")
+	waitForAggregatorReady(t, ctx, testEnv.AggregatorURL+"/")
+}
+
+func waitForAggregatorReady(t *testing.T, ctx context.Context, url string) {
+	t.Helper()
+
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+	}
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("Timed out waiting for aggregator at %s: %v", url, ctx.Err())
+		case <-ticker.C:
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+			if err != nil {
+				continue
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				continue
+			}
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+	}
+}
+
+func createAggregatorViaProvision(t *testing.T, oidcProvider *mocks.OIDCProvider, authToken string, umaServerURL string) string {
+	t.Helper()
+
+	targetWebID := oidcProvider.URL() + "/webid#me"
+	oidcProvider.RegisterClient(testProvisionClientID, testProvisionClientSecret, []string{}, []string{"client_credentials"})
+	oidcProvider.RegisterUser(targetWebID, "provision-user", "provision-pass")
+	updateProvisionConfig(t, testProvisionClientID, testProvisionClientSecret, targetWebID, umaServerURL)
+
+	createBody := map[string]interface{}{
+		"registration_type":    "provision",
+		"authorization_server": umaServerURL,
+	}
+	body, _ := json.Marshal(createBody)
+
+	req, err := http.NewRequest("POST", testEnv.AggregatorURL+"/registration", bytes.NewBuffer(body))
+	if err != nil {
+		t.Fatalf("Failed to create provision request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+authToken)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Provision request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected 201 Created for provision, got %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode provision response: %v", err)
+	}
+	aggregatorID, ok := response["aggregator_id"].(string)
+	if !ok || aggregatorID == "" {
+		t.Fatalf("Provision response missing aggregator_id")
+	}
+
+	return aggregatorID
 }
