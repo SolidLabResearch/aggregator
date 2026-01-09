@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -43,6 +44,14 @@ func createNamespaceForAggregator(ownerWebID string, authzServerURL string, ctx 
 	return nsName, nil
 }
 
+func resolveOwnerWebID(ownerWebID string, namespace string) string {
+	trimmed := strings.TrimSpace(ownerWebID)
+	if trimmed != "" {
+		return trimmed
+	}
+	return fmt.Sprintf("urn:aggregator:%s", namespace)
+}
+
 // deleteNamespaceResources deletes a namespace and all its resources
 func deleteNamespaceResources(namespace string, ctx context.Context) error {
 	err := model.Clientset.CoreV1().Namespaces().Delete(ctx, namespace, metav1.DeleteOptions{})
@@ -59,6 +68,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 	replicas := int32(1)
 	useUMA := authzServerURL != ""
 	var err error
+	resolvedOwner := resolveOwnerWebID(ownerWebID, namespace)
 
 	if useUMA {
 		if err := ensureEgressUMARbac(namespace, ctx); err != nil {
@@ -211,7 +221,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 								{Name: "CLIENT_SECRET", Value: model.ClientSecret},
 								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 								{Name: "USER_NAMESPACE", Value: namespace},
-								{Name: "USER_ID", Value: ownerWebID},
+								{Name: "USER_ID", Value: resolvedOwner},
 								{Name: "AS_URL", Value: authzServerURL},
 							},
 						},

@@ -140,6 +140,22 @@ func TestAuthenticateRequest_DisabledAuth_InvalidToken(t *testing.T) {
 	}
 }
 
+func TestAuthenticateRequest_DisabledAuth_MissingAuthorization(t *testing.T) {
+	originalDisableAuth := model.DisableAuth
+	defer func() { model.DisableAuth = originalDisableAuth }()
+
+	model.DisableAuth = true
+
+	req := httptest.NewRequest("GET", "/", nil)
+	webID, err := authenticateRequest(req)
+	if err != nil {
+		t.Fatalf("Expected no error when auth is disabled, got: %v", err)
+	}
+	if webID != "" {
+		t.Fatalf("Expected empty WebID when Authorization is missing, got %q", webID)
+	}
+}
+
 // Note: Testing full token validation (model.DisableAuth=false) requires setting up
 // a mock OIDC provider with JWKS endpoint, which is more appropriate for integration tests
 // The unit tests above verify the disable_auth bypass logic works correctly
