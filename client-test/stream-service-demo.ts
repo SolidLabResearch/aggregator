@@ -17,10 +17,10 @@ async function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function createActor(umaFetch: any): Promise<string> {
-    console.log('🚀 Creating actor to query Alice\'s name...');
+async function createService(umaFetch: any): Promise<string> {
+    console.log('🚀 Creating service to query Alice\'s name...');
 
-    const pipelineEndpoint = 'http://localhost:5000/config/actors';
+    const pipelineEndpoint = 'http://localhost:5000/config/services';
     const response = await umaFetch(pipelineEndpoint, {
         method: "POST",
         headers: {
@@ -30,24 +30,24 @@ async function createActor(umaFetch: any): Promise<string> {
     });
 
     if (response.status !== 201) {
-        throw new Error(`Failed to create actor: ${response.status} - ${await response.text()}`);
+        throw new Error(`Failed to create service: ${response.status} - ${await response.text()}`);
     }
 
     const responseJson = await response.json();
-    console.log('✅ Actor created successfully!');
+    console.log('✅ Service created successfully!');
     console.log(`📄 Response: ${JSON.stringify(responseJson)}`);
 
-    // Extract actor ID from response
-    const actorId = responseJson.id;
-    return actorId;
+    // Extract service ID from response
+    const serviceId = responseJson.id;
+    return serviceId;
 }
 
-async function getActorUrl(actorId: string): Promise<string> {
-    return `http://localhost:5000/${actorId}/events`;
+async function getServiceUrl(serviceId: string): Promise<string> {
+    return `http://localhost:5000/${serviceId}/events`;
 }
 
-async function connectToSSE(actorUrl: string, umaFetch: any): Promise<void> {
-    console.log(`🔗 Connecting to SSE stream at: ${actorUrl}`);
+async function connectToSSE(serviceUrl: string, umaFetch: any): Promise<void> {
+    console.log(`🔗 Connecting to SSE stream at: ${serviceUrl}`);
 
     return new Promise((resolve, reject) => {
         let eventCount = 0;
@@ -62,7 +62,7 @@ async function connectToSSE(actorUrl: string, umaFetch: any): Promise<void> {
         const abortController = new AbortController();
 
         // Use fetch to connect to SSE endpoint
-        umaFetch(actorUrl, {
+        umaFetch(serviceUrl, {
             method: "GET",
             headers: {
                 "Accept": "text/event-stream",
@@ -409,12 +409,12 @@ async function main() {
     const umaFetch = auth.createUMAFetch();
 
     try {
-        // Step 1: Create the actor
-        const actorId = await createActor(umaFetch);
-        await sleep(5000); // Give the actor time to start
+        // Step 1: Create the service
+        const serviceId = await createService(umaFetch);
+        await sleep(5000); // Give the service time to start
 
         // Step 2: Get the SSE URL
-        const sseUrl = await getActorUrl(actorId);
+        const sseUrl = await getServiceUrl(serviceId);
 
         // Step 3: Check current profile content
         await checkAliceProfile(umaFetch);

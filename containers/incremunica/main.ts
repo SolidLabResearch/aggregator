@@ -125,8 +125,8 @@ async function registerEndpointWithAggregator(endpoint: string, description: str
       const result = await response.json();
       console.log(`✅ Successfully registered endpoint ${endpoint}:`);
       console.log(`   External URL: ${result.external_url}`);
-      console.log(`   Actor ID: ${result.actor_id}`);
-      return result.actor_id;
+      console.log(`   Service ID: ${result.service_id}`);
+      return result.service_id;
     } else {
       const errorText = await response.text();
       console.error(`❌ Failed to register endpoint ${endpoint}: ${response.status} - ${errorText}`);

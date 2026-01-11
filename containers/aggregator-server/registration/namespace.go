@@ -320,7 +320,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 						"middlewares": buildIngressMiddlewares(useUMA, namespace, true),
 					},
 					map[string]interface{}{
-						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/config/" + namespace + "/actors`)",
+						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/config/" + namespace + "/services`)",
 						"kind":  "Rule",
 						"services": []interface{}{
 							map[string]interface{}{

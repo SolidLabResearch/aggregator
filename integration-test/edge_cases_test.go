@@ -102,9 +102,9 @@ func TestInstance_Transformations_NamespaceNotFound(t *testing.T) {
 	assertNotFoundOrUnauthorized(t, url)
 }
 
-func TestInstance_Actors_NamespaceNotFound(t *testing.T) {
+func TestInstance_Services_NamespaceNotFound(t *testing.T) {
 	namespace := "missing-" + uuid.NewString()
-	url := fmt.Sprintf("%s/config/%s/actors", testEnv.AggregatorURL, namespace)
+	url := fmt.Sprintf("%s/config/%s/services", testEnv.AggregatorURL, namespace)
 
 	assertNotFoundOrUnauthorized(t, url)
 }

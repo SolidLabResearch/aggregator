@@ -66,7 +66,7 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request, user mo
 		LoginStatus:           loginStatus,
 		TokenExpiry:           tokenExpiry,
 		TransformationCatalog: fmt.Sprintf("%s://%s/config/%s/transformations", model.Protocol, model.ExternalHost, user.Namespace),
-		ServiceCollection:     fmt.Sprintf("%s://%s/config/%s/actors", model.Protocol, model.ExternalHost, user.Namespace),
+		ServiceCollection:     fmt.Sprintf("%s://%s/config/%s/services", model.Protocol, model.ExternalHost, user.Namespace),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

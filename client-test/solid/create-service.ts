@@ -32,7 +32,7 @@ const request = {
 };
 
 async function main() {
-    const pipelineEndpoint = 'http://localhost:5000/config/actors';
+    const pipelineEndpoint = 'http://localhost:5000/config/services';
 
     console.log(`=== Initializing Solid OIDC authentication`);
     const auth = new SolidOIDCAuth(
