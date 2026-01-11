@@ -85,34 +85,34 @@ func TestRegistration_None_DisablesUMAIngressAndEgress(t *testing.T) {
 		t.Fatal("Expected no ingress-uma middleware on instance ingress routes for none registration type")
 	}
 
-	actorID := fmt.Sprintf("actor-none-%d", time.Now().UnixNano())
-	actorBody := map[string]interface{}{
-		"id":          actorID,
-		"description": "none flow actor",
+	serviceID := fmt.Sprintf("service-none-%d", time.Now().UnixNano())
+	serviceBody := map[string]interface{}{
+		"id":          serviceID,
+		"description": "none flow service",
 	}
-	body, _ := json.Marshal(actorBody)
+	body, _ := json.Marshal(serviceBody)
 
-	actorsURL := fmt.Sprintf("%s/config/%s/actors", testEnv.AggregatorURL, namespace)
-	req, err := http.NewRequest("POST", actorsURL, bytes.NewBuffer(body))
+	servicesURL := fmt.Sprintf("%s/config/%s/services", testEnv.AggregatorURL, namespace)
+	req, err := http.NewRequest("POST", servicesURL, bytes.NewBuffer(body))
 	if err != nil {
-		t.Fatalf("Failed to build actor request: %v", err)
+		t.Fatalf("Failed to build service request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		t.Fatalf("Actor creation request failed: %v", err)
+		t.Fatalf("Service creation request failed: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusAccepted {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Expected 202 Accepted for actor creation, got %d: %s", resp.StatusCode, string(bodyBytes))
+		t.Fatalf("Expected 202 Accepted for service creation, got %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	actorCtx, actorCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer actorCancel()
-	deployment := waitForDeploymentExists(t, actorCtx, namespace, actorID)
+	serviceCtx, serviceCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer serviceCancel()
+	deployment := waitForDeploymentExists(t, serviceCtx, namespace, serviceID)
 
 	for _, env := range deployment.Spec.Template.Spec.Containers[0].Env {
 		if env.Name == "HTTP_PROXY" || env.Name == "http_proxy" {
@@ -120,10 +120,10 @@ func TestRegistration_None_DisablesUMAIngressAndEgress(t *testing.T) {
 		}
 	}
 
-	actorIngressName := fmt.Sprintf("%s-%s-ingressroute", namespace, actorID)
-	actorIngress := getIngressRoute(t, namespace, actorIngressName)
-	if ingressRouteHasMiddleware(t, actorIngress, "ingress-uma") {
-		t.Fatal("Expected no ingress-uma middleware on actor ingress routes for none registration type")
+	serviceIngressName := fmt.Sprintf("%s-%s-ingressroute", namespace, serviceID)
+	serviceIngress := getIngressRoute(t, namespace, serviceIngressName)
+	if ingressRouteHasMiddleware(t, serviceIngress, "ingress-uma") {
+		t.Fatal("Expected no ingress-uma middleware on service ingress routes for none registration type")
 	}
 }
 

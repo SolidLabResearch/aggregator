@@ -33,7 +33,7 @@ type TestEnvironment struct {
 	proxyServer       *exec.Cmd
 }
 
-type ActorConfig struct {
+type ServiceConfig struct {
 	ID          string
 	Name        string
 	Description string
@@ -45,7 +45,7 @@ type UserConfig struct {
 	Password string
 }
 
-type Actor struct {
+type Service struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`

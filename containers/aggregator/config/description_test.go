@@ -83,7 +83,7 @@ func TestHandleAggregatorDescription(t *testing.T) {
 	if desc.TransformationCatalog != "http://aggregator.test/config/test-ns/transformations" {
 		t.Fatalf("unexpected transformation_catalog: %s", desc.TransformationCatalog)
 	}
-	if desc.ServiceCollection != "http://aggregator.test/config/test-ns/actors" {
+	if desc.ServiceCollection != "http://aggregator.test/config/test-ns/services" {
 		t.Fatalf("unexpected service_collection: %s", desc.ServiceCollection)
 	}
 	if !desc.LoginStatus {

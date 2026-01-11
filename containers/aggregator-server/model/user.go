@@ -33,7 +33,7 @@ type User struct {
 
 func (u *User) ConfigEndpoints() map[string]string {
 	return map[string]string{
-		"actors": fmt.Sprintf("http://%s/config/%s/actors", ExternalHost, u.Namespace),
+		"services": fmt.Sprintf("http://%s/config/%s/services", ExternalHost, u.Namespace),
 	}
 }
 

@@ -1,4 +1,4 @@
-package actors
+package services
 
 import (
 	"aggregator/auth"
@@ -19,12 +19,12 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-func CreateActor(request model.ActorRequest) (*model.Actor, error) {
+func CreateService(request model.ServiceRequest) (*model.Service, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	useUMA := strings.TrimSpace(request.Owner.AuthzServerURL) != ""
-	actor := model.Actor{
+	service := model.Service{
 		Id:            request.Id,
 		Description:   request.Description,
 		Namespace:     request.Owner.Namespace,
@@ -37,42 +37,42 @@ func CreateActor(request model.ActorRequest) (*model.Actor, error) {
 
 	// Clean up if anything fails
 	cleanup := func() {
-		if err := actor.Stop(); err != nil {
-			logrus.WithError(err).Warn("Failed to clean up actor resources")
+		if err := service.Stop(); err != nil {
+			logrus.WithError(err).Warn("Failed to clean up service resources")
 		}
 	}
 
 	// Create Deployment
-	if err := createDeployment(&actor, 1, useUMA, ctx); err != nil {
+	if err := createDeployment(&service, 1, useUMA, ctx); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("pod creation failed: %w", err)
 	}
 
 	// Create Service
-	if err := createService(&actor, ctx); err != nil {
+	if err := createServiceResource(&service, ctx); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("service creation failed: %w", err)
 	}
 
 	// Create Ingress
-	if err := createIngressRoute(&actor, request.Owner, ctx); err != nil {
+	if err := createIngressRoute(&service, request.Owner, ctx); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("ingress route creation failed: %w", err)
 	}
 
-	// return fully created actor
-	return &actor, nil
+	// return fully created service
+	return &service, nil
 }
 
-func createDeployment(actor *model.Actor, replicas int32, useUMA bool, ctx context.Context) error {
+func createDeployment(service *model.Service, replicas int32, useUMA bool, ctx context.Context) error {
 	labels := map[string]string{
-		"app":       actor.Id,
-		"namespace": actor.Namespace,
+		"app":       service.Id,
+		"namespace": service.Namespace,
 	}
 
 	container := corev1.Container{
-		Name:            actor.Id,
-		Image:           actor.Id,
+		Name:            service.Id,
+		Image:           service.Id,
 		ImagePullPolicy: corev1.PullNever,
 		Env: []corev1.EnvVar{
 			{Name: "QUERY", Value: `
@@ -126,15 +126,15 @@ func createDeployment(actor *model.Actor, replicas int32, useUMA bool, ctx conte
 
 	if useUMA {
 		container.Env = append(container.Env,
-			corev1.EnvVar{Name: "HTTP_PROXY", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", actor.Namespace)},
-			corev1.EnvVar{Name: "http_proxy", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", actor.Namespace)},
+			corev1.EnvVar{Name: "HTTP_PROXY", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", service.Namespace)},
+			corev1.EnvVar{Name: "http_proxy", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", service.Namespace)},
 		)
 	}
 
 	deploySpec := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      actor.Id,
-			Namespace: actor.Namespace,
+			Name:      service.Id,
+			Namespace: service.Namespace,
 			Labels:    labels,
 		},
 		Spec: appsv1.DeploymentSpec{
@@ -154,23 +154,23 @@ func createDeployment(actor *model.Actor, replicas int32, useUMA bool, ctx conte
 		},
 	}
 
-	deploy, err := model.Clientset.AppsV1().Deployments(actor.Namespace).Create(ctx, deploySpec, metav1.CreateOptions{})
+	deploy, err := model.Clientset.AppsV1().Deployments(service.Namespace).Create(ctx, deploySpec, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to create deployment %s: %w", actor.Id, err)
+		return fmt.Errorf("failed to create deployment %s: %w", service.Id, err)
 	}
-	actor.Deployments = append(actor.Deployments, *deploy)
+	service.Deployments = append(service.Deployments, *deploy)
 
-	logrus.Infof("Deployment %s created successfully in namespace %s", actor.Id, actor.Namespace)
+	logrus.Infof("Deployment %s created successfully in namespace %s", service.Id, service.Namespace)
 	return nil
 }
 
-func createService(actor *model.Actor, ctx context.Context) error {
-	svcName := actor.Id + "-service"
+func createServiceResource(service *model.Service, ctx context.Context) error {
+	svcName := service.Id + "-service"
 
 	// Check if service already exists
-	_, err := model.Clientset.CoreV1().Services(actor.Namespace).Get(ctx, svcName, metav1.GetOptions{})
+	_, err := model.Clientset.CoreV1().Services(service.Namespace).Get(ctx, svcName, metav1.GetOptions{})
 	if err == nil {
-		return fmt.Errorf("service %s already exists in namespace %s", svcName, actor.Namespace)
+		return fmt.Errorf("service %s already exists in namespace %s", svcName, service.Namespace)
 	}
 
 	// Specify Service
@@ -181,8 +181,8 @@ func createService(actor *model.Actor, ctx context.Context) error {
 		Spec: corev1.ServiceSpec{
 			Type: corev1.ServiceTypeClusterIP,
 			Selector: map[string]string{
-				"app":       actor.Id,
-				"namespace": actor.Namespace,
+				"app":       service.Id,
+				"namespace": service.Namespace,
 			},
 			Ports: []corev1.ServicePort{
 				{
@@ -194,22 +194,22 @@ func createService(actor *model.Actor, ctx context.Context) error {
 	}
 
 	// Create Service
-	svc, err := model.Clientset.CoreV1().Services(actor.Namespace).Create(ctx, svcSpec, metav1.CreateOptions{})
+	svc, err := model.Clientset.CoreV1().Services(service.Namespace).Create(ctx, svcSpec, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to create service in namespace %s: %w", actor.Namespace, err)
+		return fmt.Errorf("failed to create service in namespace %s: %w", service.Namespace, err)
 	}
-	actor.Services = append(actor.Services, *svc)
+	service.Services = append(service.Services, *svc)
 
 	// Register endpoint
-	actor.PrivEndpoints = append(actor.PrivEndpoints, fmt.Sprintf("http://%s.%s.svc.cluster.local:8080", svcName, actor.Namespace))
+	service.PrivEndpoints = append(service.PrivEndpoints, fmt.Sprintf("http://%s.%s.svc.cluster.local:8080", svcName, service.Namespace))
 
 	return nil
 }
 
-func createIngressRoute(actor *model.Actor, owner model.User, ctx context.Context) error {
-	irName := actor.Namespace + "-" + actor.Id + "-ingressroute"
-	svcName := actor.Id + "-service"
-	namespace := actor.Namespace
+func createIngressRoute(service *model.Service, owner model.User, ctx context.Context) error {
+	irName := service.Namespace + "-" + service.Id + "-ingressroute"
+	svcName := service.Id + "-service"
+	namespace := service.Namespace
 
 	// Check if IngressRoute already exists
 	ingressRouteGVR := schema.GroupVersionResource{
@@ -230,7 +230,7 @@ func createIngressRoute(actor *model.Actor, owner model.User, ctx context.Contex
 	}
 
 	// Create Rewrite Middleware
-	// rewriteMiddleware, err := createRewriteMiddleware(actor, ctx)
+	// rewriteMiddleware, err := createRewriteMiddleware(service, ctx)
 	//if err != nil {
 	//	return fmt.Errorf("failed to create rewrite middleware: %w", err)
 	//}
@@ -264,7 +264,7 @@ func createIngressRoute(actor *model.Actor, owner model.User, ctx context.Contex
 				"entryPoints": []string{"web"},
 				"routes": []interface{}{
 					map[string]interface{}{
-						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/actors/" + namespace + "/" + actor.Id + "`)",
+						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/services/" + namespace + "/" + service.Id + "`)",
 						"kind":  "Rule",
 						"services": []interface{}{
 							map[string]interface{}{
@@ -290,26 +290,26 @@ func createIngressRoute(actor *model.Actor, owner model.User, ctx context.Contex
 	}
 
 	// Register resource & endpoint with policies
-	resourceID := fmt.Sprintf("http://%s/actors/%s/%s", model.ExternalHost, namespace, actor.Id)
+	resourceID := fmt.Sprintf("http://%s/services/%s/%s", model.ExternalHost, namespace, service.Id)
 	if err := auth.RegisterResource(resourceID, owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
 		return fmt.Errorf("failed to register resource for IngressRoute %q: %w", irName, err)
 	}
 	if err := auth.DefinePolicy(resourceID, owner.UserId, owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
 		return fmt.Errorf("failed to create policy for IngressRoute %q: %w", irName, err)
 	}
-	actor.PubEndpoints = append(actor.PubEndpoints, resourceID)
+	service.PubEndpoints = append(service.PubEndpoints, resourceID)
 
 	logrus.Infof("IngressRoute %s created successfully in namespace %s", irName, "aggregator-app")
 	return nil
 }
 
 // createRewriteMiddleware creates a Traefik IngressRoute Middleware to rewrite paths.
-func createRewriteMiddleware(actor *model.Actor, ctx context.Context) (string, error) {
+func createRewriteMiddleware(service *model.Service, ctx context.Context) (string, error) {
 	// Use aggregator-app namespace for middlewares
 	namespace := "aggregator-app"
 	// Middleware name based on path
-	prefix := fmt.Sprintf("/actors/%s/%s", actor.Namespace, actor.Id)
-	mwName := fmt.Sprintf("rewrite-%s-%s", actor.Namespace, actor.Id)
+	prefix := fmt.Sprintf("/services/%s/%s", service.Namespace, service.Id)
+	mwName := fmt.Sprintf("rewrite-%s-%s", service.Namespace, service.Id)
 
 	// Traefik Middleware GVR
 	middlewareGVR := schema.GroupVersionResource{

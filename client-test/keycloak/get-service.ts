@@ -7,7 +7,7 @@ const PASSWORD = "doctor";
 const CLIENT_ID = "moveup-app";
 const CLIENT_SECRET = "Yg8rGkQNQ4OqDh3AUR81EoSJtjPDXH4n";
 
-const ACTOR_ENDPOINT = "http://aggregator.local/actors/8eef3823-5cbf-447c-abd9-9c848de3b402/comunica";
+const SERVICE_ENDPOINT = "http://aggregator.local/services/8eef3823-5cbf-447c-abd9-9c848de3b402/comunica";
 
 
 async function main() {
@@ -21,11 +21,11 @@ async function main() {
   console.log("🔐 Auth initialized successfully.");
   const umaFetch = auth.createUMAFetch();
 
-  console.log("\n=== Fetching actor results ===");
-  console.log(`➡️  Endpoint: ${ACTOR_ENDPOINT}\n`);
+  console.log("\n=== Fetching service results ===");
+  console.log(`➡️  Endpoint: ${SERVICE_ENDPOINT}\n`);
 
   try {
-    const response = await umaFetch(ACTOR_ENDPOINT, { method: "GET" });
+    const response = await umaFetch(SERVICE_ENDPOINT, { method: "GET" });
 
     console.log(`📡 Response status: ${response.status}`);
     console.log("📄 Response body:\n");
@@ -33,7 +33,7 @@ async function main() {
     const bodyText = await response.text();
     console.log(bodyText || "(empty response)");
   } catch (err: any) {
-    console.error("\n❌ Failed to fetch actor result:");
+    console.error("\n❌ Failed to fetch service result:");
     console.error(err?.message || err);
   }
 

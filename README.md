@@ -158,8 +158,8 @@ make deploy            # Redeploy
 - **Kind Cluster**: Local Kubernetes cluster in Docker
 - **Traefik**: Ingress controller (HTTP port 80)
 - **Aggregator Server**: Registration and metadata service
-- **Aggregator Cleaner**: Auto-cleanup controller for actor namespaces
-- **Dynamic Actors**: Created per user in separate namespaces
+- **Aggregator Cleaner**: Auto-cleanup controller for service namespaces
+- **Dynamic Services**: Created per user in separate namespaces
 
 ## Ports
 
