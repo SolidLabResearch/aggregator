@@ -2,10 +2,10 @@ import { fetch } from "cross-fetch";
 
 const AGGREGATOR_URL = "http://aggregator.local";
 
-const QUERY_SOURCE = "http://rs.local:3000/bob/profile/card";
+const QUERY_SOURCES = ["http://rs.local:3000/bob/profile/card", "http://rs.local:3000/alice/profile/card"];
 const QUERY_STRING = "SELECT * WHERE { ?s ?p ?o }";
 
-function buildPipelineDescription(source: string, query: string, transformationsCatalog: string): string {
+function buildPipelineDescription(sources: string[], query: string, transformationsCatalog: string): string {
   return `
 @prefix config: <${transformationsCatalog}> .
 @prefix fno: <https://w3id.org/function/ontology#> .
@@ -14,7 +14,7 @@ function buildPipelineDescription(source: string, query: string, transformations
 
 _:execution a fno:Execution ;
     fno:executes config:SPARQLEvaluation ;
-    config:sources ( "${source}"^^xsd:string ) ;
+    config:sources ( ${sources.map(source => `"${source}"^^xsd:string`).join(" ")} ) ;
     config:queryString "${query}" .
 `.trim();
 }
@@ -38,6 +38,7 @@ async function fetchWithRetry(
       return resp;
     }
 
+    console.log(`    Endpoint not ready yet, retrying...`);
     const retryAfter = resp.headers.get("retry-after");
     const retrySeconds = retryAfter ? Number.parseInt(retryAfter, 10) : NaN;
     const delayMs = Number.isFinite(retrySeconds) ? retrySeconds * 1000 : 2000;
@@ -79,7 +80,7 @@ async function main() {
   const aggregatorDescription = await (await fetchWithRetry(aggregatorURL, 60000, {method: "GET"})).json();
   const serviceCollection = aggregatorDescription.service_collection;
 
-  const requestBody = buildPipelineDescription(QUERY_SOURCE, QUERY_STRING, aggregatorServerDescription.transformation_catalog);
+  const requestBody = buildPipelineDescription(QUERY_SOURCES, QUERY_STRING, aggregatorServerDescription.transformation_catalog);
 
   console.log(`=== Creating service via ${serviceCollection}`);
   const serviceResp = await fetch(serviceCollection, {
@@ -103,21 +104,21 @@ async function main() {
   if (contentType.includes("application/json")) {
     const serviceDescription = await serviceResp.json();
     serviceResourceURL = serviceDescription.id;
-    
+
     // Poll until service is running
     console.log(`=== Waiting for service to be ready...`);
     const pollStarted = Date.now();
     const pollTimeout = 10000; // 10 seconds
-    
+
     while (Date.now() - pollStarted < pollTimeout) {
       const statusResp = await fetch(serviceResourceURL, { method: "GET" });
       if (!statusResp.ok) {
         throw new Error(`Failed to fetch service status: ${statusResp.status}`);
       }
-      
+
       const serviceResource = await statusResp.json();
       console.log(`    Service status: ${serviceResource.status}`);
-      
+
       if (serviceResource.status === "running") {
         if (Array.isArray(serviceResource.endpoints) && serviceResource.endpoints.length > 0) {
           serviceEndpoint = serviceResource.endpoints[0];
@@ -126,14 +127,14 @@ async function main() {
         }
         break;
       }
-      
+
       if (serviceResource.status === "errored") {
         throw new Error("Service entered errored state");
       }
-      
+
       await sleep(1000); // Wait 1 seconds before polling again
     }
-    
+
     if (!serviceEndpoint) {
       throw new Error("Service did not become ready within timeout");
     }
@@ -144,7 +145,7 @@ async function main() {
   }
 
   console.log(`=== Fetching query results from ${serviceEndpoint}`);
-  const resultsResp = await fetch(serviceEndpoint, {method: "GET"});
+  const resultsResp = await fetchWithRetry(serviceEndpoint, 500, {method: "GET"});
   if (!resultsResp.ok) {
     throw new Error(
       `Failed to fetch service results: ${resultsResp.status} ${await resultsResp.text()}`,
