@@ -176,7 +176,7 @@ func basicAuth(s string) string {
 	return base64.StdEncoding.EncodeToString([]byte(s))
 }
 
-func DoSignedRequest(req *http.Request, issuer string) (*http.Response, error) {
+func DoAuthorizedRequest(req *http.Request, issuer string) (*http.Response, error) {
 	pat, err := getPAT(issuer)
 	if err != nil {
 		return nil, err

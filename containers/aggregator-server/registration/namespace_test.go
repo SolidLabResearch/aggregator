@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"aggregator/model"
+
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -60,8 +61,8 @@ func TestEnsureConfigMap_RetriesOnConflict(t *testing.T) {
 	}
 }
 
-func TestResolveOwnerWebID_EmptyUsesNamespaceFallback(t *testing.T) {
-	got := resolveOwnerWebID("", "ns-test-123")
+func TestResolveOwnerID_EmptyUsesNamespaceFallback(t *testing.T) {
+	got := resolveOwnerID("", "ns-test-123")
 	if got == "" {
 		t.Fatal("Expected non-empty owner WebID fallback for none flow")
 	}

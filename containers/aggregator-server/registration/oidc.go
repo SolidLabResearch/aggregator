@@ -13,7 +13,7 @@ import (
 )
 
 type storedState struct {
-	OwnerId                           string
+	OwnerID                           string
 	AuthorizationServer               string
 	AggregatorID                      string // empty for new, set for updates
 	ClientID                          string

@@ -73,12 +73,12 @@ func TestHandleAuthorizationCodeFinish_AllowsMissingOptionalTokenFields(t *testi
 	defer tokenServer.Close()
 
 	originalClientID := model.ClientId
-	originalClientSecret := model.AggregatorSecret
+	originalClientSecret := model.ClientSecret
 	model.ClientId = "http://aggregator.local/client.json"
-	model.AggregatorSecret = "test-secret"
+	model.ClientSecret = "test-secret"
 	t.Cleanup(func() {
 		model.ClientId = originalClientID
-		model.AggregatorSecret = originalClientSecret
+		model.ClientSecret = originalClientSecret
 	})
 
 	instance := createAggregatorInstanceRecord(
@@ -93,7 +93,7 @@ func TestHandleAuthorizationCodeFinish_AllowsMissingOptionalTokenFields(t *testi
 	state := "state-missing-fields"
 	stateStoreMu.Lock()
 	stateStore[state] = storedState{
-		OwnerId:             instance.OwnerID,
+		OwnerID:             instance.OwnerID,
 		AuthorizationServer: instance.AuthorizationServer,
 		AggregatorID:        instance.AggregatorID,
 		CodeVerifier:        "verifier",
@@ -150,12 +150,12 @@ func TestHandleAuthorizationCodeFinish_UsesStoredClientIDForRedirectValidation(t
 	defer tokenServer.Close()
 
 	originalClientID := model.ClientId
-	originalClientSecret := model.AggregatorSecret
+	originalClientSecret := model.ClientSecret
 	model.ClientId = otherClientServer.URL
-	model.AggregatorSecret = "test-secret"
+	model.ClientSecret = "test-secret"
 	t.Cleanup(func() {
 		model.ClientId = originalClientID
-		model.AggregatorSecret = originalClientSecret
+		model.ClientSecret = originalClientSecret
 	})
 
 	instance := createAggregatorInstanceRecord(
@@ -170,7 +170,7 @@ func TestHandleAuthorizationCodeFinish_UsesStoredClientIDForRedirectValidation(t
 	state := "state-redirect-validation"
 	stateStoreMu.Lock()
 	stateStore[state] = storedState{
-		OwnerId:             instance.OwnerID,
+		OwnerID:             instance.OwnerID,
 		AuthorizationServer: instance.AuthorizationServer,
 		AggregatorID:        instance.AggregatorID,
 		ClientID:            allowedClientServer.URL,
