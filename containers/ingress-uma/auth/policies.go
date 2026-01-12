@@ -21,11 +21,6 @@ var RdfType = rdfgo.NewNamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#typ
 // TODO: Create web id for aggregator
 var DummyWebID = "https://aggregator.local/profile/card#me"
 
-// TODO: make configurable
-var TrustedClients = []string{
-	"moveup-app",
-}
-
 // Temp public solution
 var PublicId = "urn:solidlab:uma:id:anonymous"
 
@@ -41,6 +36,7 @@ func HandlePolicyRequest(w http.ResponseWriter, r *http.Request) {
 		ResourceID string   `json:"resource_id"`
 		Scopes     []string `json:"scopes"`
 		UserID     string   `json:"user_id"`
+		ClientIDs  []string `json:"client_ids"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&reqData); err != nil {
@@ -57,18 +53,18 @@ func HandlePolicyRequest(w http.ResponseWriter, r *http.Request) {
 		"resource_id": reqData.ResourceID,
 		"scopes":      reqData.Scopes,
 		"user_id":     reqData.UserID,
+		"client_ids":  reqData.ClientIDs,
 	}).Info("Received policy request")
 
 	// Decide user and clients for the policy
-	var userID string
-	var clients []string
-
-	if strings.TrimSpace(reqData.UserID) == "" {
+	userID := reqData.UserID
+	if strings.TrimSpace(userID) == "" {
 		userID = PublicId
+	}
+
+	clients := reqData.ClientIDs
+	if clients == nil {
 		clients = []string{}
-	} else {
-		userID = reqData.UserID
-		clients = TrustedClients
 	}
 
 	if err := createPolicy(reqData.Issuer, reqData.ResourceID, scopes, userID, clients); err != nil {
