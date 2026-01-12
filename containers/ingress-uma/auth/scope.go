@@ -27,13 +27,13 @@ func stringsToScopes(scopeStrings []string) []Scope {
 func scopeToAction(scope Scope) rdfgo.INamedNode {
 	switch scope {
 	case Read:
-		return rdfgo.NewNamedNode(Odrl + "read")
+		return rdfgo.NewNamedNode(OdrlPrefix + "read")
 	case Write:
-		return rdfgo.NewNamedNode(Odrl + "modify")
+		return rdfgo.NewNamedNode(OdrlPrefix + "modify")
 	case Create:
-		return rdfgo.NewNamedNode(Odrl + "modify")
+		return rdfgo.NewNamedNode(OdrlPrefix + "modify")
 	case Delete:
-		return rdfgo.NewNamedNode(Odrl + "delete")
+		return rdfgo.NewNamedNode(OdrlPrefix + "delete")
 	default:
 		return nil
 	}
