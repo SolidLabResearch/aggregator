@@ -10,7 +10,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func handleNoneFlow(w http.ResponseWriter, req model.RegistrationRequest, ownerWebID string) {
+func handleNoneFlow(w http.ResponseWriter, req model.RegistrationRequest, id string) {
 	if req.AggregatorID != "" {
 		http.Error(w, "none updates are not supported", http.StatusBadRequest)
 		return
@@ -19,21 +19,21 @@ func handleNoneFlow(w http.ResponseWriter, req model.RegistrationRequest, ownerW
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	namespace, err := createNamespaceForAggregator(ownerWebID, "", ctx)
+	namespace, err := createNamespaceForAggregator(id, "", ctx)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to create namespace")
 		http.Error(w, "Failed to create namespace", http.StatusInternalServerError)
 		return
 	}
 
-	if err := deployAggregatorResources(namespace, "", "", "", "", ownerWebID, "", ctx); err != nil {
+	if err := deployAggregatorResources(namespace, "", "", "", "", id, "", ctx); err != nil {
 		logrus.WithError(err).Error("Failed to deploy aggregator")
 		http.Error(w, "Failed to deploy aggregator", http.StatusInternalServerError)
 		return
 	}
 
 	instance := createAggregatorInstanceRecord(
-		ownerWebID,
+		id,
 		"none",
 		"",
 		namespace,

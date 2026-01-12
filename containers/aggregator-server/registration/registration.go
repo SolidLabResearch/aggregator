@@ -71,7 +71,7 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 	case "authorization_code":
 		handleAuthorizationCodeFlow(w, req, issuer, id, mode)
 	case "client_credentials":
-		handleClientCredentialsFlow(w, req, id)
+		handleClientCredentialsFlow(w, req, issuer, id)
 	case "device_code":
 		http.Error(w, "device_code flow not yet implemented", http.StatusNotImplemented)
 	default:

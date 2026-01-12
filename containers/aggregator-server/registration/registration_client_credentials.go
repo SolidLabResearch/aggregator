@@ -14,13 +14,13 @@ import (
 )
 
 // handleClientCredentialsFlow handles the client_credentials registration type
-func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRequest, ownerWebID string) {
+func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRequest, issuer string, id string) {
 	// Check if this is an update
 	isUpdate := req.AggregatorID != ""
 
 	if isUpdate {
 		// Verify ownership
-		if err := checkOwnership(req.AggregatorID, ownerWebID); err != nil {
+		if err := checkOwnership(req.AggregatorID, id); err != nil {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -44,23 +44,15 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 		return
 	}
 
-	// Step 1: Discover IDP from the target WebID
-	idpIssuer, err := discoverIDPFromWebID(req.WebID)
-	if err != nil {
-		logrus.WithError(err).Errorf("Failed to discover IDP from WebID: %s", req.WebID)
-		http.Error(w, "Failed to discover IDP from WebID", http.StatusInternalServerError)
-		return
-	}
-
-	// Step 2: Fetch OIDC configuration
-	oidcConfig, err := fetchOIDCConfig(idpIssuer)
+	// Step 1: Fetch OIDC configuration
+	oidcConfig, err := fetchOIDCConfig(issuer)
 	if err != nil {
 		logrus.WithError(err).Error("Unable to fetch OIDC configuration")
 		http.Error(w, "Unable to fetch OIDC configuration", http.StatusInternalServerError)
 		return
 	}
 
-	// Step 3: Perform client_credentials grant using provided client_id/client_secret
+	// Step 2: Perform client_credentials grant using provided client_id/client_secret
 	tokenData := url.Values{
 		"grant_type": {"client_credentials"},
 		"scope":      {"openid webid offline_access"},
@@ -164,7 +156,7 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 
 		// Create aggregator record
 		instance = createAggregatorInstanceRecord(
-			ownerWebID,
+			id,
 			"client_credentials",
 			req.AuthorizationServer,
 			namespace,
@@ -172,7 +164,7 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 			tokenResp.RefreshToken,
 		)
 
-		logrus.Infof("Aggregator created (client_credentials): %s for WebID %s (acting as %s)", instance.AggregatorID, ownerWebID, req.WebID)
+		logrus.Infof("Aggregator created (client_credentials): %s for ID %s (acting as %s)", instance.AggregatorID, id, req.WebID)
 	}
 
 	// Return response

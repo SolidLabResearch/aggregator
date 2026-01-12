@@ -14,7 +14,7 @@ import (
 )
 
 // handleProvisionFlow handles the provision registration type
-func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, ownerWebID string) {
+func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, id string) {
 	// Check if this is an update (aggregator_id provided)
 	isUpdate := req.AggregatorID != ""
 
@@ -124,7 +124,7 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, o
 	}
 
 	instance := createAggregatorInstanceRecord(
-		ownerWebID,
+		id,
 		"provision",
 		authorizationServer,
 		namespace,
@@ -132,7 +132,7 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, o
 		tokenResp.RefreshToken,
 	)
 
-	logrus.Infof("Aggregator created (provision): %s for WebID %s (acting as %s)", instance.AggregatorID, ownerWebID, webID)
+	logrus.Infof("Aggregator created (provision): %s for ID %s (acting as %s)", instance.AggregatorID, id, webID)
 
 	response := model.RegistrationResponse{
 		AggregatorID: instance.AggregatorID,
