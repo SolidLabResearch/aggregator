@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"ingress-uma/signing"
 	"io"
 	"net/http"
 	"strings"
@@ -181,9 +180,9 @@ func fetchTicket(asUrl string, permissions map[string][]Scope) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := signing.DoSignedRequest(req)
+	resp, err := DoAuthorizedRequest(req, asUrl)
 	if err != nil {
-		return "", fmt.Errorf("error while signing ticket request: %w", err)
+		return "", fmt.Errorf("error while authorizing ticket request: %w", err)
 	}
 	defer resp.Body.Close()
 	logrus.WithFields(logrus.Fields{"status_code": resp.StatusCode}).Debug("Permission endpoint response status")

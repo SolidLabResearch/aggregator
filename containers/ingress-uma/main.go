@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"ingress-uma/auth"
-	"ingress-uma/signing"
 
 	"github.com/sirupsen/logrus"
 )
@@ -29,7 +28,7 @@ func init() {
 
 func main() {
 	mux := http.NewServeMux()
-	signing.InitSigning(mux, "/keys/private_key.pem", ExternalHost)
+	// signing.InitSigning(mux, "/keys/private_key.pem", ExternalHost)
 	auth.InitAuth(ExternalHost, DisableAuth)
 
 	// Synchronize resources (NOT SUPPORTED YET)

@@ -49,13 +49,14 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Authentication required for all flows except none in disable_auth mode
-	ownerWebID, err := authenticateRequest(r)
+	// Authentication required
+	issuer, id, mode, err := authenticateRequest(r)
 	if err != nil {
 		logrus.WithError(err).Warn("Authentication failed")
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if ownerWebID == "" && registrationType != "none" {
+	if id == "" && registrationType != "none" {
 		logrus.Warn("Authentication missing for registration request")
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -64,13 +65,13 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 	// Route to appropriate handler based on registration_type
 	switch registrationType {
 	case "none":
-		handleNoneFlow(w, req, ownerWebID)
+		handleNoneFlow(w, req, id)
 	case "provision":
-		handleProvisionFlow(w, req, ownerWebID)
+		handleProvisionFlow(w, req, id)
 	case "authorization_code":
-		handleAuthorizationCodeFlow(w, req, ownerWebID)
+		handleAuthorizationCodeFlow(w, req, issuer, id, mode)
 	case "client_credentials":
-		handleClientCredentialsFlow(w, req, ownerWebID)
+		handleClientCredentialsFlow(w, req, id)
 	case "device_code":
 		http.Error(w, "device_code flow not yet implemented", http.StatusNotImplemented)
 	default:
@@ -82,13 +83,13 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 // handleRegistrationDelete handles DELETE requests for removing aggregators
 func handleRegistrationDelete(w http.ResponseWriter, r *http.Request) {
 	// Authentication required
-	ownerWebID, err := authenticateRequest(r)
+	_, id, _, err := authenticateRequest(r)
 	if err != nil {
 		logrus.WithError(err).Warn("Authentication failed")
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if ownerWebID == "" {
+	if id == "" {
 		logrus.Warn("Authentication missing for delete request")
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -110,7 +111,7 @@ func handleRegistrationDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check ownership
-	if err := checkOwnership(req.AggregatorID, ownerWebID); err != nil {
+	if err := checkOwnership(req.AggregatorID, id); err != nil {
 		logrus.WithError(err).Warnf("Ownership check failed for aggregator %s", req.AggregatorID)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return

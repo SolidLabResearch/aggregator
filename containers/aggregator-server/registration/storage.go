@@ -15,8 +15,8 @@ var (
 	aggregatorInstances   = make(map[string]*model.AggregatorInstance)
 	aggregatorInstancesMu sync.RWMutex
 
-	// Index by owner WebID for ownership checks
-	ownerIndex   = make(map[string][]string) // WebID -> []AggregatorID
+	// Index by owner ID for ownership checks
+	ownerIndex   = make(map[string][]string) // OwnerID -> []AggregatorID
 	ownerIndexMu sync.RWMutex
 )
 
@@ -37,7 +37,7 @@ func storeAggregatorInstance(instance *model.AggregatorInstance) {
 	defer ownerIndexMu.Unlock()
 
 	// Check if already in index
-	aggregatorIDs := ownerIndex[instance.OwnerWebID]
+	aggregatorIDs := ownerIndex[instance.OwnerID]
 	found := false
 	for _, id := range aggregatorIDs {
 		if id == instance.AggregatorID {
@@ -46,7 +46,7 @@ func storeAggregatorInstance(instance *model.AggregatorInstance) {
 		}
 	}
 	if !found {
-		ownerIndex[instance.OwnerWebID] = append(aggregatorIDs, instance.AggregatorID)
+		ownerIndex[instance.OwnerID] = append(aggregatorIDs, instance.AggregatorID)
 	}
 }
 
@@ -79,10 +79,10 @@ func deleteAggregatorInstance(aggregatorID string) error {
 	ownerIndexMu.Lock()
 	defer ownerIndexMu.Unlock()
 
-	aggregatorIDs := ownerIndex[instance.OwnerWebID]
+	aggregatorIDs := ownerIndex[instance.OwnerID]
 	for i, id := range aggregatorIDs {
 		if id == aggregatorID {
-			ownerIndex[instance.OwnerWebID] = append(aggregatorIDs[:i], aggregatorIDs[i+1:]...)
+			ownerIndex[instance.OwnerID] = append(aggregatorIDs[:i], aggregatorIDs[i+1:]...)
 			break
 		}
 	}
@@ -97,7 +97,7 @@ func checkOwnership(aggregatorID string, webID string) error {
 		return err
 	}
 
-	if instance.OwnerWebID != webID {
+	if instance.OwnerID != webID {
 		return errors.New("not authorized")
 	}
 
@@ -118,7 +118,7 @@ func createAggregatorInstanceRecord(
 
 	instance := &model.AggregatorInstance{
 		AggregatorID:        aggregatorID,
-		OwnerWebID:          ownerWebID,
+		OwnerID:             ownerWebID,
 		RegistrationType:    registrationType,
 		AuthorizationServer: authorizationServer,
 		Namespace:           namespace,

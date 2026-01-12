@@ -101,11 +101,18 @@ spec:
                 configMapKeyRef:
                   name: aggregator-config
                   key: client_id
+            - name: AUTH_SERVER
+              valueFrom:
+                configMapKeyRef:
+                  name: aggregator-config
+                  key: auth_server
+                  optional: true
             - name: CLIENT_SECRET
               valueFrom:
                 configMapKeyRef:
                   name: aggregator-config
-                  key: client_secret
+                  key: auth_server_secret
+                  optional: true
             - name: ALLOWED_REGISTRATION_TYPES
               valueFrom:
                 configMapKeyRef:
@@ -116,21 +123,25 @@ spec:
                 configMapKeyRef:
                   name: aggregator-config
                   key: provision_client_id
+                  optional: true
             - name: PROVISION_CLIENT_SECRET
               valueFrom:
                 configMapKeyRef:
                   name: aggregator-config
                   key: provision_client_secret
+                  optional: true
             - name: PROVISION_WEBID
               valueFrom:
                 configMapKeyRef:
                   name: aggregator-config
                   key: provision_webid
+                  optional: true
             - name: PROVISION_AUTHORIZATION_SERVER
               valueFrom:
                 configMapKeyRef:
                   name: aggregator-config
                   key: provision_authorization_server
+                  optional: true
             - name: AGGREGATOR_EXTERNAL_HOST
               value: "aggregator.local"
 ---

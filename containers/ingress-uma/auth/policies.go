@@ -13,17 +13,13 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-var Ex = "http://example.org/"
-var Odrl = "http://www.w3.org/ns/odrl/2/"
+var ExPrefix = "http://example.org/"
+var OdrlPrefix = "http://www.w3.org/ns/odrl/2/"
+var idPrefix = "http://example.com/id/"
 var RdfType = rdfgo.NewNamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
 
 // TODO: Create web id for aggregator
 var DummyWebID = "https://aggregator.local/profile/card#me"
-
-// TODO: make configurable
-var TrustedClients = []string{
-	"moveup-app",
-}
 
 // Temp public solution
 var PublicId = "urn:solidlab:uma:id:anonymous"
@@ -40,6 +36,7 @@ func HandlePolicyRequest(w http.ResponseWriter, r *http.Request) {
 		ResourceID string   `json:"resource_id"`
 		Scopes     []string `json:"scopes"`
 		UserID     string   `json:"user_id"`
+		ClientIDs  []string `json:"client_ids"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&reqData); err != nil {
@@ -56,18 +53,18 @@ func HandlePolicyRequest(w http.ResponseWriter, r *http.Request) {
 		"resource_id": reqData.ResourceID,
 		"scopes":      reqData.Scopes,
 		"user_id":     reqData.UserID,
+		"client_ids":  reqData.ClientIDs,
 	}).Info("Received policy request")
 
 	// Decide user and clients for the policy
-	var userID string
-	var clients []string
-
-	if strings.TrimSpace(reqData.UserID) == "" {
+	userID := reqData.UserID
+	if strings.TrimSpace(userID) == "" {
 		userID = PublicId
+	}
+
+	clients := reqData.ClientIDs
+	if clients == nil {
 		clients = []string{}
-	} else {
-		userID = reqData.UserID
-		clients = TrustedClients
 	}
 
 	if err := createPolicy(reqData.Issuer, reqData.ResourceID, scopes, userID, clients); err != nil {
@@ -125,8 +122,7 @@ func createPolicy(issuer string, resourceId string, scopes []Scope, userId strin
 		"policy":     buf.String(),
 	}).Infof(`Requesting policy for %s`, resourceId)
 
-	clientHttp := &http.Client{}
-	resp, err := clientHttp.Do(req)
+	resp, err := DoSignedRequest(req, issuer)
 	if err != nil {
 		return fmt.Errorf("policy request failed: %w", err)
 	}
@@ -141,45 +137,45 @@ func createPolicy(issuer string, resourceId string, scopes []Scope, userId strin
 }
 
 func defineClientConstraint(store rdfgo.Store, client string, permissionUri rdfgo.INamedNode) {
-	constraintUri := rdfgo.NewNamedNode(Ex + uuid.NewString())
+	constraintUri := rdfgo.NewNamedNode(ExPrefix + uuid.NewString())
 
 	store.AddQuadFromTerms(
 		constraintUri,
-		rdfgo.NewNamedNode(Odrl+"leftOperand"),
-		rdfgo.NewNamedNode(Odrl+"purpose"),
+		rdfgo.NewNamedNode(OdrlPrefix+"leftOperand"),
+		rdfgo.NewNamedNode(OdrlPrefix+"purpose"),
 		nil,
 	)
 
 	store.AddQuadFromTerms(
 		constraintUri,
-		rdfgo.NewNamedNode(Odrl+"operator"),
-		rdfgo.NewNamedNode(Odrl+"eq"),
+		rdfgo.NewNamedNode(OdrlPrefix+"operator"),
+		rdfgo.NewNamedNode(OdrlPrefix+"eq"),
 		nil,
 	)
 
 	store.AddQuadFromTerms(
 		constraintUri,
-		rdfgo.NewNamedNode(Odrl+"rightOperand"),
-		rdfgo.NewNamedNode(client),
+		rdfgo.NewNamedNode(OdrlPrefix+"rightOperand"),
+		rdfgo.NewNamedNode(idPrefix+client),
 		nil,
 	)
 
 	// Client Constraint
 	store.AddQuadFromTerms(
 		permissionUri,
-		rdfgo.NewNamedNode(Odrl+"constraint"),
+		rdfgo.NewNamedNode(OdrlPrefix+"constraint"),
 		constraintUri,
 		nil,
 	)
 }
 
 func definePermission(store rdfgo.Store, umaId string, scopes []Scope, userId string) rdfgo.INamedNode {
-	permissionUri := rdfgo.NewNamedNode(Ex + uuid.NewString())
+	permissionUri := rdfgo.NewNamedNode(ExPrefix + uuid.NewString())
 
 	store.AddQuadFromTerms(
 		permissionUri,
 		RdfType,
-		rdfgo.NewNamedNode(Odrl+"Permission"),
+		rdfgo.NewNamedNode(OdrlPrefix+"Permission"),
 		nil,
 	)
 
@@ -189,7 +185,7 @@ func definePermission(store rdfgo.Store, umaId string, scopes []Scope, userId st
 		if action != nil {
 			store.AddQuadFromTerms(
 				permissionUri,
-				rdfgo.NewNamedNode(Odrl+"action"),
+				rdfgo.NewNamedNode(OdrlPrefix+"action"),
 				action,
 				nil,
 			)
@@ -199,7 +195,7 @@ func definePermission(store rdfgo.Store, umaId string, scopes []Scope, userId st
 	// Target resource
 	store.AddQuadFromTerms(
 		permissionUri,
-		rdfgo.NewNamedNode(Odrl+"target"),
+		rdfgo.NewNamedNode(OdrlPrefix+"target"),
 		rdfgo.NewNamedNode(umaId),
 		nil,
 	)
@@ -207,15 +203,15 @@ func definePermission(store rdfgo.Store, umaId string, scopes []Scope, userId st
 	// Assignee
 	store.AddQuadFromTerms(
 		permissionUri,
-		rdfgo.NewNamedNode(Odrl+"assignee"),
-		rdfgo.NewNamedNode(userId),
+		rdfgo.NewNamedNode(OdrlPrefix+"assignee"),
+		rdfgo.NewNamedNode(idPrefix+userId),
 		nil,
 	)
 
 	// Assigner
 	store.AddQuadFromTerms(
 		permissionUri,
-		rdfgo.NewNamedNode(Odrl+"assigner"),
+		rdfgo.NewNamedNode(OdrlPrefix+"assigner"),
 		rdfgo.NewNamedNode(DummyWebID), // Assigner is the aggregator
 		nil,
 	)
@@ -224,25 +220,25 @@ func definePermission(store rdfgo.Store, umaId string, scopes []Scope, userId st
 }
 
 func definePolicy(store rdfgo.Store, permissionUri rdfgo.INamedNode) {
-	policyUri := rdfgo.NewNamedNode(Ex + uuid.NewString())
+	policyUri := rdfgo.NewNamedNode(ExPrefix + uuid.NewString())
 
 	store.AddQuadFromTerms(
 		policyUri,
 		RdfType,
-		rdfgo.NewNamedNode(Odrl+"Agreement"),
+		rdfgo.NewNamedNode(OdrlPrefix+"Agreement"),
 		nil,
 	)
 
 	store.AddQuadFromTerms(
 		policyUri,
-		rdfgo.NewNamedNode(Odrl+"uid"),
+		rdfgo.NewNamedNode(OdrlPrefix+"uid"),
 		policyUri,
 		nil,
 	)
 
 	store.AddQuadFromTerms(
 		policyUri,
-		rdfgo.NewNamedNode(Odrl+"permission"),
+		rdfgo.NewNamedNode(OdrlPrefix+"permission"),
 		permissionUri,
 		nil,
 	)

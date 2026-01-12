@@ -20,7 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-func createNamespaceForAggregator(ownerWebID string, authzServerURL string, ctx context.Context) (string, error) {
+func createNamespaceForAggregator(ownerID string, authzServerURL string, ctx context.Context) (string, error) {
 	nsName := uuid.NewString()
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
@@ -30,7 +30,7 @@ func createNamespaceForAggregator(ownerWebID string, authzServerURL string, ctx 
 				"istio-injection": "enabled",
 			},
 			Annotations: map[string]string{
-				"owner":  ownerWebID,
+				"owner":  ownerID,
 				"as_url": authzServerURL,
 			},
 		},
@@ -45,8 +45,8 @@ func createNamespaceForAggregator(ownerWebID string, authzServerURL string, ctx 
 	return nsName, nil
 }
 
-func resolveOwnerWebID(ownerWebID string, namespace string) string {
-	trimmed := strings.TrimSpace(ownerWebID)
+func resolveOwnerID(ownerID string, namespace string) string {
+	trimmed := strings.TrimSpace(ownerID)
 	if trimmed != "" {
 		return trimmed
 	}
@@ -65,11 +65,11 @@ func deleteNamespaceResources(namespace string, ctx context.Context) error {
 }
 
 // deployAggregatorResources deploys the Egress UMA and Aggregator Instance
-func deployAggregatorResources(namespace string, tokenEndpoint string, accessToken string, refreshToken string, accessTokenExpiry string, ownerWebID string, authzServerURL string, ctx context.Context) error {
+func deployAggregatorResources(namespace string, tokenEndpoint string, accessToken string, refreshToken string, accessTokenExpiry string, ownerID string, authzServerURL string, ctx context.Context) error {
 	replicas := int32(1)
 	useUMA := authzServerURL != ""
 	var err error
-	resolvedOwner := resolveOwnerWebID(ownerWebID, namespace)
+	resolvedOwner := resolveOwnerID(ownerID, namespace)
 
 	if useUMA {
 		if err := ensureEgressUMARbac(namespace, ctx); err != nil {
