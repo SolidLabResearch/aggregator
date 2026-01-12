@@ -83,7 +83,7 @@ func extractQueryAndSources(description string) (query string, sources []string,
 	sourcesMatches := rdfgo.Stream(store.Match(nil, sourcesPredicate, nil, nil)).ToArray()
 	if len(sourcesMatches) > 0 {
 		listNode := sourcesMatches[0].GetObject()
-		
+
 		// Traverse RDF list
 		for {
 			if listNode.GetValue() == rdfNil.GetValue() {
@@ -170,7 +170,7 @@ func createDeployment(service *model.Service, replicas int32, useUMA bool, ctx c
 		"app":       service.Id,
 		"namespace": service.Namespace,
 	}
-	
+
 	query, sources, err := extractQueryAndSources(service.Description)
 	if err != nil {
 		return fmt.Errorf("failed to extract query and sources from FnO description: %w", err)
@@ -182,40 +182,42 @@ func createDeployment(service *model.Service, replicas int32, useUMA bool, ctx c
 		ImagePullPolicy: corev1.PullNever,
 		Env: []corev1.EnvVar{
 			{Name: "QUERY", Value: query},
-			{Name: "SOURCE", Value: strings.Join(sources, ",")},
-			{Name: "SCHEMA", Value: `type Query {
-					observations: [ex_Observation]!
-					observation(id: ID!): ex_Observation
-				}
+			{Name: "SOURCES", Value: strings.Join(sources, ",")},
+			/*
+							{Name: "SCHEMA", Value: `type Query {
+									observations: [ex_Observation]!
+									observation(id: ID!): ex_Observation
+								}
 
-				type ex_Observation {
-					id: ID!
-					ex_value: Int!
-					ex_unit: String!
-					ex_timestamp: DateTime!
-				}
+								type ex_Observation {
+									id: ID!
+									ex_value: Int!
+									ex_unit: String!
+									ex_timestamp: DateTime!
+								}
 
-				type Mutation {
-					add(obs: [ObservationInput!]!): ID!
-				}
+								type Mutation {
+									add(obs: [ObservationInput!]!): ID!
+								}
 
-				type Subscription {
-					observationAdded: ex_Observation!
-				}
-					
-				input ObservationInput @class(iri: "ex:Observation") {
-					id: ID!
-					ex_value: Int!
-					ex_unit: String!
-					ex_timestamp: DateTime!
-				}`,
-			},
-			{Name: "CONTEXT", Value: `{
-  				"kss": "https://kvasir.discover.ilabt.imec.be/vocab#",
-  				"schema": "http://schema.org/",
-  				"ex": "http://example.org/"
-				}`,
-			},
+								type Subscription {
+									observationAdded: ex_Observation!
+								}
+
+								input ObservationInput @class(iri: "ex:Observation") {
+									id: ID!
+									ex_value: Int!
+									ex_unit: String!
+									ex_timestamp: DateTime!
+								}`,
+							},
+							{Name: "CONTEXT", Value: `{
+				  				"kss": "https://kvasir.discover.ilabt.imec.be/vocab#",
+				  				"schema": "http://schema.org/",
+				  				"ex": "http://example.org/"
+								}`,
+							},
+			*/
 			{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 		},
 		Ports: []corev1.ContainerPort{
@@ -328,12 +330,6 @@ func createIngressRoute(service *model.Service, owner model.User, ctx context.Co
 		return fmt.Errorf("failed to check existing IngressRoute %s: %w", irName, err)
 	}
 
-	// Create Rewrite Middleware
-	// rewriteMiddleware, err := createRewriteMiddleware(service, ctx)
-	//if err != nil {
-	//	return fmt.Errorf("failed to create rewrite middleware: %w", err)
-	//}
-
 	useUMA := strings.TrimSpace(owner.AuthzServerURL) != ""
 	middlewares := []interface{}{
 		map[string]interface{}{
@@ -400,62 +396,4 @@ func createIngressRoute(service *model.Service, owner model.User, ctx context.Co
 
 	logrus.Infof("IngressRoute %s created successfully in namespace %s", irName, "aggregator-app")
 	return nil
-}
-
-// createRewriteMiddleware creates a Traefik IngressRoute Middleware to rewrite paths.
-func createRewriteMiddleware(service *model.Service, ctx context.Context) (string, error) {
-	// Use aggregator-app namespace for middlewares
-	namespace := "aggregator-app"
-	// Middleware name based on path
-	prefix := fmt.Sprintf("/services/%s/%s", service.Namespace, service.Id)
-	mwName := fmt.Sprintf("rewrite-%s-%s", service.Namespace, service.Id)
-
-	// Traefik Middleware GVR
-	middlewareGVR := schema.GroupVersionResource{
-		Group:    "traefik.io",
-		Version:  "v1alpha1",
-		Resource: "middlewares",
-	}
-
-	// Check if middleware exists
-	_, err := model.DynamicClient.
-		Resource(middlewareGVR).
-		Namespace(namespace).
-		Get(ctx, mwName, metav1.GetOptions{})
-
-	if err == nil {
-		// Already exists → reuse
-		return mwName, nil
-	}
-	if !errors.IsNotFound(err) {
-		return "", fmt.Errorf("failed to check existing middleware %s: %w", mwName, err)
-	}
-
-	// Create new middleware
-	obj := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "traefik.io/v1alpha1",
-			"kind":       "Middleware",
-			"metadata": map[string]interface{}{
-				"name":      mwName,
-				"namespace": namespace,
-			},
-			"spec": map[string]interface{}{
-				"replacePathRegex": map[string]interface{}{
-					"regex":       "^" + prefix + "(/.*|$)",
-					"replacement": "/$1",
-				},
-			},
-		},
-	}
-
-	_, err = model.DynamicClient.
-		Resource(middlewareGVR).
-		Namespace(namespace).
-		Create(ctx, obj, metav1.CreateOptions{})
-	if err != nil {
-		return "", fmt.Errorf("failed to create middleware %s: %w", mwName, err)
-	}
-
-	return mwName, nil
 }

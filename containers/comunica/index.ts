@@ -1,7 +1,6 @@
 import { QueryEngine as GraphqlQueryEngine } from "@comunica-graphql/query-sparql-graphql";
 import { QueryEngine as SparqlQueryEngine } from "@comunica/query-sparql";
 import http from 'http';
-import { url } from "inspector";
 
 const proxyUrl = process.env.http_proxy || process.env.HTTP_PROXY;
 
@@ -29,8 +28,7 @@ export async function fetchProxy(input: RequestInfo | URL, init?: RequestInit): 
     // Body may be Blob, BufferSource, FormData, string, etc.
     bodyString = typeof init.body === "string" ? init.body : await convertBodyToString(init.body);
   } else if (input instanceof Request && input.body) {
-    const text = await input.clone().text();
-    bodyString = text;
+    bodyString = await input.clone().text();
   }
 
   // Build JSON payload for proxy /fetch endpoint
@@ -81,8 +79,7 @@ async function convertBodyToString(body: BodyInit): Promise<string> {
   }
 
   // Last resort
-  const text = await new Response(body).text();
-  return text;
+  return await new Response(body).text();
 }
 
 async function main() {
@@ -92,44 +89,49 @@ async function main() {
     throw new Error("Environment variable QUERY is required");
   }
 
-  const sourceURL = process.env.SOURCE;
-  if (!sourceURL) {
-    throw new Error("Environment variable SOURCE is required");
+  const sourcesRaw = process.env.SOURCES;
+  if (!sourcesRaw) {
+    throw new Error("Environment variable SOURCES is required");
   }
+
+  const sourceURLs = sourcesRaw.split(",").map(s => s.trim());
 
   const contextRaw = process.env.CONTEXT;
-  if (!contextRaw) {
-    throw new Error("Environment variable CONTEXT is required");
-  }
-
-  let context: Record<string, string>;
-  try {
-    context = JSON.parse(contextRaw);
-  } catch (err) {
-    throw new Error(`Failed to parse CONTEXT: ${err}`);
-  }
-
   const schema = process.env.SCHEMA;
-  if (!schema) {
-    throw new Error("Environment variable SCHEMA is required");
+
+  let context: Record<string, string> | undefined;
+  if (contextRaw) {
+    try {
+      context = JSON.parse(contextRaw);
+    } catch (err) {
+      throw new Error(`Failed to parse CONTEXT: ${err}`);
+    }
   }
 
-  const source: Source = {
-    type: "graphql",
-    value: sourceURL,
-    context: {
-      schema: schema,
-      context: context
-    }
-  };
+  const useGraphQL = !!(schema && context);
 
-  // ✅ Now you have:
+  let sources: Array<Source | string>;
+  if (useGraphQL) {
+    sources = sourceURLs.map(url => ({
+      type: "graphql" as const,
+      value: url,
+      context: {
+        schema: schema!,
+        context: context!
+      }
+    }));
+    console.log("Using GraphQL engine with schema and context");
+  } else {
+    sources = sourceURLs;
+    console.log("Using SPARQL engine with RDF sources");
+  }
+
   console.log("QUERY:", query);
-  console.log("SOURCE:", sourceURL);
-  console.log("CONTEXT:", context);
-  console.log("SCHEMA:", schema);
+  console.log("SOURCES:", sourceURLs);
+  if (context) console.log("CONTEXT:", context);
+  if (schema) console.log("SCHEMA:", schema);
 
-  const graphqlEngine = new GraphqlQueryEngine();
+  const graphqlEngine = useGraphQL ? new GraphqlQueryEngine() : null;
   const sparqlEngine = new SparqlQueryEngine();
 
   const server = http.createServer((req, res) => {
@@ -137,24 +139,37 @@ async function main() {
       try {
         console.log(`Received request: ${req.method} ${req.url}`);
 
+        if (req.method === "GET" && req.url === "/health") {
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("OK");
+          return;
+        }
+
         if (req.method === "GET" && req.url === "/") {
           let result;
-          try {
-             result = await graphqlEngine.query(query, { 
-               sources: [source],
-               fetch: fetchProxy
-             });
-          } catch (e: any) {
-             if (e.message && (e.message.includes("variable predicate") || e.message.includes("does not exist in the schema"))) {
-                 console.log("Fallback to Generic SPARQL Engine:", e.message);
-                 // Use simple source URL for generic engine
-                 result = await sparqlEngine.query(query, { 
-                    sources: [sourceURL], 
-                    fetch: fetchProxy 
-                 });
-             } else {
-                 throw e;
-             }
+
+          if (useGraphQL && graphqlEngine) {
+            try {
+              result = await graphqlEngine.query(query, {
+                sources: sources as any,
+                fetch: fetchProxy
+              });
+            } catch (e: any) {
+              if (e.message && (e.message.includes("variable predicate") || e.message.includes("does not exist in the schema"))) {
+                console.log("Fallback to Generic SPARQL Engine:", e.message);
+                result = await sparqlEngine.query(query, {
+                  sources: sourceURLs as any,
+                  fetch: fetchProxy
+                });
+              } else {
+                throw e;
+              }
+            }
+          } else {
+            result = await sparqlEngine.query(query, {
+              sources: sources as any,
+              fetch: fetchProxy
+            });
           }
 
           if (result.resultType !== "bindings") {

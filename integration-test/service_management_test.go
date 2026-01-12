@@ -173,11 +173,11 @@ func TestServiceCollection_Post_ExecutionUsesQueryAndSources(t *testing.T) {
 
 	query := "SELECT * WHERE { ?s ?p ?o }"
 	source := "http://example.com"
-	
+
 	// Build FnO Turtle description
 	serverDesc := fetchAggregatorServerDescription(t)
 	transformationsCatalog := serverDesc["transformation_catalog"].(string)
-	
+
 	turtleBody := fmt.Sprintf(`@prefix config: <%s> .
 @prefix fno: <https://w3id.org/function/ontology#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
@@ -209,7 +209,7 @@ _:execution a fno:Execution ;
 	deployment := waitForDeploymentExists(t, ctx, instance.namespace, shortID)
 
 	assertEnvValue(t, deployment.Spec.Template.Spec.Containers[0].Env, "QUERY", query)
-	assertEnvValue(t, deployment.Spec.Template.Spec.Containers[0].Env, "SOURCE", source)
+	assertEnvValue(t, deployment.Spec.Template.Spec.Containers[0].Env, "SOURCES", source)
 }
 
 func TestServiceCreation_UMAProtectsServiceEndpoints(t *testing.T) {
@@ -398,7 +398,7 @@ func TestServiceResource_Delete_Unauthorized(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("Expected 401/403 for unauthorized delete, got %d: %s", resp.StatusCode, string(bodyBytes))
 	}
-	
+
 	// Verify service still exists after failed delete
 	getResp, _ := getWithUMA(t, service.ID, instance.authToken)
 	if getResp.StatusCode != http.StatusOK {
@@ -424,10 +424,10 @@ type serviceCollection struct {
 }
 
 type serviceRepresentation struct {
-	ID            string      `json:"id"`
-	Status        string      `json:"status"`
-	CreatedAt     string      `json:"created_at"`
-	Location      string      `json:"location"`
+	ID             string      `json:"id"`
+	Status         string      `json:"status"`
+	CreatedAt      string      `json:"created_at"`
+	Location       string      `json:"location"`
 	Transformation interface{} `json:"transformation"`
 }
 
@@ -462,7 +462,6 @@ func decodeServiceCollection(t *testing.T, body []byte) serviceCollection {
 
 	return collection
 }
-
 
 func waitForServiceReady(t *testing.T, serviceURL string, authToken string, timeout time.Duration) {
 	t.Helper()
@@ -519,11 +518,11 @@ func createService(t *testing.T, collectionURL string, authToken string) service
 	// Build FnO Turtle description
 	source := "http://example.org/source"
 	query := "SELECT * WHERE { ?s ?p ?o }"
-	
+
 	// Extract transformation catalog from aggregator server
 	serverDesc := fetchAggregatorServerDescription(t)
 	transformationsCatalog := serverDesc["transformation_catalog"].(string)
-	
+
 	turtleBody := fmt.Sprintf(`@prefix config: <%s> .
 @prefix fno: <https://w3id.org/function/ontology#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
