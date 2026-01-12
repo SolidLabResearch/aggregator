@@ -59,10 +59,15 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request, user mo
 		}
 	}
 
+	createdAt, err := fetchCreatedAt(user.Namespace)
+	if err != nil || createdAt == "" {
+		createdAt = time.Now().Format(time.RFC3339)
+	}
+
 	// TODO: semantic representations need to be added at some point
 	desc := AggregatorDescription{
 		ID:                    fmt.Sprintf("%s://%s/config/%s", model.Protocol, model.ExternalHost, user.Namespace),
-		CreatedAt:             time.Now().Format(time.RFC3339), // Placeholder, should be persisted
+		CreatedAt:             createdAt,
 		LoginStatus:           loginStatus,
 		TokenExpiry:           tokenExpiry,
 		TransformationCatalog: fmt.Sprintf("%s://%s/config/%s/transformations", model.Protocol, model.ExternalHost, user.Namespace),
@@ -85,4 +90,16 @@ func fetchAccessTokenExpiry(namespace string) (string, error) {
 	}
 
 	return strings.TrimSpace(cm.Data["access_token_expiry"]), nil
+}
+
+func fetchCreatedAt(namespace string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	cm, err := model.Clientset.CoreV1().ConfigMaps(namespace).Get(ctx, "aggregator-instance-config", metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(cm.Data["created_at"]), nil
 }

@@ -59,6 +59,13 @@ func main() {
 		logrus.Warn("Environment variable AS_URL is empty; UMA registration is disabled")
 	}
 
+	// Determine if proxy should be used (disabled when DISABLE_AUTH is true)
+	disableAuth := strings.ToLower(os.Getenv("DISABLE_AUTH")) == "true"
+	useProxy := !disableAuth && asUrl != ""
+	if disableAuth {
+		logrus.Info("Proxy disabled (DISABLE_AUTH=true)")
+	}
+
 	// Load in-cluster kubeConfig
 	kubeConfig, err := rest.InClusterConfig()
 	if err != nil {
@@ -82,6 +89,7 @@ func main() {
 		UserId:         userId,
 		Namespace:      userNamespace,
 		AuthzServerURL: asUrl,
+		UseProxy:       useProxy,
 	}
 	err = config.InitUserConfiguration(serverMux, user)
 	if err != nil {

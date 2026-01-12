@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -257,7 +258,10 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 		return fmt.Errorf("failed to create Traefik RoleBinding: %w", err)
 	}
 
-	if err := ensureConfigMap(namespace, "aggregator-instance-config", map[string]string{"access_token_expiry": accessTokenExpiry}, ctx); err != nil {
+	if err := ensureConfigMap(namespace, "aggregator-instance-config", map[string]string{
+		"access_token_expiry": accessTokenExpiry,
+		"created_at":          time.Now().Format(time.RFC3339),
+	}, ctx); err != nil {
 		return fmt.Errorf("failed to ensure instance configmap: %w", err)
 	}
 
@@ -421,6 +425,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 								{Name: "USER_NAMESPACE", Value: namespace},
 								{Name: "USER_ID", Value: resolvedOwner},
 								{Name: "AS_URL", Value: authzServerURL},
+								{Name: "DISABLE_AUTH", Value: fmt.Sprintf("%v", model.DisableAuth)},
 							},
 						},
 					},
@@ -455,7 +460,9 @@ func updateAggregatorInstanceDeployments(namespace string, accessToken string, r
 	}
 
 	if accessTokenExpiry != "" {
-		if err := ensureConfigMap(namespace, "aggregator-instance-config", map[string]string{"access_token_expiry": accessTokenExpiry}, ctx); err != nil {
+		if err := ensureConfigMap(namespace, "aggregator-instance-config", map[string]string{
+			"access_token_expiry": accessTokenExpiry,
+		}, ctx); err != nil {
 			return fmt.Errorf("failed to update instance configmap: %w", err)
 		}
 	}

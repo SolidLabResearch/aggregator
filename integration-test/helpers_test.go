@@ -293,6 +293,39 @@ func setupAggregatorInstance(t *testing.T) aggregatorInstance {
 	}
 }
 
+func setupAggregatorInstanceNone(t *testing.T) aggregatorInstance {
+	t.Helper()
+
+	oidcProvider, err := mocks.NewOIDCProvider()
+	if err != nil {
+		t.Fatalf("Failed to create OIDC provider: %v", err)
+	}
+
+	ownerWebID := oidcProvider.URL() + "/webid#me"
+	authToken := createAuthToken(t, oidcProvider, ownerWebID)
+
+	aggregatorID := createAggregatorViaNone(t, authToken)
+
+	namespace := waitForAggregatorNamespace(t, ownerWebID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	waitForDeploymentReady(t, ctx, namespace, "aggregator")
+	waitForAggregatorDescriptionReady(t, fmt.Sprintf("%s/config/%s", testEnv.AggregatorURL, namespace), authToken, 60*time.Second)
+
+	cleanup := func() {
+		deleteAggregator(t, aggregatorID, authToken)
+		oidcProvider.Close()
+	}
+
+	return aggregatorInstance{
+		baseURL:   fmt.Sprintf("%s/config/%s", testEnv.AggregatorURL, namespace),
+		namespace: namespace,
+		authToken: authToken,
+		cleanup:   cleanup,
+	}
+}
+
 func waitForAggregatorNamespace(t *testing.T, ownerWebID string) string {
 	t.Helper()
 
@@ -987,4 +1020,25 @@ func createAggregatorViaProvision(t *testing.T, oidcProvider *mocks.OIDCProvider
 	}
 
 	return aggregatorID
+}
+
+func fetchAggregatorServerDescription(t *testing.T) map[string]interface{} {
+	t.Helper()
+
+	resp, err := http.Get(testEnv.AggregatorURL)
+	if err != nil {
+		t.Fatalf("Failed to fetch aggregator server description: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK for server description, got %d", resp.StatusCode)
+	}
+
+	var serverDesc map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&serverDesc); err != nil {
+		t.Fatalf("Failed to decode server description: %v", err)
+	}
+
+	return serverDesc
 }

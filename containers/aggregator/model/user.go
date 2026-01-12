@@ -10,6 +10,7 @@ type User struct {
 	RefreshToken   string
 	AuthzServerURL string
 	Namespace      string
+	UseProxy       bool
 }
 
 func (u *User) ConfigEndpoints() map[string]string {

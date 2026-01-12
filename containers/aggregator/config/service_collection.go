@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -86,14 +87,19 @@ func (config *UserConfigData) headServices(w http.ResponseWriter, _ *http.Reques
 }
 
 func (config *UserConfigData) getServices(w http.ResponseWriter, _ *http.Request) {
-	serviceList := []model.Service{}
+	serviceList := []string{}
 	for _, service := range config.services {
-		serviceList = append(serviceList, service)
+		url := fmt.Sprintf("%s://%s/config/%s/services/%s", model.Protocol, model.ExternalHost, service.Namespace, service.Id)
+		serviceList = append(serviceList, url)
+	}
+
+	response := map[string][]string{
+		"services": serviceList,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("ETag", strconv.Itoa(config.etagServices))
-	err := json.NewEncoder(w).Encode(serviceList)
+	err := json.NewEncoder(w).Encode(response)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to encode service list")
 		http.Error(w, "Failed to serialize response", http.StatusInternalServerError)
@@ -103,10 +109,20 @@ func (config *UserConfigData) getServices(w http.ResponseWriter, _ *http.Request
 
 func (config *UserConfigData) postService(w http.ResponseWriter, r *http.Request) {
 	logrus.Info("Recieved request to register a service")
-	// read request body
+
 	var request model.ServiceRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+
+	contentType := r.Header.Get("Content-Type")
+	if strings.Contains(contentType, "text/turtle") {
+		// Handle Turtle content
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Failed to read request body", http.StatusInternalServerError)
+			return
+		}
+		request.Description = string(bodyBytes)
+	} else {
+		http.Error(w, "Unsupported Content-Type. Only text/turtle is supported", http.StatusUnsupportedMediaType)
 		return
 	}
 
@@ -133,9 +149,8 @@ func (config *UserConfigData) postService(w http.ResponseWriter, r *http.Request
 	config.services[request.Id] = *service
 	config.etagServices++
 
-	// Create config and status endpoints
-	config.HandleFunc(fmt.Sprintf("/config/%s/services/%s", service.Namespace, service.Id), config.HandleServiceEndpoint, []model.Scope{model.Read})
-	config.HandleFunc(fmt.Sprintf("/config/%s/services/%s/status", service.Namespace, service.Id), config.HandleStatusEndpoint, []model.Scope{model.Read})
+	// Create config endpoint
+	config.HandleFunc(fmt.Sprintf("/config/%s/services/%s", service.Namespace, service.Id), config.HandleServiceEndpoint, []model.Scope{model.Read, model.Delete})
 
 	// Return service information to the client
 	w.Header().Set("Content-Type", "application/json")
@@ -147,56 +162,11 @@ func (config *UserConfigData) postService(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusCreated)
 	_, err = w.Write(responseBytes)
 	if err != nil {
 		logrus.WithError(err).Error("Error writing create service response")
 		return
-	}
-}
-
-func (config *UserConfigData) HandleStatusEndpoint(w http.ResponseWriter, r *http.Request) {
-	logrusEntry := logrus.WithFields(logrus.Fields{
-		"method": r.Method,
-		"path":   r.URL.Path,
-	})
-
-	logrusEntry.Debug("Handling status endpoint request")
-
-	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) < 5 {
-		logrusEntry.Error("Invalid URL format: expected at least 5 parts")
-		http.Error(w, "Invalid URL", http.StatusBadRequest)
-		return
-	}
-
-	id := parts[4]
-	logrusEntry = logrusEntry.WithField("service_id", id)
-
-	service, ok := config.services[id]
-	if !ok {
-		logrusEntry.Error("Service not found")
-		http.Error(w, "Service not found", http.StatusNotFound)
-		return
-	}
-
-	logrusEntry.Debug("Found service, checking status")
-	ready := service.Status()
-
-	w.Header().Set("Content-Type", "application/json")
-
-	if ready {
-		logrusEntry.Info("Service ready")
-		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(map[string]bool{"ready": true}); err != nil {
-			logrusEntry.Error("Failed to encode JSON response: ", err)
-		}
-	} else {
-		logrusEntry.Warn("Service not ready")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		if err := json.NewEncoder(w).Encode(map[string]bool{"ready": false}); err != nil {
-			logrusEntry.Error("Failed to encode JSON response: ", err)
-		}
 	}
 }
 

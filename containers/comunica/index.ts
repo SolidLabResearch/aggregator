@@ -1,13 +1,16 @@
-import { QueryEngine } from "@comunica-graphql/query-sparql-graphql";
+import { QueryEngine as GraphqlQueryEngine } from "@comunica-graphql/query-sparql-graphql";
+import { QueryEngine as SparqlQueryEngine } from "@comunica/query-sparql";
 import http from 'http';
 import { url } from "inspector";
 
 const proxyUrl = process.env.http_proxy || process.env.HTTP_PROXY;
-if (proxyUrl === undefined) {
-  throw new Error('Environment variable HTTP_PROXY is not set. Please provide the URL of the proxy server.');
-}
 
 export async function fetchProxy(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  // If no proxy is configured, use native fetch
+  if (!proxyUrl) {
+    return fetch(input, init);
+  }
+
   // Resolve the URL for logging/Host purposes
   const targetUrl =
     typeof input === "string"
@@ -126,7 +129,8 @@ async function main() {
   console.log("CONTEXT:", context);
   console.log("SCHEMA:", schema);
 
-  const queryEngine = new QueryEngine();
+  const graphqlEngine = new GraphqlQueryEngine();
+  const sparqlEngine = new SparqlQueryEngine();
 
   const server = http.createServer((req, res) => {
     (async () => {
@@ -134,10 +138,24 @@ async function main() {
         console.log(`Received request: ${req.method} ${req.url}`);
 
         if (req.method === "GET" && req.url === "/") {
-          const result = await queryEngine.query(query, { 
-            sources: [source],
-            fetch: fetchProxy
-          });
+          let result;
+          try {
+             result = await graphqlEngine.query(query, { 
+               sources: [source],
+               fetch: fetchProxy
+             });
+          } catch (e: any) {
+             if (e.message && (e.message.includes("variable predicate") || e.message.includes("does not exist in the schema"))) {
+                 console.log("Fallback to Generic SPARQL Engine:", e.message);
+                 // Use simple source URL for generic engine
+                 result = await sparqlEngine.query(query, { 
+                    sources: [sourceURL], 
+                    fetch: fetchProxy 
+                 });
+             } else {
+                 throw e;
+             }
+          }
 
           if (result.resultType !== "bindings") {
             res.writeHead(400, { "Content-Type": "text/plain" });
@@ -148,10 +166,10 @@ async function main() {
           // Only write headers after result is validated
           res.writeHead(200, { "Content-Type": "application/sparql-results+json" });
 
-          const { data } = await queryEngine.resultToString(result, "application/sparql-results+json");
+          const { data } = await sparqlEngine.resultToString(result, "application/sparql-results+json");
 
           // Handle stream errors
-          data.on("error", (err) => {
+          data.on("error", (err: any) => {
             console.error("Stream error:", err);
             if (!res.headersSent) {
               res.writeHead(500, { "Content-Type": "text/plain" });
