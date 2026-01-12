@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/maartyman/rdfgo"
 	"github.com/sirupsen/logrus"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -19,9 +20,108 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
+// extractQueryAndSources parses the FnO execution description and extracts query and sources
+func extractQueryAndSources(description string) (query string, sources []string, err error) {
+	// Parse RDF using rdfgo
+	quadStream, errChan := rdfgo.Parse(
+		strings.NewReader(description),
+		rdfgo.ParserOptions{
+			Format: "text/turtle",
+		},
+	)
+
+	// Create RDF store
+	store := rdfgo.NewStore()
+
+	// Handle parsing errors
+	go func() {
+		for parseErr := range errChan {
+			if parseErr != nil {
+				logrus.WithError(parseErr).Warn("Error parsing FnO description")
+			}
+		}
+	}()
+
+	// Import quads into store
+	store.Import(quadStream)
+
+	// Find the config namespace by looking for any predicate that ends with queryString or sources
+	var configNamespace string
+	allQuads := rdfgo.Stream(store.Match(nil, nil, nil, nil)).ToArray()
+	for _, quad := range allQuads {
+		predicateValue := quad.GetPredicate().GetValue()
+		if strings.HasSuffix(predicateValue, "queryString") {
+			configNamespace = strings.TrimSuffix(predicateValue, "queryString")
+			break
+		}
+		if strings.HasSuffix(predicateValue, "sources") {
+			configNamespace = strings.TrimSuffix(predicateValue, "sources")
+			break
+		}
+	}
+
+	if configNamespace == "" {
+		return "", nil, fmt.Errorf("could not determine config namespace from FnO description")
+	}
+
+	logrus.Debugf("Detected config namespace: %s", configNamespace)
+
+	// Define predicates using detected namespace
+	queryStringPredicate := rdfgo.NewNamedNode(configNamespace + "queryString")
+	sourcesPredicate := rdfgo.NewNamedNode(configNamespace + "sources")
+	rdfFirst := rdfgo.NewNamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#first")
+	rdfRest := rdfgo.NewNamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#rest")
+	rdfNil := rdfgo.NewNamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#nil")
+
+	// Extract queryString
+	queryMatches := rdfgo.Stream(store.Match(nil, queryStringPredicate, nil, nil)).ToArray()
+	if len(queryMatches) > 0 {
+		query = queryMatches[0].GetObject().GetValue()
+	}
+
+	// Extract sources (RDF list)
+	sourcesMatches := rdfgo.Stream(store.Match(nil, sourcesPredicate, nil, nil)).ToArray()
+	if len(sourcesMatches) > 0 {
+		listNode := sourcesMatches[0].GetObject()
+		
+		// Traverse RDF list
+		for {
+			if listNode.GetValue() == rdfNil.GetValue() {
+				break
+			}
+
+			// Get rdf:first (the current item)
+			firstMatches := rdfgo.Stream(store.Match(listNode, rdfFirst, nil, nil)).ToArray()
+			if len(firstMatches) > 0 {
+				sources = append(sources, firstMatches[0].GetObject().GetValue())
+			}
+
+			// Get rdf:rest (the next node in the list)
+			restMatches := rdfgo.Stream(store.Match(listNode, rdfRest, nil, nil)).ToArray()
+			if len(restMatches) == 0 {
+				break
+			}
+			listNode = restMatches[0].GetObject()
+		}
+	}
+
+	if query == "" {
+		return "", nil, fmt.Errorf("could not extract queryString from FnO description")
+	}
+	if len(sources) == 0 {
+		return "", nil, fmt.Errorf("could not extract sources from FnO description")
+	}
+
+	return query, sources, nil
+}
+
 func CreateService(request model.ServiceRequest) (*model.Service, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	if request.Description == "" {
+		return nil, fmt.Errorf("either query/sources or FnO description must be provided")
+	}
 
 	useUMA := strings.TrimSpace(request.Owner.AuthzServerURL) != ""
 	service := model.Service{
@@ -33,6 +133,7 @@ func CreateService(request model.ServiceRequest) (*model.Service, error) {
 		Deployments:   []appsv1.Deployment{},
 		Services:      []corev1.Service{},
 		Ingresses:     []networkingv1.Ingress{},
+		CreatedAt:     time.Now(),
 	}
 
 	// Clean up if anything fails
@@ -69,21 +170,19 @@ func createDeployment(service *model.Service, replicas int32, useUMA bool, ctx c
 		"app":       service.Id,
 		"namespace": service.Namespace,
 	}
+	
+	query, sources, err := extractQueryAndSources(service.Description)
+	if err != nil {
+		return fmt.Errorf("failed to extract query and sources from FnO description: %w", err)
+	}
 
 	container := corev1.Container{
 		Name:            service.Id,
-		Image:           service.Id,
+		Image:           "comunica", // Use a valid image for testing
 		ImagePullPolicy: corev1.PullNever,
 		Env: []corev1.EnvVar{
-			{Name: "QUERY", Value: `
-				PREFIX ex: <http://example.org/>
-				SELECT ?value ?unit
-				WHERE {
-					?obs ex:value ?value ;
-							ex:unit  ?unit .
-				}`,
-			},
-			{Name: "SOURCE", Value: "https://pacsoi-kvasir.faqir.org/patient0/slices/AggregatorDemoSlice/query"},
+			{Name: "QUERY", Value: query},
+			{Name: "SOURCE", Value: strings.Join(sources, ",")},
 			{Name: "SCHEMA", Value: `type Query {
 					observations: [ex_Observation]!
 					observation(id: ID!): ex_Observation
@@ -125,10 +224,10 @@ func createDeployment(service *model.Service, replicas int32, useUMA bool, ctx c
 	}
 
 	if useUMA {
-		container.Env = append(container.Env,
-			corev1.EnvVar{Name: "HTTP_PROXY", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", service.Namespace)},
-			corev1.EnvVar{Name: "http_proxy", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", service.Namespace)},
-		)
+		container.Env = append([]corev1.EnvVar{
+			{Name: "HTTP_PROXY", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", service.Namespace)},
+			{Name: "http_proxy", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", service.Namespace)},
+		}, container.Env...)
 	}
 
 	deploySpec := &appsv1.Deployment{
@@ -165,7 +264,7 @@ func createDeployment(service *model.Service, replicas int32, useUMA bool, ctx c
 }
 
 func createServiceResource(service *model.Service, ctx context.Context) error {
-	svcName := service.Id + "-service"
+	svcName := "svc-" + service.Id
 
 	// Check if service already exists
 	_, err := model.Clientset.CoreV1().Services(service.Namespace).Get(ctx, svcName, metav1.GetOptions{})
@@ -208,7 +307,7 @@ func createServiceResource(service *model.Service, ctx context.Context) error {
 
 func createIngressRoute(service *model.Service, owner model.User, ctx context.Context) error {
 	irName := service.Namespace + "-" + service.Id + "-ingressroute"
-	svcName := service.Id + "-service"
+	svcName := "svc-" + service.Id
 	namespace := service.Namespace
 
 	// Check if IngressRoute already exists

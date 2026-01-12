@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -29,6 +30,7 @@ type Service struct {
 	Deployments   []appsv1.Deployment
 	Services      []corev1.Service
 	Ingresses     []networkingv1.Ingress
+	CreatedAt     time.Time
 }
 
 func (service *Service) Stop() error {
@@ -62,40 +64,59 @@ func (service *Service) Stop() error {
 	return nil
 }
 
-func (service *Service) Status() bool {
-	logEntry := logrus.WithField("service_id", service.Id)
-	logEntry.Debug("Checking service status")
-
+func (service *Service) Status() string {
+	ctx := context.Background()
 	for _, dep := range service.Deployments {
-		logEntry := logEntry.WithField("deployment", dep.Name)
-		logEntry.Debugf("Deployment available replicas: %d", dep.Status.AvailableReplicas)
-		if dep.Status.AvailableReplicas == 0 {
-			logEntry.Warn("Deployment has zero available replicas, service not ready")
-			return false
+		d, err := Clientset.AppsV1().Deployments(service.Namespace).Get(ctx, dep.Name, metav1.GetOptions{})
+		if err != nil {
+			return "errored"
+		}
+		if d.Status.AvailableReplicas == 0 {
+			return "starting" // or stopped/starting
 		}
 	}
-
-	logEntry.Info("All deployments have available replicas, service ready")
-	return true
+	
+	// Check if the service endpoint is actually responding
+	if len(service.PrivEndpoints) > 0 {
+		endpoint := service.PrivEndpoints[0]
+		
+		// Parse the URL to extract host and port
+		u, err := url.Parse(endpoint)
+		if err != nil {
+			return "starting"
+		}
+		
+		// Try to establish a TCP connection
+		conn, err := net.DialTimeout("tcp", u.Host, 200*time.Millisecond)
+		if err != nil {
+			return "starting"
+		}
+		defer conn.Close()
+	}
+	
+	return "running"
 }
 
 func (service *Service) MarshalJSON() ([]byte, error) {
 	type serviceJSON struct {
-		ID          string   `json:"id"`
-		Description string   `json:"description"`
-		Namespace   string   `json:"namespace"`
-		Config      string   `json:"config"`
-		Status      string   `json:"status"`
-		Endpoints   []string `json:"endpoints"`
+		ID             string   `json:"id"`
+		Status         string   `json:"status"`
+		Transformation string   `json:"transformation"`
+		CreatedAt      string   `json:"created_at"`
+		Location       string   `json:"location"`
+	}
+
+	location := ""
+	if len(service.PubEndpoints) > 0 {
+		location = service.PubEndpoints[0]
 	}
 
 	out := serviceJSON{
-		ID:          service.Id,
-		Description: service.Description,
-		Namespace:   service.Namespace,
-		Config:      fmt.Sprintf("http://%s/config/%s/services/%s", ExternalHost, service.Namespace, service.Id),
-		Status:      fmt.Sprintf("http://%s/config/%s/services/%s/status", ExternalHost, service.Namespace, service.Id),
-		Endpoints:   service.PubEndpoints,
+		ID:             fmt.Sprintf("%s://%s/config/%s/services/%s", Protocol, ExternalHost, service.Namespace, service.Id),
+		Status:         service.Status(),
+		Transformation: service.Description,
+		CreatedAt:      service.CreatedAt.Format(time.RFC3339),
+		Location:       location,
 	}
 
 	return json.Marshal(out)

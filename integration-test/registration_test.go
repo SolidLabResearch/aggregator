@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,19 +86,36 @@ func TestRegistration_None_DisablesUMAIngressAndEgress(t *testing.T) {
 		t.Fatal("Expected no ingress-uma middleware on instance ingress routes for none registration type")
 	}
 
-	serviceID := fmt.Sprintf("service-none-%d", time.Now().UnixNano())
-	serviceBody := map[string]interface{}{
-		"id":          serviceID,
-		"description": "none flow service",
+	// Build FnO Turtle description
+	source := "http://example.org/source"
+	query := "SELECT * WHERE { ?s ?p ?o }"
+	
+	// Get transformation catalog from server description
+	serverResp, err := http.Get(testEnv.AggregatorURL)
+	if err != nil {
+		t.Fatalf("Failed to fetch server description: %v", err)
 	}
-	body, _ := json.Marshal(serviceBody)
+	defer serverResp.Body.Close()
+	var serverDesc map[string]interface{}
+	json.NewDecoder(serverResp.Body).Decode(&serverDesc)
+	transformationsCatalog := serverDesc["transformation_catalog"].(string)
+	
+	turtleBody := fmt.Sprintf(`@prefix config: <%s> .
+@prefix fno: <https://w3id.org/function/ontology#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+_:execution a fno:Execution ;
+    fno:executes config:SPARQLEvaluation ;
+    config:sources ( "%s"^^xsd:string ) ;
+    config:queryString "%s" .`, transformationsCatalog, source, query)
 
 	servicesURL := fmt.Sprintf("%s/config/%s/services", testEnv.AggregatorURL, namespace)
-	req, err := http.NewRequest("POST", servicesURL, bytes.NewBuffer(body))
+	req, err := http.NewRequest("POST", servicesURL, bytes.NewBuffer([]byte(turtleBody)))
 	if err != nil {
 		t.Fatalf("Failed to build service request: %v", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "text/turtle")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -105,14 +123,26 @@ func TestRegistration_None_DisablesUMAIngressAndEgress(t *testing.T) {
 		t.Fatalf("Service creation request failed: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusAccepted {
+	if resp.StatusCode != http.StatusCreated {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Expected 202 Accepted for service creation, got %d: %s", resp.StatusCode, string(bodyBytes))
+		t.Fatalf("Expected 201 Created for service creation, got %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
+	// Extract service ID from response
+	var serviceResp map[string]interface{}
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read response body: %v", err)
+	}
+	json.Unmarshal(respBody, &serviceResp)
+	serviceID := serviceResp["id"].(string)
+	// Extract short ID from full URL
+	parts := strings.Split(serviceID, "/")
+	shortID := parts[len(parts)-1]
+	
 	serviceCtx, serviceCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer serviceCancel()
-	deployment := waitForDeploymentExists(t, serviceCtx, namespace, serviceID)
+	deployment := waitForDeploymentExists(t, serviceCtx, namespace, shortID)
 
 	for _, env := range deployment.Spec.Template.Spec.Containers[0].Env {
 		if env.Name == "HTTP_PROXY" || env.Name == "http_proxy" {
@@ -120,7 +150,7 @@ func TestRegistration_None_DisablesUMAIngressAndEgress(t *testing.T) {
 		}
 	}
 
-	serviceIngressName := fmt.Sprintf("%s-%s-ingressroute", namespace, serviceID)
+	serviceIngressName := fmt.Sprintf("%s-%s-ingressroute", namespace, shortID)
 	serviceIngress := getIngressRoute(t, namespace, serviceIngressName)
 	if ingressRouteHasMiddleware(t, serviceIngress, "ingress-uma") {
 		t.Fatal("Expected no ingress-uma middleware on service ingress routes for none registration type")
