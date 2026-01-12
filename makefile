@@ -4,7 +4,7 @@
 	kind-deploy kind-start-traefik kind-start-cleaner \
 	kind-clean clean kind-stop-traefik \
 	kind-undeploy stop \
-	enable-wsl \
+	enable-wsl configure-coredns-local \
 	docker-clean deploy \
 	integration-test unit-test
 
@@ -13,7 +13,7 @@
 # ------------------------
 
 # Initialize kind cluster, build/load containers, generate keys, start cleaner
-init: kind-start containers-all kind-generate-key-pair generate-ingress-key kind-start-cleaner
+init: kind-start containers-all kind-generate-key-pair generate-ingress-key kind-start-cleaner configure-coredns-local
 
 # Start kind cluster
 kind-start:
@@ -191,7 +191,6 @@ kind-start-cleaner:
 	@kubectl wait --namespace aggregator-ops \
 	  --for=condition=available deployment/aggregator-cleaner \
 	  --timeout=60s || true
-
 	@echo "✅ Aggregator cleaner deployed"
 
 kind-deploy:
@@ -302,15 +301,28 @@ stop: kind-undeploy kind-stop-traefik
 # wsl support
 # -------------------------
 
+configure-coredns-local:
+	@echo "📄 Configuring CoreDNS for .local domains..."
+	@kubectl config use-context kind-aggregator
+	@kubectl apply -f k8s/ops/coredns-local-hosts.yaml
+	@kubectl rollout restart deployment coredns -n kube-system
+	@echo "⏳ Waiting for CoreDNS to be ready..."
+	@kubectl wait --for=condition=ready pod -l k8s-app=kube-dns -n kube-system --timeout=60s
+	@echo "✅ CoreDNS configured for .local domains"
+
 enable-wsl:
 	@echo "🔍 Detecting WSL2 IP..."
 	$(eval WSL_IP := $(shell hostname -I | awk '{print $$1}'))
 	@echo "Detected WSL2 IP: $(WSL_IP)"
 
-	@echo "🧠 Backing up CoreDNS ConfigMap..."
+	@echo "📄 Applying CoreDNS ConfigMap with .local domains..."
+	@kubectl config use-context kind-aggregator
+	@kubectl apply -f k8s/ops/coredns-local-hosts.yaml
+
+	@echo "🧠 Getting current CoreDNS ConfigMap..."
 	@kubectl -n kube-system get configmap coredns -o yaml > /tmp/coredns.yaml
 
-	@echo "🧩 Patching CoreDNS..."
+	@echo "🧩 Patching CoreDNS to add WSL IP..."
 	@awk -v ip="$(WSL_IP)" '\
 		/^data:/ {print; inData=1; next} \
 		inData && /^\s*Corefile:/ { \
@@ -331,8 +343,10 @@ enable-wsl:
 
 	@echo "♻️ Restarting CoreDNS deployment..."
 	@kubectl -n kube-system rollout restart deployment coredns >/dev/null
+	@echo "⏳ Waiting for CoreDNS to be ready..."
+	@kubectl wait --for=condition=ready pod -l k8s-app=kube-dns -n kube-system --timeout=60s
 
-	@echo "✅ Done! 'wsl.local' now resolves to $(WSL_IP)"
+	@echo "✅ Done! Both .local domains and 'wsl.local' ($(WSL_IP)) are now configured"
 
 # ------------------------
 # Tests
