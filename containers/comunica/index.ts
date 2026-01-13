@@ -172,16 +172,25 @@ async function main() {
             });
           }
 
-          if (result.resultType !== "bindings") {
-            res.writeHead(400, { "Content-Type": "text/plain" });
-            res.end("Only SELECT queries with bindings are supported.");
-            return;
+          let mediaType: string;
+          switch (result.resultType) {
+            case "bindings":
+            case "boolean":
+              mediaType = "application/sparql-results+json";
+              break;
+            case "quads":
+              mediaType = "text/turtle";
+              break;
+            default:
+              res.writeHead(400, { "Content-Type": "text/plain" });
+              res.end("Unsupported query result type.");
+              return;
           }
 
           // Only write headers after result is validated
-          res.writeHead(200, { "Content-Type": "application/sparql-results+json" });
+          res.writeHead(200, { "Content-Type": mediaType });
 
-          const { data } = await sparqlEngine.resultToString(result, "application/sparql-results+json");
+          const { data } = await sparqlEngine.resultToString(result, mediaType);
 
           // Handle stream errors
           data.on("error", (err: any) => {
