@@ -1,0 +1,46 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: transformations.fno.knows.idlab.ugent.be
+spec:
+  group: fno.knows.idlab.ugent.be
+  scope: Namespaced        
+  names:
+    plural: transformations
+    singular: transformation
+    kind: Transformation
+    shortNames:
+      - tf
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - id
+                - image
+                - envMapping
+                - fno
+              properties:
+                id:
+                  type: string
+                  description: "Unique identifier without base prefix"
+
+                image:
+                  type: string
+                  description: "Container image implementing the transformation"
+
+                fno:
+                  type: string
+                  description: "FnO (Function Ontology) description"
+
+                envMapping:
+                  type: object
+                  description: "Mapping from input parameter names to ENV variable names"
+                  additionalProperties:
+                    type: string

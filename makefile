@@ -196,42 +196,48 @@ kind-start-cleaner:
 kind-deploy:
 	@echo "📄 Deploying aggregator application..."
 	@kubectl config use-context kind-aggregator
-	@echo "📄 Applying aggregator namespace..."
-	@kubectl apply -f k8s/app/ns.yaml
-	@echo "📄 Applying traefik config..."
-	@kubectl apply -f k8s/app/traefik-config.yaml
+
+	@echo "📄 Applying custom resources definitions..."
+	@kubectl apply -f k8s/cluster/crds/
+
+	@echo "📄 Applying namespaces..."
+	@kubectl apply -f k8s/namespaces/
+
+	@echo "📄 Applying Traefik middlewares..."
+	@kubectl apply -f k8s/app/traefik/middlewares.yaml
+
 	@echo "📄 Creating secret for ingress-uma..."
 	@kubectl -n aggregator-app create secret generic ingress-uma-key \
 		--from-file=private_key.pem=private_key.pem \
 		--dry-run=client -o yaml | kubectl apply -f -
-	@echo "📄 Applying aggregator ConfigMap..."
-	@kubectl apply -f k8s/app/config.yaml
+
+	@echo "📄 Applying aggregator ConfigMap and transformations..."
+	@kubectl apply -f k8s/config/aggregator-config.yaml
+	@kubectl apply -f k8s/config/transformations.yaml
 
 	@echo "📄 Adding localhost entries for ingress hosts..."
 	@grep -qxF "127.0.0.1 aggregator.local" /etc/hosts || sudo -- sh -c "echo '127.0.0.1 aggregator.local' >> /etc/hosts"
 	@grep -qxF "127.0.0.1 wsl.local" /etc/hosts || sudo -- sh -c "echo '127.0.0.1 wsl.local' >> /etc/hosts"
 
 	@echo "📄 Applying ingress-uma..."
-	@kubectl apply -f k8s/app/ingress-uma.yaml
-	@echo "⏳ Waiting for ingress-uma deployment to be ready..."
+	@kubectl apply -k k8s/app/ingress-uma/
 	@kubectl rollout status deployment ingress-uma -n aggregator-app --timeout=90s
-	@echo "⏳ Waiting for ingress-uma via Ingress to be reachable..."
+
+	@echo "⏳ Waiting for ingress-uma JWKS endpoint..."
 	@for i in {1..30}; do \
-			STATUS=$$(curl -s -o /dev/null -w "%{http_code}" http://aggregator.local/uma/.well-known/jwks.json || echo "000"); \
-			if [ "$$STATUS" = "200" ]; then \
-					echo "✅ Ingress-uma endpoint is ready"; \
-					break; \
-			else \
-					echo "Waiting for Ingress JWKS endpoint... (status=$$STATUS)"; \
-					sleep 2; \
-			fi; \
+		STATUS=$$(curl -s -o /dev/null -w "%{http_code}" http://aggregator.local/uma/.well-known/jwks.json || echo "000"); \
+		if [ "$$STATUS" = "200" ]; then \
+			echo "✅ Ingress-uma endpoint is ready"; break; \
+		else \
+			echo "⏳ Waiting for Ingress JWKS endpoint... (status=$$STATUS)"; sleep 2; \
+		fi; \
 	done
-	@echo "📄 Applying aggregator deployment and service..."
-	@kubectl apply -f k8s/app/aggregator.yaml
-	@echo "⏳ Waiting for aggregator deployment to be ready..."
+
+	@echo "📄 Applying aggregator server and service..."
+	@kubectl apply -k k8s/app/server/
 	@kubectl rollout status deployment aggregator-server -n aggregator-app --timeout=120s
 
-	@echo "✅ Resources deployed to kind"
+	@echo "✅ Aggregator application deployed successfully!"
 
 deploy: kind-start-traefik kind-deploy
 	@echo "✅ Aggregator deployment complete"
@@ -253,6 +259,9 @@ kind-undeploy:
 	@echo "🧹 Removing localhost entries..."
 	@sudo sed -i.bak '/aggregator\.local/d' /etc/hosts || true
 	@sudo sed -i.bak '/wsl\.local/d' /etc/hosts || true
+	@echo "🧹 Removing transformations..."
+	@kubectl delete transformations --all
+	@kubectl delete crd transformations.fno.knows.idlab.ugent.be
 	@echo "✅ Deployment stopped (Traefik and cleaner still running)"
 
 kind-stop-traefik:

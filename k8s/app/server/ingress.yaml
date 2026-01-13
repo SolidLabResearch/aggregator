@@ -1,0 +1,29 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aggregator-server-ingressroute
+  namespace: aggregator-app
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`aggregator.local`) && PathPrefix(`/`)
+      kind: Rule
+      services:
+        - name: aggregator-server-svc
+          port: 5000
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aggregator-server-registration-ingressroute
+  namespace: aggregator-app
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`aggregator.local`) && PathPrefix(`/registration`)
+      kind: Rule
+      services:
+        - name: aggregator-server-svc
+          port: 5000

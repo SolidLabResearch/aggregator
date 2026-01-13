@@ -37,16 +37,8 @@ metadata:
   namespace: aggregator-app
 spec:
   headers:
-    accessControlAllowOriginList: 
-      - "*"
-    accessControlAllowMethods:
-      - GET
-      - POST
-      - PUT
-      - PATCH
-      - DELETE
-      - OPTIONS
-    accessControlAllowHeaders:
-      - "*"
+    accessControlAllowOriginList: ["*"]
+    accessControlAllowMethods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"]
+    accessControlAllowHeaders: ["*"]
     accessControlMaxAge: 86400
     accessControlAllowCredentials: false

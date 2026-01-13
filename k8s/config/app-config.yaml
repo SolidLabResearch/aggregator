@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aggregator-config
+  namespace: aggregator-app
+data:
+  log_level: "debug"
+  disable_auth: "false"
+  client_id: "aggregator"
+  auth_server: "https://auth.example"
+  auth_server_secret: "AtctW4sdbmjcfF9gQJIf5RoK6T6wetwG"
+  allowed_registration_types: "authorization_code,client_credentials,provision,none"
+  provision_client_id: "provision-client-id"
+  provision_client_secret: "provision-client-secret"
+  provision_webid: "https://provision.example/webid#me"
+  provision_authorization_server: "https://uma.example"

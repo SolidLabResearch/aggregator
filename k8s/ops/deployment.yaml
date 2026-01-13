@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aggregator-cleaner
+  namespace: aggregator-ops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aggregator-cleaner
+  template:
+    metadata:
+      labels:
+        app: aggregator-cleaner
+    spec:
+      serviceAccountName: aggregator-cleaner
+      containers:
+        - name: aggregator-cleaner
+          image: aggregator-cleaner
+          imagePullPolicy: Never
+          args: ["--ns=aggregator-app"]
