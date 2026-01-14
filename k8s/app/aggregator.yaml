@@ -164,6 +164,9 @@ spec:
   routes:
     - match: Host(`aggregator.local`) && PathPrefix(`/`)
       kind: Rule
+      middlewares:
+        - name: cors
+          namespace: aggregator-app
       services:
         - name: aggregator-server-svc
           port: 5000
@@ -179,6 +182,9 @@ spec:
   routes:
     - match: Host(`aggregator.local`) && PathPrefix(`/registration`)
       kind: Rule
+      middlewares:
+        - name: cors
+          namespace: aggregator-app
       services:
         - name: aggregator-server-svc
           port: 5000

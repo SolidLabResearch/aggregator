@@ -14,6 +14,7 @@ import (
 
 	"aggregator-integration-test/mocks"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -1041,4 +1042,183 @@ func fetchAggregatorServerDescription(t *testing.T) map[string]interface{} {
 	}
 
 	return serverDesc
+}
+
+type serviceCollection struct {
+	ID       string
+	Services []string
+}
+
+type serviceRepresentation struct {
+	ID             string      `json:"id"`
+	Status         string      `json:"status"`
+	CreatedAt      string      `json:"created_at"`
+	Location       string      `json:"location"`
+	Transformation interface{} `json:"transformation"`
+}
+
+func decodeServiceCollection(t *testing.T, body []byte) serviceCollection {
+	t.Helper()
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("Failed to decode service collection: %v", err)
+	}
+
+	collection := serviceCollection{}
+	if rawID, ok := payload["id"].(string); ok {
+		collection.ID = rawID
+	}
+
+	rawServices, ok := payload["services"]
+	if !ok {
+		t.Fatal("Service collection missing services array")
+	}
+	servicesSlice, ok := rawServices.([]interface{})
+	if !ok {
+		t.Fatalf("services is not an array: %T", rawServices)
+	}
+	for _, entry := range servicesSlice {
+		value, ok := entry.(string)
+		if !ok {
+			t.Fatalf("service entry is not a string: %T", entry)
+		}
+		collection.Services = append(collection.Services, value)
+	}
+
+	return collection
+}
+
+func waitForServiceReady(t *testing.T, serviceURL string, authToken string, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		resp, bodyBytes := getWithUMA(t, serviceURL, authToken)
+		if resp.StatusCode == http.StatusOK {
+			var payload map[string]interface{}
+			if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+				t.Fatalf("Failed to decode service status response: %v", err)
+			}
+			if status, ok := payload["status"].(string); ok && status == "running" {
+				return
+			}
+		}
+		if resp.StatusCode != http.StatusServiceUnavailable && resp.StatusCode != http.StatusOK {
+			t.Fatalf("Unexpected status response %d: %s", resp.StatusCode, string(bodyBytes))
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	t.Fatalf("Timed out waiting for service readiness at %s", serviceURL)
+}
+
+func buildFnOExecution(query string, source string) string {
+	return fmt.Sprintf(`@base <http://aggregator.local/config/transformations#> .
+@prefix fno: <https://w3id.org/function/ontology#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+<> a fno:Execution ;
+    fno:executes <SPARQLEvaluation> ;
+    <queryString> "%s"^^xsd:string ;
+    <sources> ( "%s"^^xsd:string ) .
+`, query, source)
+}
+
+func assertEnvValue(t *testing.T, envs []corev1.EnvVar, name string, expected string) {
+	t.Helper()
+
+	for _, env := range envs {
+		if env.Name == name {
+			if env.Value != expected {
+				t.Fatalf("Expected env %s to be %q, got %q", name, expected, env.Value)
+			}
+			return
+		}
+	}
+	t.Fatalf("Expected env %s to be set", name)
+}
+
+func createService(t *testing.T, collectionURL string, authToken string) serviceRepresentation {
+	t.Helper()
+
+	// Build FnO Turtle description
+	source := "http://example.org/source"
+	query := "SELECT * WHERE { ?s ?p ?o }"
+
+	// Extract transformation catalog from aggregator server
+	serverDesc := fetchAggregatorServerDescription(t)
+	transformationsCatalog := serverDesc["transformation_catalog"].(string)
+
+	turtleBody := fmt.Sprintf(`@prefix config: <%s> .
+@prefix fno: <https://w3id.org/function/ontology#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+_:execution a fno:Execution ;
+    fno:executes config:SPARQLEvaluation ;
+    config:sources ( "%s"^^xsd:string ) ;
+    config:queryString "%s" .`, transformationsCatalog, source, query)
+
+	resp, bodyBytes := doWithUMA(t, http.MethodPost, collectionURL, authToken, []byte(turtleBody), "text/turtle")
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Expected 201 Created, got %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if !containsContentType(contentType, "application/json") {
+		t.Fatalf("Expected application/json content-type, got %s", contentType)
+	}
+
+	var service serviceRepresentation
+	if err := json.Unmarshal(bodyBytes, &service); err != nil {
+		t.Fatalf("Failed to decode service response: %v", err)
+	}
+
+	return service
+}
+
+func assertServiceRepresentation(t *testing.T, service serviceRepresentation) {
+	t.Helper()
+
+	if service.ID == "" {
+		t.Fatal("Service missing id")
+	}
+	if !strings.HasPrefix(service.ID, "http://") && !strings.HasPrefix(service.ID, "https://") {
+		t.Fatalf("Service id is not an absolute URL: %s", service.ID)
+	}
+	if service.Status == "" {
+		t.Fatal("Service missing status")
+	}
+	if service.CreatedAt == "" {
+		t.Fatal("Service missing created_at")
+	}
+	if service.Location == "" {
+		t.Fatal("Service missing location")
+	}
+	if service.Transformation == nil {
+		t.Fatal("Service missing transformation")
+	}
+}
+
+func deleteService(t *testing.T, serviceURL string, authToken string) {
+	t.Helper()
+
+	resp, bodyBytes := doWithUMA(t, http.MethodDelete, serviceURL, authToken, nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK on delete, got %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+}
+
+func getCollectionETag(t *testing.T, collectionURL string, authToken string) string {
+	t.Helper()
+
+	resp, bodyBytes := doWithUMA(t, http.MethodHead, collectionURL, authToken, nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK, got %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+	etag := resp.Header.Get("ETag")
+	if etag == "" {
+		t.Fatal("Expected ETag header")
+	}
+	return etag
 }

@@ -333,18 +333,20 @@ func createIngressRoute(service *model.Service, owner model.User, ctx context.Co
 	useUMA := strings.TrimSpace(owner.AuthzServerURL) != ""
 	middlewares := []interface{}{
 		map[string]interface{}{
-			"name":      "replace-path",
-			"namespace": "aggregator-app",
+			"name":      "cors",
+			"namespace": namespace,
 		},
 	}
 	if useUMA {
-		middlewares = append([]interface{}{
-			map[string]interface{}{
-				"name":      "ingress-uma",
-				"namespace": "aggregator-app",
-			},
-		}, middlewares...)
+		middlewares = append(middlewares, map[string]interface{}{
+			"name":      "ingress-uma",
+			"namespace": "aggregator-app",
+		})
 	}
+	middlewares = append(middlewares, map[string]interface{}{
+		"name":      "replace-path",
+		"namespace": "aggregator-app",
+	})
 
 	// Define IngressRoute spec
 	obj := &unstructured.Unstructured{
@@ -358,6 +360,27 @@ func createIngressRoute(service *model.Service, owner model.User, ctx context.Co
 			"spec": map[string]interface{}{
 				"entryPoints": []string{"web"},
 				"routes": []interface{}{
+					map[string]interface{}{
+						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/services/" + namespace + "/" + service.Id + "`) && Method(`OPTIONS`)",
+						"kind":  "Rule",
+						"services": []interface{}{
+							map[string]interface{}{
+								"name":      svcName,
+								"namespace": namespace,
+								"port":      8080,
+							},
+						},
+						"middlewares": []interface{}{
+							map[string]interface{}{
+								"name":      "cors",
+								"namespace": namespace,
+							},
+							map[string]interface{}{
+								"name":      "replace-path",
+								"namespace": "aggregator-app",
+							},
+						},
+					},
 					map[string]interface{}{
 						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/services/" + namespace + "/" + service.Id + "`)",
 						"kind":  "Rule",

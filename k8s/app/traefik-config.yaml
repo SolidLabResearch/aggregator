@@ -45,6 +45,7 @@ spec:
       - PUT
       - PATCH
       - DELETE
+      - HEAD
       - OPTIONS
     accessControlAllowHeaders:
       - "*"
