@@ -312,6 +312,18 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 				"entryPoints": []string{"web"},
 				"routes": []interface{}{
 					map[string]interface{}{
+						"match": "Host(`" + model.ExternalHost + "`) && (Path(`/config/" + namespace + "`) || Path(`/config/" + namespace + "/`)) && Method(`OPTIONS`)",
+						"kind":  "Rule",
+						"services": []interface{}{
+							map[string]interface{}{
+								"name":      "aggregator",
+								"port":      5000,
+								"namespace": namespace,
+							},
+						},
+						"middlewares": buildCorsOnlyMiddlewares(namespace, true),
+					},
+					map[string]interface{}{
 						"match": "Host(`" + model.ExternalHost + "`) && (Path(`/config/" + namespace + "`) || Path(`/config/" + namespace + "/`))",
 						"kind":  "Rule",
 						"services": []interface{}{
@@ -324,6 +336,18 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 						"middlewares": buildIngressMiddlewares(useUMA, namespace, true),
 					},
 					map[string]interface{}{
+						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/config/" + namespace + "/services`) && Method(`OPTIONS`)",
+						"kind":  "Rule",
+						"services": []interface{}{
+							map[string]interface{}{
+								"name":      "aggregator",
+								"port":      5000,
+								"namespace": namespace,
+							},
+						},
+						"middlewares": buildCorsOnlyMiddlewares(namespace, false),
+					},
+					map[string]interface{}{
 						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/config/" + namespace + "/services`)",
 						"kind":  "Rule",
 						"services": []interface{}{
@@ -334,6 +358,18 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 							},
 						},
 						"middlewares": buildIngressMiddlewares(useUMA, namespace, false),
+					},
+					map[string]interface{}{
+						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/config/" + namespace + "/transformations`) && Method(`OPTIONS`)",
+						"kind":  "Rule",
+						"services": []interface{}{
+							map[string]interface{}{
+								"name":      "aggregator",
+								"port":      5000,
+								"namespace": namespace,
+							},
+						},
+						"middlewares": buildCorsOnlyMiddlewares(namespace, true),
 					},
 					map[string]interface{}{
 						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/config/" + namespace + "/transformations`)",
@@ -378,6 +414,39 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 	_, err = model.DynamicClient.Resource(middlewareGVR).Namespace(namespace).Create(ctx, mwObj, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create Middleware: %w", err)
+	}
+
+	corsObj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "traefik.io/v1alpha1",
+			"kind":       "Middleware",
+			"metadata": map[string]interface{}{
+				"name":      "cors",
+				"namespace": namespace,
+			},
+			"spec": map[string]interface{}{
+				"headers": map[string]interface{}{
+					"accessControlAllowOriginList": []string{"*"},
+					"accessControlAllowMethods": []string{
+						"GET",
+						"POST",
+						"PUT",
+						"PATCH",
+						"DELETE",
+						"OPTIONS",
+						"HEAD",
+					},
+					"accessControlAllowHeaders":     []string{"*"},
+					"accessControlMaxAge":           86400,
+					"accessControlAllowCredentials": false,
+				},
+			},
+		},
+	}
+
+	_, err = model.DynamicClient.Resource(middlewareGVR).Namespace(namespace).Create(ctx, corsObj, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create CORS Middleware: %w", err)
 	}
 
 	_, err = model.DynamicClient.Resource(ingressRouteGVR).Namespace(namespace).Create(ctx, obj, metav1.CreateOptions{})
@@ -472,6 +541,10 @@ func updateAggregatorInstanceDeployments(namespace string, accessToken string, r
 
 func buildIngressMiddlewares(useUMA bool, namespace string, includeStrip bool) []interface{} {
 	middlewares := make([]interface{}, 0, 3)
+	middlewares = append(middlewares, map[string]interface{}{
+		"name":      "cors",
+		"namespace": namespace,
+	})
 	if useUMA {
 		middlewares = append(middlewares, map[string]interface{}{
 			"name":      "ingress-uma",
@@ -484,10 +557,21 @@ func buildIngressMiddlewares(useUMA bool, namespace string, includeStrip bool) [
 			"namespace": namespace,
 		})
 	}
+	return middlewares
+}
+
+func buildCorsOnlyMiddlewares(namespace string, includeStrip bool) []interface{} {
+	middlewares := make([]interface{}, 0, 2)
 	middlewares = append(middlewares, map[string]interface{}{
 		"name":      "cors",
-		"namespace": "aggregator-app",
+		"namespace": namespace,
 	})
+	if includeStrip {
+		middlewares = append(middlewares, map[string]interface{}{
+			"name":      "strip-prefix-" + namespace,
+			"namespace": namespace,
+		})
+	}
 	return middlewares
 }
 
