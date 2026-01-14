@@ -152,14 +152,16 @@ async function main() {
             try {
               result = await graphqlEngine.query(query, {
                 sources: sources as any,
-                fetch: fetchProxy
+                fetch: fetchProxy,
+                lenient: true
               });
             } catch (e: any) {
               if (e.message && (e.message.includes("variable predicate") || e.message.includes("does not exist in the schema"))) {
                 console.log("Fallback to Generic SPARQL Engine:", e.message);
                 result = await sparqlEngine.query(query, {
                   sources: sourceURLs as any,
-                  fetch: fetchProxy
+                  fetch: fetchProxy,
+                  lenient: true
                 });
               } else {
                 throw e;
@@ -168,7 +170,8 @@ async function main() {
           } else {
             result = await sparqlEngine.query(query, {
               sources: sources as any,
-              fetch: fetchProxy
+              fetch: fetchProxy,
+              lenient: true
             });
           }
 
