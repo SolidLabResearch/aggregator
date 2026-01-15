@@ -134,6 +134,8 @@ func CreateService(request model.ServiceRequest) (*model.Service, error) {
 		Services:      []corev1.Service{},
 		Ingresses:     []networkingv1.Ingress{},
 		CreatedAt:     time.Now(),
+		StatusValue:   "starting",
+		StatusUpdated: time.Now(),
 	}
 
 	// Clean up if anything fails
@@ -183,6 +185,10 @@ func createDeployment(service *model.Service, replicas int32, useUMA bool, ctx c
 		Env: []corev1.EnvVar{
 			{Name: "QUERY", Value: query},
 			{Name: "SOURCES", Value: strings.Join(sources, ",")},
+			{
+				Name:  "STATUS_ENDPOINT",
+				Value: fmt.Sprintf("http://aggregator.%s.svc.cluster.local:5000/config/%s/services/%s/status", service.Namespace, service.Namespace, service.Id),
+			},
 			/*
 							{Name: "SCHEMA", Value: `type Query {
 									observations: [ex_Observation]!

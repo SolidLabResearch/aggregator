@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
-	"aggregator/services"
 	"aggregator/auth"
 	"aggregator/model"
+	"aggregator/services"
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -22,8 +24,9 @@ type UserConfigData struct {
 	owner               model.User
 	etagServices        int
 	etagTransformations int
-	services            map[string]model.Service
+	services            map[string]*model.Service
 	serveMux            *http.ServeMux
+	servicesMu          sync.RWMutex
 }
 
 func InitUserConfiguration(mux *http.ServeMux, user model.User) error {
@@ -31,7 +34,7 @@ func InitUserConfiguration(mux *http.ServeMux, user model.User) error {
 		owner:               user,
 		etagServices:        0,
 		etagTransformations: 0,
-		services:            make(map[string]model.Service),
+		services:            make(map[string]*model.Service),
 		serveMux:            mux,
 	}
 
@@ -88,10 +91,15 @@ func (config *UserConfigData) headServices(w http.ResponseWriter, _ *http.Reques
 
 func (config *UserConfigData) getServices(w http.ResponseWriter, _ *http.Request) {
 	serviceList := []string{}
+	config.servicesMu.RLock()
 	for _, service := range config.services {
+		if service == nil {
+			continue
+		}
 		url := fmt.Sprintf("%s://%s/config/%s/services/%s", model.Protocol, model.ExternalHost, service.Namespace, service.Id)
 		serviceList = append(serviceList, url)
 	}
+	config.servicesMu.RUnlock()
 
 	response := map[string][]string{
 		"services": serviceList,
@@ -132,7 +140,10 @@ func (config *UserConfigData) postService(w http.ResponseWriter, r *http.Request
 		request.Id = uuid.NewString()
 	}
 
-	if _, exists := config.services[request.Id]; exists {
+	config.servicesMu.RLock()
+	_, exists := config.services[request.Id]
+	config.servicesMu.RUnlock()
+	if exists {
 		http.Error(w, "Service id already registered for user", http.StatusConflict)
 		return
 	}
@@ -146,11 +157,14 @@ func (config *UserConfigData) postService(w http.ResponseWriter, r *http.Request
 	}
 
 	// Store service
-	config.services[request.Id] = *service
+	config.servicesMu.Lock()
+	config.services[request.Id] = service
+	config.servicesMu.Unlock()
 	config.etagServices++
 
 	// Create config endpoint
 	config.HandleFunc(fmt.Sprintf("/config/%s/services/%s", service.Namespace, service.Id), config.HandleServiceEndpoint, []model.Scope{model.Read, model.Delete})
+	config.serveMux.HandleFunc(fmt.Sprintf("/config/%s/services/%s/status", service.Namespace, service.Id), config.HandleServiceStatusEndpoint)
 
 	// Return service information to the client
 	w.Header().Set("Content-Type", "application/json")
@@ -176,7 +190,9 @@ func (config *UserConfigData) HandleServiceEndpoint(w http.ResponseWriter, r *ht
 	parts := strings.Split(r.URL.Path, "/")
 	id := parts[4]
 
+	config.servicesMu.RLock()
 	service, ok := config.services[id]
+	config.servicesMu.RUnlock()
 	if !ok {
 		http.Error(w, "Service not found", http.StatusNotFound)
 		return
@@ -201,7 +217,7 @@ func generateServiceETag(marshaledData []byte) string {
 }
 
 // headService HEAD config/services/<namespace>/<id> returns the ETag header for the service with the given ID
-func (config *UserConfigData) headService(w http.ResponseWriter, _ *http.Request, service model.Service) {
+func (config *UserConfigData) headService(w http.ResponseWriter, _ *http.Request, service *model.Service) {
 	logrus.WithFields(logrus.Fields{"service_id": service.Id}).Debug("Request HEAD for service")
 
 	marshaledData, err := json.Marshal(&service)
@@ -218,7 +234,7 @@ func (config *UserConfigData) headService(w http.ResponseWriter, _ *http.Request
 }
 
 // getService GET config/services/<namespace>/<id> returns the full service JSON with ETag
-func (config *UserConfigData) getService(w http.ResponseWriter, _ *http.Request, service model.Service) {
+func (config *UserConfigData) getService(w http.ResponseWriter, _ *http.Request, service *model.Service) {
 	logrus.WithFields(logrus.Fields{"service_id": service.Id}).Info("Request GET for service")
 
 	marshaledData, err := json.Marshal(&service)
@@ -239,12 +255,57 @@ func (config *UserConfigData) getService(w http.ResponseWriter, _ *http.Request,
 }
 
 // DELETE config deletes a service with the given ID
-func (config *UserConfigData) deleteService(w http.ResponseWriter, _ *http.Request, service model.Service) {
+func (config *UserConfigData) deleteService(w http.ResponseWriter, _ *http.Request, service *model.Service) {
 	logrus.WithFields(logrus.Fields{"service_id": service.Id}).Info("Request to delete service")
 
 	service.Stop()
+	config.servicesMu.Lock()
 	delete(config.services, service.Id)
+	config.servicesMu.Unlock()
 
 	config.etagServices++
 	w.WriteHeader(http.StatusOK)
+}
+
+func (config *UserConfigData) HandleServiceStatusEndpoint(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodPut {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
+
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 6 || parts[5] != "status" {
+		http.Error(w, "Invalid status endpoint", http.StatusBadRequest)
+		return
+	}
+	id := parts[4]
+
+	var payload struct {
+		Status     string `json:"status"`
+		StatusText string `json:"status_text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(payload.Status) == "" {
+		http.Error(w, "status is required", http.StatusBadRequest)
+		return
+	}
+
+	config.servicesMu.Lock()
+	service, ok := config.services[id]
+	if ok && service != nil {
+		service.StatusValue = payload.Status
+		service.StatusText = payload.StatusText
+		service.StatusUpdated = time.Now()
+	}
+	config.servicesMu.Unlock()
+
+	if !ok {
+		http.Error(w, "Service not found", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -3,6 +3,27 @@ import { QueryEngine as SparqlQueryEngine } from "@comunica/query-sparql";
 import http from 'http';
 
 const proxyUrl = process.env.http_proxy || process.env.HTTP_PROXY;
+const statusEndpoint = process.env.STATUS_ENDPOINT;
+
+async function postStatus(status: string, statusText?: string): Promise<void> {
+  if (!statusEndpoint) {
+    return;
+  }
+  try {
+    await fetch(statusEndpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        status,
+        status_text: statusText || ""
+      })
+    });
+  } catch (err) {
+    console.error("Failed to post status update:", err);
+  }
+}
 
 export async function fetchProxy(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   // If no proxy is configured, use native fetch
@@ -134,6 +155,8 @@ async function main() {
   const graphqlEngine = useGraphQL ? new GraphqlQueryEngine() : null;
   const sparqlEngine = new SparqlQueryEngine();
 
+  await postStatus("starting");
+
   const server = http.createServer((req, res) => {
     (async () => {
       try {
@@ -211,6 +234,7 @@ async function main() {
         }
       } catch (err) {
         console.error("Server error:", err);
+        void postStatus("errored", err instanceof Error ? err.message : String(err));
         if (!res.headersSent) {
           res.writeHead(500, { "Content-Type": "text/plain" });
         }
@@ -219,8 +243,14 @@ async function main() {
     })();
   });
 
+  server.on("error", (err) => {
+    console.error("Server error:", err);
+    void postStatus("errored", err instanceof Error ? err.message : String(err));
+  });
+
   server.listen(8080, '0.0.0.0', () => {
     console.log("SPARQL SELECT result server running at http://0.0.0.0:8080/");
+    void postStatus("running");
   });
 }
 
