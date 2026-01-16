@@ -81,19 +81,6 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 
 // handleRegistrationDelete handles DELETE requests for removing aggregators
 func handleRegistrationDelete(w http.ResponseWriter, r *http.Request) {
-	// Authentication required
-	ownerWebID, err := authenticateRequest(r)
-	if err != nil {
-		logrus.WithError(err).Warn("Authentication failed")
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-	if ownerWebID == "" {
-		logrus.Warn("Authentication missing for delete request")
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
 	// Parse request body
 	var req struct {
 		AggregatorID string `json:"aggregator_id"`
@@ -109,18 +96,33 @@ func handleRegistrationDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check ownership
-	if err := checkOwnership(req.AggregatorID, ownerWebID); err != nil {
-		logrus.WithError(err).Warnf("Ownership check failed for aggregator %s", req.AggregatorID)
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-
 	// Get instance to clean up resources
 	instance, err := getAggregatorInstance(req.AggregatorID)
 	if err != nil {
 		http.Error(w, "Aggregator not found", http.StatusNotFound)
 		return
+	}
+
+	allowWithoutAuth := model.DisableAuth || strings.ToLower(instance.RegistrationType) == "none"
+	if !allowWithoutAuth {
+		// Authentication required
+		ownerWebID, err := authenticateRequest(r)
+		if err != nil {
+			logrus.WithError(err).Warn("Authentication failed")
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if ownerWebID == "" {
+			logrus.Warn("Authentication missing for delete request")
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		if instance.OwnerWebID != ownerWebID {
+			logrus.Warnf("Ownership check failed for aggregator %s", req.AggregatorID)
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
 	}
 
 	// Delete Kubernetes resources

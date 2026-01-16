@@ -157,6 +157,52 @@ _:execution a fno:Execution ;
 	}
 }
 
+func TestRegistration_None_DeleteWithoutAuth(t *testing.T) {
+	oidcProvider, err := mocks.NewOIDCProvider()
+	if err != nil {
+		t.Fatalf("Failed to create OIDC provider: %v", err)
+	}
+	defer oidcProvider.Close()
+
+	ownerWebID := oidcProvider.URL() + "/webid#me"
+	authToken := createAuthToken(t, oidcProvider, ownerWebID)
+
+	aggregatorID := createAggregatorViaNone(t, authToken)
+	deleted := false
+	t.Cleanup(func() {
+		if !deleted {
+			deleteAggregator(t, aggregatorID, authToken)
+		}
+	})
+
+	waitForAggregatorNamespace(t, ownerWebID)
+
+	deleteBody := map[string]interface{}{
+		"aggregator_id": aggregatorID,
+	}
+	deleteJSON, _ := json.Marshal(deleteBody)
+
+	req, err := http.NewRequest("DELETE", testEnv.AggregatorURL+"/registration", bytes.NewBuffer(deleteJSON))
+	if err != nil {
+		t.Fatalf("Failed to create delete request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Delete request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected 204 No Content, got %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	deleted = true
+}
+
 func TestRegistration_Provision_Create(t *testing.T) {
 	oidcProvider, err := mocks.NewOIDCProvider()
 	if err != nil {

@@ -256,7 +256,7 @@ func TestRegistrationHandler_Delete_Unauthenticated(t *testing.T) {
 
 	RegistrationHandler(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("Expected 401 Unauthorized, got %d", rec.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("Expected 404 Not Found, got %d", rec.Code)
 	}
 }
