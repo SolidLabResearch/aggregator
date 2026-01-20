@@ -2,10 +2,7 @@ import axios from "axios";
 import { config } from "@/config";
 
 export interface RegistrationResponse {
-  callback_uri: string;
   state: string;
-  scope: string;
-  response_type: string;
   client_id: string;
   code_challenge_method: string;
   code_challenge: string;
@@ -25,13 +22,27 @@ export interface RegistrationEndpoints {
   [key: string]: string;
 }
 
-export const startRegistration = async (idpProvider: string, asUrl: string): Promise<RegistrationResponse> => {
-  const res = await axios.post<RegistrationResponse>(`${config.aggregatorBaseUrl}/registration`, {
-    openid_provider: idpProvider,
-    as_url: asUrl,
-  });
+export const startRegistration = async (asUrl: string) => {
+  const idToken = localStorage.getItem("id_token");
+
+  if (!idToken) throw new Error("Not logged in");
+
+  const res = await axios.post(
+    `${config.aggregatorBaseUrl}/registration`,
+    {
+      registration_type: "authorization_code",
+      authorization_server: asUrl,
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+      },
+    }
+  );
+
   return res.data;
 };
+
 
 export const fetchAuthUrl = async (idpProvider: string): Promise<string> => {
   try {
@@ -46,10 +57,10 @@ export const fetchAuthUrl = async (idpProvider: string): Promise<string> => {
 
 export const buildRedirectUri = (authUrl: string, res: RegistrationResponse) => {
   const uri = new URL(authUrl);
-  uri.searchParams.append("redirect_uri", `${config.redirectUriBase}/callback`)
+  uri.searchParams.append("redirect_uri", `${config.redirectUriBase}/registration/callback`)
   uri.searchParams.append("state", res.state);
-  uri.searchParams.append("scope", res.scope);
-  uri.searchParams.append("response_type", res.response_type);
+  uri.searchParams.append("scope", "openid offline_access");
+  uri.searchParams.append("response_type", "code");
   uri.searchParams.append("client_id", res.client_id);
   uri.searchParams.append("code_challenge_method", res.code_challenge_method),
   uri.searchParams.append("code_challenge", res.code_challenge)

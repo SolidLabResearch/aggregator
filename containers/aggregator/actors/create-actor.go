@@ -18,11 +18,16 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-func CreateActor(request model.ActorRequest) (*model.Actor, error) {
+func CreateAggregatorService(
+	request model.ServiceRequest,
+	envVars []corev1.EnvVar,
+	image string,
+) (*model.Service, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	actor := model.Actor{
+	useUMA := strings.TrimSpace(request.Owner.AuthzServerURL) != ""
+	service := model.Service{
 		Id:            request.Id,
 		Description:   request.Description,
 		Namespace:     request.Owner.Namespace,
@@ -41,13 +46,13 @@ func CreateActor(request model.ActorRequest) (*model.Actor, error) {
 	}
 
 	// Create Deployment
-	if err := createDeployment(&actor, 1, ctx); err != nil {
+	if err := createDeployment(&service, envVars, image, 1, useUMA, ctx); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("pod creation failed: %w", err)
 	}
 
 	// Create Service
-	if err := createService(&actor, ctx); err != nil {
+	if err := createService(&service, ctx); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("service creation failed: %w", err)
 	}
@@ -62,63 +67,24 @@ func CreateActor(request model.ActorRequest) (*model.Actor, error) {
 	return &actor, nil
 }
 
-func createDeployment(actor *model.Actor, replicas int32, ctx context.Context) error {
+func createDeployment(
+	service *model.Service,
+	envVars []corev1.EnvVar,
+	image string,
+	replicas int32,
+	useUMA bool,
+	ctx context.Context,
+) error {
 	labels := map[string]string{
-		"app":       actor.Id,
-		"namespace": actor.Namespace,
+		"app":       service.Id,
+		"namespace": service.Namespace,
 	}
 
 	container := corev1.Container{
-		Name:            actor.Id,
-		Image:           actor.Id,
+		Name:            service.Id,
+		Image:           image,
 		ImagePullPolicy: corev1.PullNever,
-		Env: []corev1.EnvVar{
-			{Name: "QUERY", Value: `
-				PREFIX ex: <http://example.org/>
-				SELECT ?value ?unit
-				WHERE {
-					?obs ex:value ?value ;
-							ex:unit  ?unit .
-				}`,
-			},
-			{Name: "SOURCE", Value: "https://pacsoi-kvasir.faqir.org/patient0/slices/AggregatorDemoSlice/query"},
-			{Name: "SCHEMA", Value: `type Query {
-					observations: [ex_Observation]!
-					observation(id: ID!): ex_Observation
-				}
-
-				type ex_Observation {
-					id: ID!
-					ex_value: Int!
-					ex_unit: String!
-					ex_timestamp: DateTime!
-				}
-
-				type Mutation {
-					add(obs: [ObservationInput!]!): ID!
-				}
-
-				type Subscription {
-					observationAdded: ex_Observation!
-				}
-					
-				input ObservationInput @class(iri: "ex:Observation") {
-					id: ID!
-					ex_value: Int!
-					ex_unit: String!
-					ex_timestamp: DateTime!
-				}`,
-			},
-			{Name: "CONTEXT", Value: `{
-  				"kss": "https://kvasir.discover.ilabt.imec.be/vocab#",
-  				"schema": "http://schema.org/",
-  				"ex": "http://example.org/"
-				}`,
-			},
-			{Name: "HTTP_PROXY", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", actor.Namespace)},
-			{Name: "http_proxy", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", actor.Namespace)},
-			{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
-		},
+		Env:             envVars,
 		Ports: []corev1.ContainerPort{
 			{ContainerPort: 8080},
 		},
@@ -157,8 +123,8 @@ func createDeployment(actor *model.Actor, replicas int32, ctx context.Context) e
 	return nil
 }
 
-func createService(actor *model.Actor, ctx context.Context) error {
-	svcName := actor.Id + "-service"
+func createService(service *model.Service, ctx context.Context) error {
+	svcName := "svc-" + service.Id
 
 	// Check if service already exists
 	_, err := model.Clientset.CoreV1().Services(actor.Namespace).Get(ctx, svcName, metav1.GetOptions{})
@@ -222,11 +188,21 @@ func createIngressRoute(actor *model.Actor, owner model.User, ctx context.Contex
 		return fmt.Errorf("failed to check existing IngressRoute %s: %w", irName, err)
 	}
 
-	// Create Rewrite Middleware
-	// rewriteMiddleware, err := createRewriteMiddleware(actor, ctx)
-	//if err != nil {
-	//	return fmt.Errorf("failed to create rewrite middleware: %w", err)
-	//}
+	useUMA := strings.TrimSpace(owner.AuthzServerURL) != ""
+	middlewares := []interface{}{
+		map[string]interface{}{
+			"name":      "replace-path",
+			"namespace": "aggregator-app",
+		},
+	}
+	if useUMA {
+		middlewares = append([]interface{}{
+			map[string]interface{}{
+				"name":      "ingress-uma",
+				"namespace": "aggregator-app",
+			},
+		}, middlewares...)
+	}
 
 	// Define IngressRoute spec
 	obj := &unstructured.Unstructured{
@@ -287,62 +263,4 @@ func createIngressRoute(actor *model.Actor, owner model.User, ctx context.Contex
 
 	logrus.Infof("IngressRoute %s created successfully in namespace %s", irName, "aggregator-app")
 	return nil
-}
-
-// createRewriteMiddleware creates a Traefik IngressRoute Middleware to rewrite paths.
-func createRewriteMiddleware(actor *model.Actor, ctx context.Context) (string, error) {
-	// Use aggregator-app namespace for middlewares
-	namespace := "aggregator-app"
-	// Middleware name based on path
-	prefix := fmt.Sprintf("/actors/%s/%s", actor.Namespace, actor.Id)
-	mwName := fmt.Sprintf("rewrite-%s-%s", actor.Namespace, actor.Id)
-
-	// Traefik Middleware GVR
-	middlewareGVR := schema.GroupVersionResource{
-		Group:    "traefik.io",
-		Version:  "v1alpha1",
-		Resource: "middlewares",
-	}
-
-	// Check if middleware exists
-	_, err := model.DynamicClient.
-		Resource(middlewareGVR).
-		Namespace(namespace).
-		Get(ctx, mwName, metav1.GetOptions{})
-
-	if err == nil {
-		// Already exists → reuse
-		return mwName, nil
-	}
-	if !errors.IsNotFound(err) {
-		return "", fmt.Errorf("failed to check existing middleware %s: %w", mwName, err)
-	}
-
-	// Create new middleware
-	obj := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "traefik.io/v1alpha1",
-			"kind":       "Middleware",
-			"metadata": map[string]interface{}{
-				"name":      mwName,
-				"namespace": namespace,
-			},
-			"spec": map[string]interface{}{
-				"replacePathRegex": map[string]interface{}{
-					"regex":       "^" + prefix + "(/.*|$)",
-					"replacement": "/$1",
-				},
-			},
-		},
-	}
-
-	_, err = model.DynamicClient.
-		Resource(middlewareGVR).
-		Namespace(namespace).
-		Create(ctx, obj, metav1.CreateOptions{})
-	if err != nil {
-		return "", fmt.Errorf("failed to create middleware %s: %w", mwName, err)
-	}
-
-	return mwName, nil
 }

@@ -1,0 +1,70 @@
+# ClusterRole + ClusterRoleBinding for namespace management
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aggregator-namespace-manager
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces","pods","services","configmaps","serviceaccounts"]
+    verbs: ["get","list","create","delete","update","patch","watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get","list","create","delete","update","watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get","list","create","delete","watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get","list","watch"]
+  - apiGroups: ["traefik.io"]
+    resources: ["middlewares","ingressroutes"]
+    verbs: ["get","list","create","update","delete","watch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles","rolebindings"]
+    verbs: ["get","list","create","update","delete","watch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: ["admin"]
+    verbs: ["bind"]
+  - apiGroups: ["networking.istio.io"]
+    resources: ["serviceentries","virtualservices","destinationrules","gateways","envoyfilters"]
+    verbs: ["get","list","create","update","delete","watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aggregator-namespace-manager-binding
+subjects:
+  - kind: ServiceAccount
+    name: aggregator-server-sa
+    namespace: aggregator-app
+roleRef:
+  kind: ClusterRole
+  name: aggregator-namespace-manager
+  apiGroup: rbac.authorization.k8s.io
+
+# Role + RoleBinding for transformations
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aggregator-transformation-reader
+  namespace: aggregator-app
+rules:
+  - apiGroups: ["fno.knows.idlab.ugent.be"]
+    resources: ["transformations"]
+    verbs: ["get","list","watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aggregator-transformation-reader-binding
+  namespace: aggregator-app
+subjects:
+  - kind: ServiceAccount
+    name: aggregator-server-sa
+    namespace: aggregator-app
+roleRef:
+  kind: Role
+  name: aggregator-transformation-reader
+  apiGroup: rbac.authorization.k8s.io

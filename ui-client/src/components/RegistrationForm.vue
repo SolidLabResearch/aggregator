@@ -38,7 +38,7 @@ export default defineComponent({
 
     const submit = async () => {
       try {
-        const res = await startRegistration(idpProvider.value, asUrl.value);
+        const res = await startRegistration(asUrl.value);
         const authUrl = `${await fetchAuthUrl(idpProvider.value)}`;
         const redirectUrl = buildRedirectUri(authUrl, res);
         emit("registered", redirectUrl);

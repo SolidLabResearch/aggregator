@@ -23,12 +23,12 @@ kind-start:
 		if ! kubectl config get-contexts kind-aggregator >/dev/null 2>&1; then \
 			echo "⚠️  Context 'kind-aggregator' not found, deleting and recreating cluster..."; \
 			kind delete cluster --name aggregator; \
-			kind create cluster --name aggregator --config k8s/kind-config.yaml; \
+			kind create cluster --name aggregator --config k8s/cluster/kind-config.yaml; \
 			echo "⏳ Waiting for cluster to be ready..."; \
 			kubectl wait --for=condition=Ready nodes --all --timeout=120s; \
 		fi; \
 	else \
-		kind create cluster --name aggregator --config k8s/kind-config.yaml; \
+		kind create cluster --name aggregator --config k8s/cluster/kind-config.yaml; \
 		echo "⏳ Waiting for cluster to be ready..."; \
 		kubectl wait --for=condition=Ready nodes --all --timeout=120s; \
 	fi
@@ -50,7 +50,7 @@ kind-dashboard:
 	fi
 	@helm repo update
 	@helm upgrade --install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard --create-namespace --namespace kubernetes-dashboard
-	@kubectl apply -f k8s/dashboard-admin.yaml
+	@kubectl apply -f k8s/cluster/dashboard/admin.yaml
 	@echo "🚀 Starting kubectl proxy for Kubernetes dashboard..."
 	@kubectl wait --namespace kubernetes-dashboard \
   	--for=condition=ready pod \
@@ -178,8 +178,8 @@ kind-start-traefik:
 kind-start-cleaner:
 	@echo "📄 Deploying aggregator-cleaner controller..."
 	@kubectl config use-context kind-aggregator
-	@kubectl apply -f k8s/ops/ns.yaml
-	@kubectl apply -f k8s/ops/cleaner.yaml
+	@kubectl apply -f k8s/namespaces/ops.yaml
+	@kubectl apply -k k8s/ops/
 	@echo "⏳ Waiting for aggregator-cleaner to be ready..."
 	@kubectl wait --namespace aggregator-ops \
 	  --for=condition=available deployment/aggregator-cleaner \
@@ -190,16 +190,24 @@ kind-start-cleaner:
 kind-deploy:
 	@echo "📄 Deploying aggregator application..."
 	@kubectl config use-context kind-aggregator
-	@echo "📄 Applying aggregator namespace..."
-	@kubectl apply -f k8s/app/ns.yaml
-	@echo "📄 Applying traefik config..."
-	@kubectl apply -f k8s/app/traefik-config.yaml
+
+	@echo "📄 Applying custom resources definitions..."
+	@kubectl apply -f k8s/cluster/crds/transformation.yaml
+
+	@echo "📄 Applying namespaces..."
+	@kubectl apply -f k8s/namespaces/app.yaml
+
+	@echo "📄 Applying Traefik middlewares..."
+	@kubectl apply -f k8s/app/traefik/middlewares.yaml
+
 	@echo "📄 Creating secret for ingress-uma..."
 	@kubectl -n aggregator-app create secret generic ingress-uma-key \
 		--from-file=private_key.pem=private_key.pem \
 		--dry-run=client -o yaml | kubectl apply -f -
-	@echo "📄 Applying aggregator ConfigMap..."
-	@kubectl apply -f k8s/app/config.yaml
+
+	@echo "📄 Applying aggregator ConfigMap and transformations..."
+	@kubectl apply -f k8s/config/app-config.yaml
+	@kubectl apply -f k8s/config/transformations.yaml
 
 	@echo "📄 Adding localhost entries for ingress hosts..."
 	@grep -qxF "127.0.0.1 aggregator.local" /etc/hosts || sudo -- sh -c "echo '127.0.0.1 aggregator.local' >> /etc/hosts"
@@ -292,40 +300,17 @@ stop: kind-undeploy kind-stop-traefik
 	@echo "✅ All services stopped (cluster and cleaner still running)"
 
 # -------------------------
-# wsl support
+# localhost dns configuration
 # -------------------------
 
-enable-wsl:
-	@echo "🔍 Detecting WSL2 IP..."
-	$(eval WSL_IP := $(shell hostname -I | awk '{print $$1}'))
-	@echo "Detected WSL2 IP: $(WSL_IP)"
-
-	@echo "🧠 Backing up CoreDNS ConfigMap..."
-	@kubectl -n kube-system get configmap coredns -o yaml > /tmp/coredns.yaml
-
-	@echo "🧩 Patching CoreDNS..."
-	@awk -v ip="$(WSL_IP)" '\
-		/^data:/ {print; inData=1; next} \
-		inData && /^\s*Corefile:/ { \
-			print; \
-			print "    wsl.local:53 {"; \
-			print "        hosts {"; \
-			print "            " ip " wsl.local"; \
-			print "            fallthrough"; \
-			print "        }"; \
-			print "    }"; \
-			next \
-		} \
-		{print} \
-	' /tmp/coredns.yaml > /tmp/coredns-patched.yaml
-
-	@echo "📦 Applying patched ConfigMap..."
-	@kubectl -n kube-system apply -f /tmp/coredns-patched.yaml >/dev/null
-
-	@echo "♻️ Restarting CoreDNS deployment..."
-	@kubectl -n kube-system rollout restart deployment coredns >/dev/null
-
-	@echo "✅ Done! 'wsl.local' now resolves to $(WSL_IP)"
+configure-coredns-local:
+	@echo "📄 Configuring CoreDNS for .local domains..."
+	@kubectl config use-context kind-aggregator
+	@kubectl apply -f k8s/cluster/coredns/local-hosts.yaml
+	@kubectl rollout restart deployment coredns -n kube-system
+	@echo "⏳ Waiting for CoreDNS to be ready..."
+	@kubectl wait --for=condition=ready pod -l k8s-app=kube-dns -n kube-system --timeout=60s
+	@echo "✅ CoreDNS configured for .local domains"
 
 # ------------------------
 # Tests

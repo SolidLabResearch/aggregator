@@ -38,6 +38,7 @@ func authenticateRequest(r *http.Request) (issuer string, id string, mode string
 	if err != nil {
 		return "", "", "", err
 	}
+	logrus.WithField("token", tokenString).Debug("Authenticating request with token")
 
 	// If authentication is disabled (for testing), just parse and extract WebID without validation
 	if model.DisableAuth {
