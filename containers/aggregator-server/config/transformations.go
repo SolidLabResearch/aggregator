@@ -2,27 +2,39 @@ package config
 
 import (
 	"aggregator/model"
+	"bytes"
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
+	"github.com/maartyman/rdfgo"
 	"github.com/sirupsen/logrus"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 type TransformationsConfigData struct {
 	etagTransformations int
-	transformations     string
+	transformations     []model.Transformation
+	store               rdfgo.Store
 }
 
 func InitTransformationsConfiguration(mux *http.ServeMux) error {
 	logrus.Info("Initializing transformations configuration")
 
-	transformations := fmt.Sprintf(hardcodedAvailableTransformationsTemplate, model.ExternalHost)
+	tfs, err := loadTransformationCRs()
+	if err != nil {
+		return fmt.Errorf("error loading transformation CRs: %w", err)
+	}
 
 	config := TransformationsConfigData{
 		etagTransformations: 0,
-		transformations:     transformations,
+		transformations:     tfs,
+		store:               rdfgo.NewStore(),
 	}
+	config.updateCatalog()
 
 	// Register HTTP handler
 	mux.HandleFunc("/config/transformations", config.HandleTransformationsEndpoint)
@@ -68,50 +80,130 @@ func (config *TransformationsConfigData) getAvailableTransformations(w http.Resp
 		return
 	}
 
+	// serialize store to turtle
+	var buf bytes.Buffer
+	stream := config.store.Match(nil, nil, nil, nil)
+	_, err := rdfgo.Write(stream, &buf, rdfgo.WriterOptions{
+		Format: "turtle",
+	})
+
 	header := w.Header()
 	header.Set("ETag", strconv.Itoa(config.etagTransformations))
 	header.Set("Content-Type", contentType)
-	_, err := w.Write([]byte(config.transformations))
+	_, err = w.Write(buf.Bytes())
 	if err != nil {
 		http.Error(w, "error when writing body", http.StatusInternalServerError)
 	}
 }
 
-const hardcodedAvailableTransformationsTemplate = `
-@base <http://%s/config/transformations#> .
+func (config *TransformationsConfigData) updateCatalog() {
+	// Clear existing store
+	config.store.RemoveMatches(nil, nil, nil, nil)
+
+	// Insert catalog base
+	reader := strings.NewReader(catalogBase)
+	quads, errChan := rdfgo.Parse(reader, rdfgo.ParserOptions{
+		Format:  "turtle",
+		BaseIRI: fmt.Sprintf("http://%s/config/transformations#", model.ExternalHost),
+	})
+
+	go func() {
+		for err := range errChan {
+			if err != nil {
+				logrus.WithError(err).Warn("Error parsing catalog base")
+			}
+		}
+	}()
+
+	config.store.Import(quads)
+
+	// Insert transformations
+	for _, t := range config.transformations {
+		reader := strings.NewReader(t.FNO)
+		quads, errChan := rdfgo.Parse(reader, rdfgo.ParserOptions{
+			Format:  "turtle",
+			BaseIRI: fmt.Sprintf("http://%s/config/transformations#", model.ExternalHost),
+		})
+
+		go func() {
+			for err := range errChan {
+				if err != nil {
+					logrus.WithError(err).Warn("Error parsing transformation FNO")
+				}
+			}
+		}()
+
+		config.store.Import(quads)
+
+		// Link transformation to catalog
+		config.store.AddQuadFromTerms(
+			rdfgo.NewNamedNode(fmt.Sprintf("http://%s/config/transformations#transformation-catalog", model.ExternalHost)),
+			rdfgo.NewNamedNode("https://spec.knows.idlab.ugent.be/aggregator-protocol/latest/#hasTransformation"),
+			rdfgo.NewNamedNode(fmt.Sprintf("http://%s/config/transformations#%s", model.ExternalHost, t.ID)),
+			nil,
+		)
+	}
+}
+
+func loadTransformationCRs() ([]model.Transformation, error) {
+	gvr := schema.GroupVersionResource{
+		Group:    "fno.knows.idlab.ugent.be",
+		Version:  "v1",
+		Resource: "transformations",
+	}
+
+	crList, err := model.DynamicClient.
+		Resource(gvr).
+		Namespace("aggregator-app").
+		List(context.TODO(), v1.ListOptions{})
+
+	if err != nil {
+		return nil, err
+	}
+
+	var results []model.Transformation
+
+	for _, item := range crList.Items {
+		spec, ok := item.Object["spec"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		t := model.Transformation{
+			ID:         getString(spec, "id"),
+			Image:      getString(spec, "image"),
+			EnvMapping: make(map[string]string),
+			FNO:        getString(spec, "fno"),
+		}
+
+		// envMapping
+		if env, ok := spec["envMapping"].(map[string]interface{}); ok {
+			t.EnvMapping = make(map[string]string)
+			for k, v := range env {
+				t.EnvMapping[k] = fmt.Sprint(v)
+			}
+		}
+
+		results = append(results, t)
+	}
+
+	return results, nil
+}
+
+func getString(m map[string]interface{}, key string) string {
+	if v, ok := m[key]; ok {
+		return fmt.Sprint(v)
+	}
+	return ""
+}
+
+const catalogBase = `
+@prefix aggr: <https://spec.knows.idlab.ugent.be/aggregator-protocol/latest/#> .
 @prefix fno: <https://w3id.org/function/ontology#> .
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix dct: <http://purl.org/dc/terms/> .
 
-# SPARQL execution
-<SPARQLEvaluation>
-	a                   fno:Function ;
-	fno:name            "A SPARQL query engine"^^xsd:string ;
-	fno:expects         ( <QueryString> <Sources> ) ;
-
-<QueryString>
-	a             fno:Parameter ;
-	fno:predicate <queryString> ;
-	fno:type      xsd:string ;
-	fno:required  "true"^^xsd:boolean .
-
-<Sources>
-	a             fno:Parameter ;
-	fno:predicate <sources> ;
-	fno:type      rdf:List .
-	fno:required  "true"^^xsd:boolean .
-
-<SPARQLQueryResultSource>
-    a owl:Class ;
-    rdfs:label "SPARQL Query Result Source"@en .
-
-<sparqlQueryResult>
-	a rdf:Property ;
-    rdfs:domain <SPARQLQueryResultSource> ;
-    rdfs:range xsd:anyURI .
-
-<extractVariables>
-	a rdf:Property ;
-    rdfs:domain <SPARQLQueryResultSource> ;
-    rdfs:range rdf:List 
+<transformation-catalog> a aggr:TransformationCollection ;
+    dct:title "Aggregator transformations" .
 `

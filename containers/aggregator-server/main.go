@@ -32,9 +32,9 @@ func main() {
 	logrus.SetOutput(os.Stdout)
 
 	// Read Network configuration from environment variables
-	model.ExternalHost = os.Getenv("AGGREGATOR_EXTERNAL_HOST")
+	model.ExternalHost = os.Getenv("EXTERNAL_HOST")
 	if model.ExternalHost == "" {
-		logrus.Fatal("Environment variables AGGREGATOR_EXTERNAL_HOST must be set")
+		logrus.Fatal("Environment variables EXTERNAL_HOST must be set")
 	}
 	model.Protocol = "http"
 
@@ -49,9 +49,9 @@ func main() {
 	if model.AuthServer == "" {
 		logrus.Info("Only Solid-OIDC with Web IDs is supported (no standard OIDC Authorization Server configured)")
 	} else {
-		model.ClientSecret = os.Getenv("AGG_SECRET")
+		model.ClientSecret = os.Getenv("CLIENT_SECRET")
 		if model.ClientSecret == "" {
-			logrus.Fatal("Environment variable AGG_SECRET must be set")
+			logrus.Fatal("Environment variable CLIENT_SECRET must be set")
 		}
 	}
 

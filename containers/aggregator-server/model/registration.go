@@ -44,7 +44,7 @@ type RegistrationResponse struct {
 
 // AuthorizationCodeStartResponse represents the response for authorization_code start phase
 type AuthorizationCodeStartResponse struct {
-	AggregatorClientID  string `json:"aggregator_client_id"`
+	AggregatorClientID  string `json:"client_id"`
 	CodeChallenge       string `json:"code_challenge"`
 	CodeChallengeMethod string `json:"code_challenge_method"`
 	State               string `json:"state"`

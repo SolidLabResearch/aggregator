@@ -10,12 +10,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 // UMAAuthorizationServer mocks a UMA 2.0 Authorization Server
@@ -27,6 +27,8 @@ type UMAAuthorizationServer struct {
 	tickets           map[string]*UMATicket
 	rpts              map[string]*RPT
 	policies          map[string]*Policy
+	clients           map[string]*RegistrationResponse
+	pats              map[string]*PAT
 	derivationHandles map[string]*DerivationHandle
 	privateKey        *rsa.PrivateKey
 	publicKey         *rsa.PublicKey
@@ -52,6 +54,14 @@ type UMATicket struct {
 	ResourceID string
 	Scopes     []string
 	ExpiresAt  time.Time
+}
+
+type PAT struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	Scope        string `json:"scope"`
 }
 
 type RPT struct {
@@ -85,6 +95,21 @@ type DerivationHandle struct {
 	CreatedAt            time.Time
 }
 
+type RegistrationRequest struct {
+	ClientName string `json:"client_name,omitempty"`
+	ClientURI  string `json:"client_uri,omitempty"`
+}
+
+type RegistrationResponse struct {
+	ClientURI               string   `json:"client_uri"`
+	ClientName              string   `json:"client_name,omitempty"`
+	ClientID                string   `json:"client_id"`
+	ClientSecret            string   `json:"client_secret"`
+	ClientSecretExpiresAt   int64    `json:"client_secret_expires_at"`
+	GrantTypes              []string `json:"grant_types"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
+}
+
 // NewUMAAuthorizationServer creates a new mock UMA AS
 func NewUMAAuthorizationServer() *UMAAuthorizationServer {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -98,6 +123,8 @@ func NewUMAAuthorizationServer() *UMAAuthorizationServer {
 		rpts:              make(map[string]*RPT),
 		policies:          make(map[string]*Policy),
 		derivationHandles: make(map[string]*DerivationHandle),
+		clients:           make(map[string]*RegistrationResponse),
+		pats:              make(map[string]*PAT),
 		privateKey:        privateKey,
 		publicKey:         &privateKey.PublicKey,
 		jwksKid:           generateRandomString(8),
@@ -114,8 +141,9 @@ func NewUMAAuthorizationServer() *UMAAuthorizationServer {
 	mux.HandleFunc("/policy", as.handlePolicyManagement)
 	mux.HandleFunc("/policies", as.handlePolicyManagement)
 	mux.HandleFunc("/policies/", as.handlePolicyManagement)
+	mux.HandleFunc("/register", as.handleRegistration)
 
-	listener, err := net.Listen("tcp", "0.0.0.0:0")
+	listener, err := net.Listen("tcp", "0.0.0.0:3000")
 	if err != nil {
 		panic(fmt.Errorf("failed to listen for mock UMA server: %w", err))
 	}
@@ -125,13 +153,14 @@ func NewUMAAuthorizationServer() *UMAAuthorizationServer {
 	server.Start()
 	as.server = server
 
-	issuerHost := strings.TrimSpace(os.Getenv("MOCK_UMA_HOST"))
-	if issuerHost == "" {
-		issuerHost = strings.TrimSpace(os.Getenv("MOCK_OIDC_HOST"))
-	}
-	if issuerHost == "" {
-		issuerHost = "localhost"
-	}
+	//issuerHost := strings.TrimSpace(os.Getenv("MOCK_UMA_HOST"))
+	//if issuerHost == "" {
+	//	issuerHost = strings.TrimSpace(os.Getenv("MOCK_OIDC_HOST"))
+	//}
+	//if issuerHost == "" {
+	//	issuerHost = "localhost"
+	//}
+	issuerHost := "test.local"
 
 	_, port, err := net.SplitHostPort(listener.Addr().String())
 	if err != nil {
@@ -239,6 +268,7 @@ func (as *UMAAuthorizationServer) handleUMAConfiguration(w http.ResponseWriter, 
 		"permission_endpoint":                   as.issuer + "/permission",
 		"introspection_endpoint":                as.issuer + "/introspect",
 		"policy_endpoint":                       as.issuer + "/policy",
+		"registration_endpoint":                 as.issuer + "/register",
 		"jwks_uri":                              as.issuer + "/jwks",
 		"grant_types_supported":                 []string{"urn:ietf:params:oauth:grant-type:uma-ticket"},
 		"uma_profiles_supported":                []string{"uma_2_0"},
@@ -309,9 +339,12 @@ func (as *UMAAuthorizationServer) handleTokenRequest(w http.ResponseWriter, r *h
 
 	grantType := r.FormValue("grant_type")
 
-	if grantType == "urn:ietf:params:oauth:grant-type:uma-ticket" {
+	switch grantType {
+	case "client_credentials":
+		as.handlePATRequest(w, r)
+	case "urn:ietf:params:oauth:grant-type:uma-ticket":
 		as.handleUMATicketGrant(w, r)
-	} else {
+	default:
 		http.Error(w, "Unsupported grant type", http.StatusBadRequest)
 	}
 }
@@ -357,6 +390,72 @@ func (as *UMAAuthorizationServer) handleUMATicketGrant(w http.ResponseWriter, r 
 	json.NewEncoder(w).Encode(response)
 }
 
+func (as *UMAAuthorizationServer) handlePATRequest(w http.ResponseWriter, r *http.Request) {
+	// Check scope
+	scope := r.FormValue("scope")
+	if scope != "uma_protection" {
+		http.Error(w, "Invalid scope", http.StatusBadRequest)
+		return
+	}
+
+	// Parse Basic Auth
+	auth := r.Header.Get("Authorization")
+	if auth == "" || !strings.HasPrefix(auth, "Basic ") {
+		http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
+		return
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(auth, "Basic "))
+	if err != nil {
+		http.Error(w, "Invalid Authorization header", http.StatusUnauthorized)
+		return
+	}
+
+	parts := strings.SplitN(string(decoded), ":", 2)
+	if len(parts) != 2 {
+		http.Error(w, "Invalid credentials format", http.StatusUnauthorized)
+		return
+	}
+
+	clientID := parts[0]
+	clientSecret := parts[1]
+
+	// (Mock) accept any credentials, or validate if you store them
+	_ = clientID
+	_ = clientSecret
+
+	// Reuse PAT if still valid
+	as.mu.Lock()
+	defer as.mu.Unlock()
+
+	if as.pats == nil {
+		as.pats = make(map[string]*PAT)
+	}
+
+	if token, ok := as.pats[clientID]; ok {
+		writeJSON(w, token)
+		return
+	}
+
+	// Generate new PAT
+	token := &PAT{
+		AccessToken:  "pat-" + uuid.NewString(),
+		RefreshToken: uuid.NewString(),
+		TokenType:    "Bearer",
+		ExpiresIn:    3600,
+		Scope:        "uma_protection",
+	}
+
+	as.pats[clientID] = token
+
+	writeJSON(w, token)
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
+}
+
 func (as *UMAAuthorizationServer) handleRPTIntrospection(w http.ResponseWriter, r *http.Request) {
 	// TODO: Implement RPT introspection endpoint
 	// 1. Extract RPT token from request
@@ -368,6 +467,41 @@ func (as *UMAAuthorizationServer) handleRPTIntrospection(w http.ResponseWriter, 
 
 func (as *UMAAuthorizationServer) handlePolicyManagement(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
+}
+
+func (as *UMAAuthorizationServer) handleRegistration(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req RegistrationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+
+	// Generate mock credentials
+	clientID := uuid.NewString()
+	clientSecret := uuid.NewString() + uuid.NewString()
+
+	resp := RegistrationResponse{
+		ClientURI:               req.ClientURI,
+		ClientName:              req.ClientName,
+		ClientID:                clientID,
+		ClientSecret:            clientSecret,
+		ClientSecretExpiresAt:   0, // never expires
+		GrantTypes:              []string{"client_credentials", "refresh_token"},
+		TokenEndpointAuthMethod: "client_secret_basic",
+	}
+
+	as.mu.Lock()
+	as.clients[clientID] = &resp
+	as.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (as *UMAAuthorizationServer) handleJWKS(w http.ResponseWriter, r *http.Request) {
@@ -486,8 +620,8 @@ func (as *UMAAuthorizationServer) handleResourceListOrDetail(w http.ResponseWrit
 	}
 
 	response := map[string]interface{}{
-		"_id":            resource.ResourceID,
-		"name":           resource.Name,
+		"_id":             resource.ResourceID,
+		"name":            resource.Name,
 		"resource_scopes": append([]string(nil), resource.Scopes...),
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -552,7 +686,6 @@ func toRPTPermissions(perms []Permission) []map[string]interface{} {
 	}
 	return result
 }
-
 
 // evaluatePolicy checks if access should be granted based on policy
 func (as *UMAAuthorizationServer) evaluatePolicy(resourceID, webID string, requestedScopes []string) bool {

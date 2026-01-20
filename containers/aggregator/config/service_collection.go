@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"strings"
 
-	"aggregator/services"
 	"aggregator/auth"
 	"aggregator/model"
+	"aggregator/services"
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -138,15 +138,15 @@ func (config *UserConfigData) postService(w http.ResponseWriter, r *http.Request
 	}
 
 	// create service
-	service, err := services.CreateService(request)
+	service, err := services.HandleServiceRequest(request)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to create service")
-		http.Error(w, fmt.Sprintf("Failed to create service: %v", err), http.StatusInternalServerError)
+		logrus.WithError(err).Error("Failed to create service from request")
+		http.Error(w, fmt.Sprintf("Failed to create service from request: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	// Store service
-	config.services[request.Id] = *service
+	config.services[service.Id] = *service
 	config.etagServices++
 
 	// Create config endpoint

@@ -13,7 +13,8 @@ spec:
 
     <CalculateWeightDistribution>
       a fno:Function ;
-      fno:expects ( <Sources> ) .
+      fno:expects ( <Sources> ) ;
+      fno:returns ( <WeightDistribution> ) .
 
     <Sources>
       a fno:Parameter ;

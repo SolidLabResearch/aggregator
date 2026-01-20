@@ -13,7 +13,7 @@ spec:
       labels:
         app: aggregator-server
     spec:
-      serviceAccountName: aggregator-sa
+      serviceAccountName: aggregator-server-sa
       containers:
         - name: aggregator-server
           image: aggregator-server

@@ -4,13 +4,10 @@ metadata:
   name: aggregator-config
   namespace: aggregator-app
 data:
-  log_level: "debug"
-  disable_auth: "false"
-  client_id: "aggregator"
-  auth_server: "https://auth.example"
-  auth_server_secret: "AtctW4sdbmjcfF9gQJIf5RoK6T6wetwG"
-  allowed_registration_types: "authorization_code,client_credentials,provision,none"
-  provision_client_id: "provision-client-id"
-  provision_client_secret: "provision-client-secret"
-  provision_webid: "https://provision.example/webid#me"
-  provision_authorization_server: "https://uma.example"
+  LOG_LEVEL: "debug"
+  EXTERNAL_HOST: "aggregator.local"
+  DISABLE_AUTH: "false"
+  CLIENT_ID: "aggregator"
+  AUTH_SERVER: "https://pacsoi-idp.faqir.org/"
+  CLIENT_SECRET: "AtctW4sdbmjcfF9gQJIf5RoK6T6wetwG"
+  ALLOWED_REGISTRATION_TYPES: "authorization_code,client_credentials"

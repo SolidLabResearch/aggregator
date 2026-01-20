@@ -5,9 +5,12 @@ export interface AppConfig {
   keycloak: {
     clientId: string;
     url: string; 
-    redirectUri: string; 
     scope?: string;
   };
+  user: {
+    username: string,
+    password: string,
+  }
 }
 
 export const config: AppConfig = {
@@ -17,7 +20,10 @@ export const config: AppConfig = {
   keycloak: {
     clientId: "moveup-app",
     url: "https://pacsoi-idp.faqir.org/realms/kvasir",
-    redirectUri: "http://localhost:5173/callback",
     scope: "openid profile email offline_access",
   },
+  user: {
+    username: "alice",
+    password: "7714",
+  }
 };

@@ -39,8 +39,8 @@ func main() {
 	UpdateTokensFile = os.Getenv("UPDATE_TOKENS_FILE")
 	TokenEndpoint = os.Getenv("TOKEN_ENDPOINT")
 
-	if ClientId == "" || ClientSecret == "" {
-		logrus.Fatal("One or more required environment variables are missing")
+	if ClientId == "" {
+		logrus.Fatal("CLIENT_ID is not set")
 	}
 	if TokenEndpoint == "" {
 		logrus.Warn("TOKEN_ENDPOINT is empty; token refresh disabled")

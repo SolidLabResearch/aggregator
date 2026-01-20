@@ -39,12 +39,12 @@ func handleAuthorizationCodeStart(w http.ResponseWriter, req model.RegistrationR
 	}
 
 	// Validate required fields
-	if req.AuthorizationServer == "" {
-		http.Error(w, "authorization_server is required", http.StatusBadRequest)
-		return
-	}
 	if mode == "solid-oidc" && req.ClientID == "" {
 		http.Error(w, "client_id is required", http.StatusBadRequest)
+		return
+	}
+	if req.AuthorizationServer == "" {
+		http.Error(w, "authorization_server is required", http.StatusBadRequest)
 		return
 	}
 

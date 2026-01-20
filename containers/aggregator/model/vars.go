@@ -10,7 +10,6 @@ var Protocol string
 var ExternalHost string
 
 var ClientId string
-var ClientSecret string
 
 var Clientset kubernetes.Interface
 var DynamicClient *dynamic.DynamicClient

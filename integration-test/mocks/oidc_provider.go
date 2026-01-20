@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -21,17 +20,17 @@ import (
 
 // OIDCProvider mocks an OpenID Connect Identity Provider
 type OIDCProvider struct {
-	server        *httptest.Server
-	privateKey    *rsa.PrivateKey
-	publicKey     *rsa.PublicKey
-	issuer        string
-	jwksKid       string
-	mu            sync.RWMutex
-	users         map[string]*User
-	clients       map[string]*Client
-	authCodes     map[string]*AuthorizationCode
-	tokens        map[string]*TokenInfo
-	refreshTokens map[string]*RefreshTokenInfo
+	server                     *httptest.Server
+	privateKey                 *rsa.PrivateKey
+	publicKey                  *rsa.PublicKey
+	issuer                     string
+	jwksKid                    string
+	mu                         sync.RWMutex
+	users                      map[string]*User
+	clients                    map[string]*Client
+	authCodes                  map[string]*AuthorizationCode
+	tokens                     map[string]*TokenInfo
+	refreshTokens              map[string]*RefreshTokenInfo
 	clientMetadataRedirectURIs []string
 }
 
@@ -102,7 +101,7 @@ func NewOIDCProvider() (*OIDCProvider, error) {
 	mux.HandleFunc("/webid", provider.handleWebID) // Serve WebID documents
 	mux.HandleFunc("/client-metadata", provider.handleClientMetadata)
 
-	listener, err := net.Listen("tcp", "0.0.0.0:0")
+	listener, err := net.Listen("tcp", "0.0.0.0:4000")
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen for mock OIDC provider: %w", err)
 	}
@@ -112,10 +111,11 @@ func NewOIDCProvider() (*OIDCProvider, error) {
 	server.Start()
 	provider.server = server
 
-	issuerHost := strings.TrimSpace(os.Getenv("MOCK_OIDC_HOST"))
-	if issuerHost == "" {
-		issuerHost = "oidc.local"
-	}
+	// issuerHost := strings.TrimSpace(os.Getenv("MOCK_OIDC_HOST"))
+	// if issuerHost == "" {
+	// 	issuerHost = "oidc.local"
+	// }
+	issuerHost := "test.local"
 
 	_, port, err := net.SplitHostPort(listener.Addr().String())
 	if err != nil {

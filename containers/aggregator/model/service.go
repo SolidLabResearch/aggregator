@@ -21,6 +21,18 @@ type ServiceRequest struct {
 	Owner       User   `json:"owner"`
 }
 
+type Execution struct {
+	URI            string
+	Transformation string
+	Params         map[string]string
+}
+
+type Transformation struct {
+	ID         string
+	Image      string
+	EnvMapping map[string]string
+}
+
 type Service struct {
 	Id            string
 	Description   string
@@ -75,17 +87,17 @@ func (service *Service) Status() string {
 			return "starting" // or stopped/starting
 		}
 	}
-	
+
 	// Check if the service endpoint is actually responding
 	if len(service.PrivEndpoints) > 0 {
 		endpoint := service.PrivEndpoints[0]
-		
+
 		// Parse the URL to extract host and port
 		u, err := url.Parse(endpoint)
 		if err != nil {
 			return "starting"
 		}
-		
+
 		// Try to establish a TCP connection
 		conn, err := net.DialTimeout("tcp", u.Host, 200*time.Millisecond)
 		if err != nil {
@@ -93,17 +105,17 @@ func (service *Service) Status() string {
 		}
 		defer conn.Close()
 	}
-	
+
 	return "running"
 }
 
 func (service *Service) MarshalJSON() ([]byte, error) {
 	type serviceJSON struct {
-		ID             string   `json:"id"`
-		Status         string   `json:"status"`
-		Transformation string   `json:"transformation"`
-		CreatedAt      string   `json:"created_at"`
-		Location       string   `json:"location"`
+		ID             string `json:"id"`
+		Status         string `json:"status"`
+		Transformation string `json:"transformation"`
+		CreatedAt      string `json:"created_at"`
+		Location       string `json:"location"`
 	}
 
 	location := ""

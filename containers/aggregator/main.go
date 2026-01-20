@@ -40,10 +40,6 @@ func main() {
 	if model.ClientId == "" {
 		logrus.Fatal("Environment variable CLIENT_ID must be set")
 	}
-	model.ClientSecret = os.Getenv("CLIENT_SECRET")
-	if model.ClientSecret == "" {
-		logrus.Fatal("Environment variable CLIENT_SECRET must be set")
-	}
 
 	// Read Instance Identity
 	userNamespace := os.Getenv("USER_NAMESPACE")

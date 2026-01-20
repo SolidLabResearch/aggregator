@@ -158,7 +158,9 @@ func refreshAccessToken(refreshToken string) (string, int, string, error) {
 	data.Set("grant_type", "refresh_token")
 	data.Set("refresh_token", refreshToken)
 	data.Set("client_id", ClientId)
-	data.Set("client_secret", ClientSecret)
+	if ClientSecret != "" {
+		data.Set("client_secret", ClientSecret)
+	}
 
 	req, err := http.NewRequest("POST", TokenEndpoint, strings.NewReader(data.Encode()))
 	if err != nil {
