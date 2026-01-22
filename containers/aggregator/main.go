@@ -4,6 +4,7 @@ import (
 	"aggregator/config"
 	"aggregator/model"
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -41,33 +42,42 @@ func main() {
 		logrus.Fatal("Environment variable CLIENT_ID must be set")
 	}
 
-	// Read Instance Identity
-	userNamespace := os.Getenv("USER_NAMESPACE")
-	if userNamespace == "" {
+	// Read Aggregator Identity
+	model.Namespace = os.Getenv("USER_NAMESPACE")
+	if model.Namespace == "" {
 		logrus.Fatal("Environment variable USER_NAMESPACE must be set")
 	}
-	userId := os.Getenv("USER_ID")
-	if userId == "" {
+	id := os.Getenv("USER_ID")
+	if id == "" {
 		logrus.Fatal("Environment variable USER_ID must be set")
 	}
 	asUrl := os.Getenv("AS_URL")
 	if asUrl == "" {
 		logrus.Warn("Environment variable AS_URL is empty; UMA registration is disabled")
 	}
-
-	// Determine if proxy should be used (disabled when DISABLE_AUTH is true)
-	disableAuth := strings.ToLower(os.Getenv("DISABLE_AUTH")) == "true"
-	useProxy := !disableAuth && asUrl != ""
-	if disableAuth {
-		logrus.Info("Proxy disabled (DISABLE_AUTH=true)")
+	model.Owner = model.User{
+		UserId:         id,
+		AuthzServerURL: asUrl,
 	}
+
+	// Read Aggregator Configuration
+	model.TransformationCatalog = os.Getenv("TRANSFORMATION_CATALOG")
+	if model.TransformationCatalog == "" {
+		logrus.Warn("Environment variable TRANSFORMATION_CATALOG was not set. default=/transformations")
+		model.TransformationCatalog = "/transformations"
+	}
+	model.ServiceCollection = os.Getenv("SERVICE_COLLECTION")
+	if model.TransformationCatalog == "" {
+		logrus.Warn("Environment variable SERVICE_COLLECTION was not set. default=/services")
+		model.ServiceCollection = "/services"
+	}
+	model.BaseUrl = fmt.Sprintf("%s://%s/%s", model.Protocol, model.ExternalHost, model.Namespace)
 
 	// Load in-cluster kubeConfig
 	kubeConfig, err := rest.InClusterConfig()
 	if err != nil {
 		logrus.Fatalf("Failed to load in-cluster config: %v", err)
 	}
-
 	model.Clientset, err = kubernetes.NewForConfig(kubeConfig)
 	if err != nil {
 		logrus.Fatalf("Failed to create Kubernetes client: %v", err)
@@ -80,33 +90,28 @@ func main() {
 	// Configure HTTP server
 	serverMux := http.NewServeMux()
 
-	// Initialize User Configuration
-	user := model.User{
-		UserId:         userId,
-		Namespace:      userNamespace,
-		AuthzServerURL: asUrl,
-		UseProxy:       useProxy,
-	}
-	err = config.InitUserConfiguration(serverMux, user)
-	if err != nil {
-		logrus.WithError(err).Fatalf("Failed to set up user configuration endpoint")
-	}
-
 	// Initialize Aggregator Description
-	if err := config.InitAggregatorDescription(serverMux, user); err != nil {
+	if err := config.InitAggregatorDescription(serverMux); err != nil {
 		logrus.WithError(err).Fatalf("Failed to set up aggregator description endpoint")
 	}
 
-	// Initialize Instance Transformations
-	err = config.InitInstanceConfiguration(serverMux, user)
+	// Initialize service collection
+	err = config.InitServiceCollection(serverMux)
 	if err != nil {
-		logrus.WithError(err).Fatalf("Failed to set up instance configuration endpoint")
+		logrus.WithError(err).Fatalf("Failed to set up service collection endpoint")
+	}
+
+	// Initialize transformation catalog
+	err = config.InitTransformationCatalog(serverMux)
+	if err != nil {
+		logrus.WithError(err).Fatalf("Failed to set up transformation catalog endpoint")
 	}
 
 	// Start HTTP server
+	loggedMux := loggingMiddleware(serverMux)
 	srv := &http.Server{
 		Addr:    ":5000",
-		Handler: serverMux,
+		Handler: loggedMux,
 	}
 
 	go func() {
@@ -131,4 +136,18 @@ func main() {
 	}
 
 	logrus.Info("Server stopped gracefully")
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logrus.WithFields(logrus.Fields{
+			"method": r.Method,
+			"path":   r.URL.Path,
+			"query":  r.URL.RawQuery,
+			"remote": r.RemoteAddr,
+			"agent":  r.UserAgent(),
+		}).Debug("Incoming request")
+
+		next.ServeHTTP(w, r)
+	})
 }

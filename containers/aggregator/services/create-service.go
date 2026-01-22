@@ -20,24 +20,39 @@ import (
 )
 
 func CreateAggregatorService(
-	request model.ServiceRequest,
-	envVars []corev1.EnvVar,
-	image string,
+	id string,
+	path string,
+	exe model.Execution,
 ) (*model.Service, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	useUMA := strings.TrimSpace(request.Owner.AuthzServerURL) != ""
+	// Load the corresponding tf CR
+	tf, err := LoadTransformationCR(exe.Transformation)
+	if err != nil {
+		logrus.WithError(err).Errorf("Failed to load transformation CR for %s", exe.Transformation)
+		return nil, fmt.Errorf("Unable to load transformation %s", exe.Transformation)
+	}
+
+	// Convert parameters to environment variables
+	envVars, err := ParametersToEnvVars(exe.Params, tf.InputMapping)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to convert parameters to environment variables")
+		return nil, fmt.Errorf("Failed to convert parameters to environment variables")
+	}
+
+	useUMA := strings.TrimSpace(model.Owner.AuthzServerURL) != ""
 	service := model.Service{
-		Id:            request.Id,
-		Description:   request.Description,
-		Namespace:     request.Owner.Namespace,
-		PubEndpoints:  []string{},
-		PrivEndpoints: []string{},
-		Deployments:   []appsv1.Deployment{},
-		Services:      []corev1.Service{},
-		Ingresses:     []networkingv1.Ingress{},
-		CreatedAt:     time.Now(),
+		ID:               id,
+		Path:             path,
+		Exe:              exe,
+		Namespace:        model.Namespace,
+		Endpoints:        []string{},
+		ClusterEndpoints: []string{},
+		Deployments:      []appsv1.Deployment{},
+		Services:         []corev1.Service{},
+		Ingresses:        []networkingv1.Ingress{},
+		CreatedAt:        time.Now(),
 	}
 
 	// Clean up if anything fails
@@ -48,19 +63,19 @@ func CreateAggregatorService(
 	}
 
 	// Create Deployment
-	if err := createDeployment(&service, envVars, image, 1, useUMA, ctx); err != nil {
+	if err := createDeployment(&service, envVars, tf.Image, 1, useUMA, ctx); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("pod creation failed: %w", err)
 	}
 
 	// Create Service
-	if err := createService(&service, ctx); err != nil {
+	if err := createService(&service, tf.Ports(), ctx); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("service creation failed: %w", err)
 	}
 
 	// Create Ingress
-	if err := createIngressRoute(&service, request.Owner, ctx); err != nil {
+	if err := createIngressRoute(&service, tf.OutputMapping, model.Owner, ctx); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("ingress route creation failed: %w", err)
 	}
@@ -78,12 +93,12 @@ func createDeployment(
 	ctx context.Context,
 ) error {
 	labels := map[string]string{
-		"app":       service.Id,
+		"app":       service.ID,
 		"namespace": service.Namespace,
 	}
 
 	container := corev1.Container{
-		Name:            service.Id,
+		Name:            service.ID,
 		Image:           image,
 		ImagePullPolicy: corev1.PullNever,
 		Env:             envVars,
@@ -101,7 +116,7 @@ func createDeployment(
 
 	deploySpec := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      service.Id,
+			Name:      service.ID,
 			Namespace: service.Namespace,
 			Labels:    labels,
 		},
@@ -124,21 +139,30 @@ func createDeployment(
 
 	deploy, err := model.Clientset.AppsV1().Deployments(service.Namespace).Create(ctx, deploySpec, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to create deployment %s: %w", service.Id, err)
+		return fmt.Errorf("failed to create deployment %s: %w", service.ID, err)
 	}
 	service.Deployments = append(service.Deployments, *deploy)
 
-	logrus.Infof("Deployment %s created successfully in namespace %s", service.Id, service.Namespace)
+	logrus.Infof("Deployment %s created successfully in namespace %s", service.ID, service.Namespace)
 	return nil
 }
 
-func createService(service *model.Service, ctx context.Context) error {
-	svcName := "svc-" + service.Id
+func createService(service *model.Service, ports []int32, ctx context.Context) error {
+	svcName := "svc-" + service.ID
 
 	// Check if service already exists
 	_, err := model.Clientset.CoreV1().Services(service.Namespace).Get(ctx, svcName, metav1.GetOptions{})
 	if err == nil {
 		return fmt.Errorf("service %s already exists in namespace %s", svcName, service.Namespace)
+	}
+
+	// Build service ports
+	servicePorts := make([]corev1.ServicePort, 0, len(ports))
+	for _, port := range ports {
+		servicePorts = append(servicePorts, corev1.ServicePort{
+			Port:       port,
+			TargetPort: intstr.FromInt32(port),
+		})
 	}
 
 	// Specify Service
@@ -149,15 +173,10 @@ func createService(service *model.Service, ctx context.Context) error {
 		Spec: corev1.ServiceSpec{
 			Type: corev1.ServiceTypeClusterIP,
 			Selector: map[string]string{
-				"app":       service.Id,
+				"app":       service.ID,
 				"namespace": service.Namespace,
 			},
-			Ports: []corev1.ServicePort{
-				{
-					Port:       8080,
-					TargetPort: intstr.FromInt(8080),
-				},
-			},
+			Ports: servicePorts,
 		},
 	}
 
@@ -168,15 +187,12 @@ func createService(service *model.Service, ctx context.Context) error {
 	}
 	service.Services = append(service.Services, *svc)
 
-	// Register endpoint
-	service.PrivEndpoints = append(service.PrivEndpoints, fmt.Sprintf("http://%s.%s.svc.cluster.local:8080", svcName, service.Namespace))
-
 	return nil
 }
 
-func createIngressRoute(service *model.Service, owner model.User, ctx context.Context) error {
-	irName := service.Namespace + "-" + service.Id + "-ingressroute"
-	svcName := "svc-" + service.Id
+func createIngressRoute(service *model.Service, mappings map[string]model.OutputMapping, owner model.User, ctx context.Context) error {
+	irName := service.Namespace + "-" + service.ID + "-ingressroute"
+	svcName := "svc-" + service.ID
 	namespace := service.Namespace
 
 	// Check if IngressRoute already exists
@@ -197,20 +213,65 @@ func createIngressRoute(service *model.Service, owner model.User, ctx context.Co
 		return fmt.Errorf("failed to check existing IngressRoute %s: %w", irName, err)
 	}
 
-	useUMA := strings.TrimSpace(owner.AuthzServerURL) != ""
-	middlewares := []interface{}{
-		map[string]interface{}{
-			"name":      "replace-path",
-			"namespace": "aggregator-app",
-		},
-	}
-	if useUMA {
-		middlewares = append([]interface{}{
-			map[string]interface{}{
-				"name":      "ingress-uma",
-				"namespace": "aggregator-app",
+	routes := make([]interface{}, 0, len(mappings))
+	for pred, mapping := range mappings {
+		// Define replace-path middleware
+		mwName := "strip-prefix-" + service.ID + "-" + pred
+		middlewareGVR := schema.GroupVersionResource{
+			Group:    "traefik.io",
+			Version:  "v1alpha1",
+			Resource: "middlewares",
+		}
+		mwObj := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "traefik.io/v1alpha1",
+				"kind":       "Middleware",
+				"metadata": map[string]interface{}{
+					"name":      mwName,
+					"namespace": namespace,
+				},
+				"spec": map[string]interface{}{
+					"replacePath": map[string]interface{}{
+						"replacement": mapping.Path,
+					},
+				},
 			},
-		}, middlewares...)
+		}
+		_, err = model.DynamicClient.Resource(middlewareGVR).Namespace(namespace).Create(ctx, mwObj, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to create Middleware: %w", err)
+		}
+
+		middlewares := []interface{}{
+			map[string]interface{}{
+				"name":      mwName,
+				"namespace": model.Namespace,
+			},
+		}
+		if strings.TrimSpace(owner.AuthzServerURL) != "" {
+			middlewares = append([]interface{}{
+				map[string]interface{}{
+					"name":      "ingress-uma",
+					"namespace": "aggregator-app",
+				},
+			}, middlewares...)
+		}
+
+		route := map[string]interface{}{
+			"match":    "Host(`" + model.ExternalHost + "`) && PathPrefix(`/" + namespace + service.Path + "/" + pred + "`)",
+			"kind":     "Rule",
+			"priority": 100,
+			"services": []interface{}{
+				map[string]interface{}{
+					"name":      svcName,
+					"namespace": namespace,
+					"port":      mapping.Port,
+				},
+			},
+			"middlewares": middlewares,
+		}
+
+		routes = append(routes, route)
 	}
 
 	// Define IngressRoute spec
@@ -224,20 +285,7 @@ func createIngressRoute(service *model.Service, owner model.User, ctx context.Co
 			},
 			"spec": map[string]interface{}{
 				"entryPoints": []string{"web"},
-				"routes": []interface{}{
-					map[string]interface{}{
-						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/services/" + namespace + "/" + service.Id + "`)",
-						"kind":  "Rule",
-						"services": []interface{}{
-							map[string]interface{}{
-								"name":      svcName,
-								"namespace": namespace,
-								"port":      8080,
-							},
-						},
-						"middlewares": middlewares,
-					},
-				},
+				"routes":      routes,
 			},
 		},
 	}
@@ -251,15 +299,17 @@ func createIngressRoute(service *model.Service, owner model.User, ctx context.Co
 		return fmt.Errorf("failed to create IngressRoute %s: %w", irName, err)
 	}
 
-	// Register resource & endpoint with policies
-	resourceID := fmt.Sprintf("http://%s/services/%s/%s", model.ExternalHost, namespace, service.Id)
-	if err := auth.RegisterResource(resourceID, owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
-		return fmt.Errorf("failed to register resource for IngressRoute %q: %w", irName, err)
+	// Register resources & endpoints with policies
+	for pred := range mappings {
+		resourceId := model.BaseUrl + service.Path + "/" + pred
+		if err := auth.RegisterResource(resourceId, owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
+			return fmt.Errorf("failed to register resource for IngressRoute %q: %w", irName, err)
+		}
+		if err := auth.DefinePolicy(resourceId, owner.UserId, owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
+			return fmt.Errorf("failed to create policy for IngressRoute %q: %w", irName, err)
+		}
+		service.Endpoints = append(service.Endpoints, resourceId)
 	}
-	if err := auth.DefinePolicy(resourceID, owner.UserId, owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
-		return fmt.Errorf("failed to create policy for IngressRoute %q: %w", irName, err)
-	}
-	service.PubEndpoints = append(service.PubEndpoints, resourceID)
 
 	logrus.Infof("IngressRoute %s created successfully in namespace %s", irName, "aggregator-app")
 	return nil

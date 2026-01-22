@@ -23,23 +23,22 @@ type AggregatorDescription struct {
 	ServiceCollection     string `json:"service_collection"`
 }
 
-func InitAggregatorDescription(mux *http.ServeMux, user model.User) error {
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		handleAggregatorDescription(w, r, user)
-	})
+func InitAggregatorDescription(mux *http.ServeMux) error {
+	if err := auth.RegisterResource(model.BaseUrl, model.Owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
+		return fmt.Errorf("failed to register resource %s: %w", model.BaseUrl, err)
+	}
+	if err := auth.DefinePolicy(model.BaseUrl, model.Owner.UserId, model.Owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
+		return fmt.Errorf("failed to define policy for resource %s: %w", model.BaseUrl, err)
+	}
 
-	fullURL := fmt.Sprintf("%s://%s/config/%s", model.Protocol, model.ExternalHost, user.Namespace)
-	if err := auth.RegisterResource(fullURL, user.AuthzServerURL, []model.Scope{model.Read}); err != nil {
-		return fmt.Errorf("failed to register aggregator description %s: %w", fullURL, err)
-	}
-	if err := auth.DefinePolicy(fullURL, user.UserId, user.AuthzServerURL, []model.Scope{model.Read}); err != nil {
-		return fmt.Errorf("failed to define policy for aggregator description %s: %w", fullURL, err)
-	}
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		handleAggregatorDescription(w, r)
+	})
 
 	return nil
 }
 
-func handleAggregatorDescription(w http.ResponseWriter, r *http.Request, user model.User) {
+func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
@@ -50,7 +49,7 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request, user mo
 		return
 	}
 
-	tokenExpiry, err := fetchAccessTokenExpiry(user.Namespace)
+	tokenExpiry, err := fetchAccessTokenExpiry(model.Namespace)
 	loginStatus := false
 	if err == nil && tokenExpiry != "" {
 		parsed, parseErr := time.Parse(time.RFC3339, tokenExpiry)
@@ -59,19 +58,19 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request, user mo
 		}
 	}
 
-	createdAt, err := fetchCreatedAt(user.Namespace)
+	createdAt, err := fetchCreatedAt(model.Namespace)
 	if err != nil || createdAt == "" {
 		createdAt = time.Now().Format(time.RFC3339)
 	}
 
 	// TODO: semantic representations need to be added at some point
 	desc := AggregatorDescription{
-		ID:                    fmt.Sprintf("%s://%s/config/%s", model.Protocol, model.ExternalHost, user.Namespace),
+		ID:                    model.BaseUrl,
 		CreatedAt:             createdAt,
 		LoginStatus:           loginStatus,
 		TokenExpiry:           tokenExpiry,
-		TransformationCatalog: fmt.Sprintf("%s://%s/config/%s/transformations", model.Protocol, model.ExternalHost, user.Namespace),
-		ServiceCollection:     fmt.Sprintf("%s://%s/config/%s/services", model.Protocol, model.ExternalHost, user.Namespace),
+		TransformationCatalog: model.BaseUrl + model.TransformationCatalog,
+		ServiceCollection:     model.BaseUrl + model.ServiceCollection,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

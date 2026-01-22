@@ -238,7 +238,7 @@ func (env *TestEnvironment) checkAggregatorDeployed(ctx context.Context) error {
 // ensureTestDeployment checks if aggregator is deployed with test config and deploys if needed
 func (env *TestEnvironment) ensureTestDeployment(ctx context.Context) error {
 	// Check if config exists and has the integration-test marker
-	configMap, err := env.KubeClient.CoreV1().ConfigMaps("aggregator-app").Get(ctx, "aggregator-config", metav1.GetOptions{})
+	configMap, err := env.KubeClient.CoreV1().ConfigMaps("aggregator-app").Get(ctx, "server-config", metav1.GetOptions{})
 	if err == nil && isTestConfigMap(configMap) {
 		if err := env.checkAggregatorDeployed(ctx); err == nil {
 			return nil // Already deployed with test config

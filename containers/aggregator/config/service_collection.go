@@ -14,83 +14,80 @@ import (
 	"aggregator/model"
 	"aggregator/services"
 
-	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
-type UserConfigData struct {
-	owner               model.User
+type ServiceCollection struct {
 	etagServices        int
 	etagTransformations int
 	services            map[string]model.Service
-	serveMux            *http.ServeMux
+	serverMux           *http.ServeMux
 }
 
-func InitUserConfiguration(mux *http.ServeMux, user model.User) error {
-	config := UserConfigData{
-		owner:               user,
+func InitServiceCollection(mux *http.ServeMux) error {
+	logrus.Debugf("Initialiazing service collection at %s", model.ServiceCollection)
+
+	collection := ServiceCollection{
 		etagServices:        0,
 		etagTransformations: 0,
 		services:            make(map[string]model.Service),
-		serveMux:            mux,
+		serverMux:           mux,
 	}
 
-	pattern := fmt.Sprintf("/config/%s/services", user.Namespace)
-	if err := config.HandleFunc(pattern, config.HandleServicesEndpoint, []model.Scope{model.Read, model.Create}); err != nil {
-		logrus.WithError(err).Errorf("Failed to initialize user configuration endpoint '%s'", pattern)
-		return fmt.Errorf("initUserConfiguration: failed to register handler for %s: %w", pattern, err)
+	if err := collection.HandleFunc(model.ServiceCollection, collection.HandleServicesEndpoint, []model.Scope{model.Read, model.Create}); err != nil {
+		return fmt.Errorf("failed to add handler: %w", err)
 	}
 
-	logrus.Infof("User configuration endpoint initialized for user %s at %s", user.UserId, pattern)
+	logrus.Infof("Initialized service collection at %s", model.ServiceCollection)
 	return nil
 }
 
-func (config *UserConfigData) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), scopes []model.Scope) error {
-	fullURL := fmt.Sprintf("%s://%s%s", model.Protocol, model.ExternalHost, pattern)
-	logrus.Debugf("Registering handler for pattern '%s' at URL '%s'", pattern, fullURL)
+func (collec *ServiceCollection) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), scopes []model.Scope) error {
+	fullURL := model.BaseUrl + pattern
 
-	if err := auth.RegisterResource(fullURL, config.owner.AuthzServerURL, scopes); err != nil {
+	// Register resource and define policies
+	if err := auth.RegisterResource(fullURL, model.Owner.AuthzServerURL, scopes); err != nil {
 		return fmt.Errorf("failed to register resource %s: %w", fullURL, err)
 	}
-	if err := auth.DefinePolicy(fullURL, config.owner.UserId, config.owner.AuthzServerURL, scopes); err != nil {
-		return fmt.Errorf("failed to define policy for %s: %w", fullURL, err)
+	if err := auth.DefinePolicy(fullURL, model.Owner.UserId, model.Owner.AuthzServerURL, scopes); err != nil {
+		return fmt.Errorf("failed to define policy for resource %s: %w", fullURL, err)
 	}
 
 	// Register HTTP handler
-	config.serveMux.HandleFunc(pattern, handler)
-	logrus.Infof("Handler registered for pattern: %s", pattern)
+	collec.serverMux.HandleFunc(pattern, handler)
+	logrus.Infof("Handler registered at %s", pattern)
 
-	logrus.Info("HandleFunc setup completed for pattern: ", pattern)
 	return nil
 }
 
-// HandleServicesEndpoint handles requests to the /config/<namespace>/services endpoint
-func (config *UserConfigData) HandleServicesEndpoint(w http.ResponseWriter, r *http.Request) {
+// HandleServicesEndpoint handles requests to the /<namespace>/services endpoint
+func (collec *ServiceCollection) HandleServicesEndpoint(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "HEAD":
-		config.headServices(w, r)
+		collec.headServices(w, r)
 	case "GET":
-		config.getServices(w, r)
+		collec.getServices(w, r)
 	case "POST":
-		config.postService(w, r)
+		collec.postService(w, r)
 	default:
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
 }
 
-func (config *UserConfigData) headServices(w http.ResponseWriter, _ *http.Request) {
+func (collec *ServiceCollection) headServices(w http.ResponseWriter, _ *http.Request) {
 	header := w.Header()
 	header.Set("Content-Type", "application/json")
-	header.Set("ETag", strconv.Itoa(config.etagServices))
+	header.Set("ETag", strconv.Itoa(collec.etagServices))
 	w.WriteHeader(http.StatusOK)
 }
 
-func (config *UserConfigData) getServices(w http.ResponseWriter, _ *http.Request) {
+func (collec *ServiceCollection) getServices(w http.ResponseWriter, _ *http.Request) {
+	//stream = rdfgo.NewStream()
+
 	serviceList := []string{}
-	for _, service := range config.services {
-		url := fmt.Sprintf("%s://%s/config/%s/services/%s", model.Protocol, model.ExternalHost, service.Namespace, service.Id)
-		serviceList = append(serviceList, url)
+	for _, service := range collec.services {
+		serviceList = append(serviceList, service.Exe.URI)
 	}
 
 	response := map[string][]string{
@@ -98,7 +95,7 @@ func (config *UserConfigData) getServices(w http.ResponseWriter, _ *http.Request
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("ETag", strconv.Itoa(config.etagServices))
+	w.Header().Set("ETag", strconv.Itoa(collec.etagServices))
 	err := json.NewEncoder(w).Encode(response)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to encode service list")
@@ -107,10 +104,75 @@ func (config *UserConfigData) getServices(w http.ResponseWriter, _ *http.Request
 	}
 }
 
-func (config *UserConfigData) postService(w http.ResponseWriter, r *http.Request) {
+// HandleServiceEndpoint handles requests to the /<service path> endpoint
+func (collec *ServiceCollection) HandleServiceEndpoint(w http.ResponseWriter, r *http.Request) {
+	id := strings.ReplaceAll(strings.Trim(r.URL.Path, "/"), "/", "-")
+	service, ok := collec.services[id]
+	if !ok {
+		http.Error(w, "Service not found", http.StatusNotFound)
+		return
+	}
+
+	switch r.Method {
+	case "HEAD":
+		collec.headService(w, r, service)
+	case "GET":
+		collec.getService(w, r, service)
+	case "DELETE":
+		collec.deleteService(w, r, service)
+	default:
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+	}
+}
+
+// generateServiceETag generates a consistent ETag based on the marshaled service data
+func generateServiceETag(repr []byte) string {
+	hash := sha256.Sum256(repr)
+	return hex.EncodeToString(hash[:8]) // Use first 8 bytes for a shorter ETag
+}
+
+// headService HEAD /<namespace>/services/<id> returns the ETag header for the service with the given ID
+func (collec *ServiceCollection) headService(w http.ResponseWriter, _ *http.Request, service model.Service) {
+	logrus.WithFields(logrus.Fields{"service_id": service.ID}).Debug("Request HEAD for service")
+
+	repr, err := service.FnORepresentation()
+	if err != nil {
+		logrus.WithError(err).Error("Failed to generate service FnO representation")
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	header := w.Header()
+	header.Set("Content-Type", "text/turtle")
+	header.Set("ETag", generateServiceETag(repr))
+	w.WriteHeader(http.StatusOK)
+}
+
+// getService GET /<service path> returns the service FnO representation for the service with the given ID
+func (collec *ServiceCollection) getService(w http.ResponseWriter, _ *http.Request, service model.Service) {
+	logrus.WithFields(logrus.Fields{"service_id": service.ID}).Info("Request GET for service")
+
+	repr, err := service.FnORepresentation()
+	if err != nil {
+		logrus.WithError(err).Error("Failed to generate service FnO representation")
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	header := w.Header()
+	header.Set("Content-Type", "text/turtle")
+	header.Set("ETag", generateServiceETag(repr))
+
+	_, err = w.Write(repr)
+	if err != nil {
+		logrus.WithError(err).Error("Error writing service response body")
+	}
+}
+
+func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Request) {
 	logrus.Info("Recieved request to register a service")
 
-	var request model.ServiceRequest
+	var body string
 
 	contentType := r.Header.Get("Content-Type")
 	if strings.Contains(contentType, "text/turtle") {
@@ -120,131 +182,75 @@ func (config *UserConfigData) postService(w http.ResponseWriter, r *http.Request
 			http.Error(w, "Failed to read request body", http.StatusInternalServerError)
 			return
 		}
-		request.Description = string(bodyBytes)
+		body = string(bodyBytes)
 	} else {
 		http.Error(w, "Unsupported Content-Type. Only text/turtle is supported", http.StatusUnsupportedMediaType)
 		return
 	}
 
-	// add request metadata
-	request.Owner = config.owner
-	if request.Id == "" {
-		request.Id = uuid.NewString()
+	// Parse request description
+	exe, err := services.ParseRequestBody(body)
+	if err != nil {
+		http.Error(w, "Failed to parse Body", http.StatusInternalServerError)
+		return
 	}
 
-	if _, exists := config.services[request.Id]; exists {
+	// Extraxt service Id from execution URI
+	servicePath, serviceId, err := services.ValidServiceUri(exe.URI)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Invalid execution URI: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if _, exists := collec.services[serviceId]; exists {
 		http.Error(w, "Service id already registered for user", http.StatusConflict)
 		return
 	}
 
-	// create service
-	service, err := services.HandleServiceRequest(request)
+	// Create service
+	service, err := services.CreateAggregatorService(serviceId, servicePath, exe)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to create service from request")
+		logrus.Error("Failed to create service from request")
 		http.Error(w, fmt.Sprintf("Failed to create service from request: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	// Store service
-	config.services[service.Id] = *service
-	config.etagServices++
+	collec.services[service.ID] = *service
+	collec.etagServices++
 
-	// Create config endpoint
-	config.HandleFunc(fmt.Sprintf("/config/%s/services/%s", service.Namespace, service.Id), config.HandleServiceEndpoint, []model.Scope{model.Read, model.Delete})
-
-	// Return service information to the client
-	w.Header().Set("Content-Type", "application/json")
-
-	responseBytes, err := json.Marshal(service)
+	// Create service endpoint
+	err = collec.HandleFunc(servicePath, collec.HandleServiceEndpoint, []model.Scope{model.Read, model.Delete})
 	if err != nil {
-		logrus.WithError(err).Error("Failed to marshal service response")
+		logrus.WithError(err).Errorf("Error registering handler for service %s", serviceId)
+		return
+	}
+
+	// Return service information
+	w.Header().Set("Content-Type", "text/turtle")
+
+	repr, err := service.FnORepresentation()
+	if err != nil {
+		logrus.WithError(err).Error("Failed to generate service FnO representation")
 		http.Error(w, "Failed to serialize response", http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	_, err = w.Write(responseBytes)
+	_, err = w.Write(repr)
 	if err != nil {
-		logrus.WithError(err).Error("Error writing create service response")
+		logrus.WithError(err).Error("Error writing service FnO representation to response body")
 		return
-	}
-}
-
-// HandleServiceEndpoint handles requests to the /config/<namespace>/services/<id> endpoint
-func (config *UserConfigData) HandleServiceEndpoint(w http.ResponseWriter, r *http.Request) {
-	// Parse service ID from the URL
-	parts := strings.Split(r.URL.Path, "/")
-	id := parts[4]
-
-	service, ok := config.services[id]
-	if !ok {
-		http.Error(w, "Service not found", http.StatusNotFound)
-		return
-	}
-
-	switch r.Method {
-	case "HEAD":
-		config.headService(w, r, service)
-	case "GET":
-		config.getService(w, r, service)
-	case "DELETE":
-		config.deleteService(w, r, service)
-	default:
-		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
-	}
-}
-
-// generateServiceETag generates a consistent ETag based on the marshaled service data
-func generateServiceETag(marshaledData []byte) string {
-	hash := sha256.Sum256(marshaledData)
-	return hex.EncodeToString(hash[:8]) // Use first 8 bytes for a shorter ETag
-}
-
-// headService HEAD config/services/<namespace>/<id> returns the ETag header for the service with the given ID
-func (config *UserConfigData) headService(w http.ResponseWriter, _ *http.Request, service model.Service) {
-	logrus.WithFields(logrus.Fields{"service_id": service.Id}).Debug("Request HEAD for service")
-
-	marshaledData, err := json.Marshal(&service)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to marshal service for HEAD request")
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	header := w.Header()
-	header.Set("Content-Type", "application/json")
-	header.Set("ETag", generateServiceETag(marshaledData))
-	w.WriteHeader(http.StatusOK)
-}
-
-// getService GET config/services/<namespace>/<id> returns the full service JSON with ETag
-func (config *UserConfigData) getService(w http.ResponseWriter, _ *http.Request, service model.Service) {
-	logrus.WithFields(logrus.Fields{"service_id": service.Id}).Info("Request GET for service")
-
-	marshaledData, err := json.Marshal(&service)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to marshal service for GET request")
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	header := w.Header()
-	header.Set("Content-Type", "application/json")
-	header.Set("ETag", generateServiceETag(marshaledData))
-
-	_, err = w.Write(marshaledData)
-	if err != nil {
-		logrus.WithError(err).Error("Error writing service response body")
 	}
 }
 
 // DELETE config deletes a service with the given ID
-func (config *UserConfigData) deleteService(w http.ResponseWriter, _ *http.Request, service model.Service) {
-	logrus.WithFields(logrus.Fields{"service_id": service.Id}).Info("Request to delete service")
+func (collec *ServiceCollection) deleteService(w http.ResponseWriter, _ *http.Request, service model.Service) {
+	logrus.WithFields(logrus.Fields{"service_id": service.ID}).Info("Request to delete service")
 
 	service.Stop()
-	delete(config.services, service.Id)
+	delete(collec.services, service.ID)
 
-	config.etagServices++
+	collec.etagServices++
 	w.WriteHeader(http.StatusOK)
 }

@@ -27,7 +27,7 @@ metadata:
   namespace: aggregator-app
 spec:
   replacePathRegex:
-    regex: "^/services/[^/]+/[^/]+(?:/(.*))?$"
+    regex: "^/[^/]+/services/[^/]+(?:/(.*))?$"
     replacement: "/$1"
 ---
 apiVersion: traefik.io/v1alpha1

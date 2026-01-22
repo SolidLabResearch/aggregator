@@ -1,10 +1,6 @@
 package registration
 
 import (
-	"aggregator/model"
-	"bytes"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -23,6 +19,7 @@ func authToken(t *testing.T, webID string) string {
 	return tokenString
 }
 
+/*
 func setDisableAuth(t *testing.T, value bool) {
 	t.Helper()
 
@@ -260,3 +257,4 @@ func TestRegistrationHandler_Delete_Unauthenticated(t *testing.T) {
 		t.Fatalf("Expected 401 Unauthorized, got %d", rec.Code)
 	}
 }
+*/

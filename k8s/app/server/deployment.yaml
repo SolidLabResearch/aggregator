@@ -22,4 +22,6 @@ spec:
             - containerPort: 5000
           envFrom:
             - configMapRef:
-                name: aggregator-config
+                name: server-config
+            - configMapRef:
+                name: spec-config

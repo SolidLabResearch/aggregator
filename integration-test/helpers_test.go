@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"aggregator-integration-test/mocks"
+
 	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -912,7 +913,7 @@ func updateProvisionConfig(t *testing.T, clientID, clientSecret, webID, authoriz
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	configMap, err := testEnv.KubeClient.CoreV1().ConfigMaps("aggregator-app").Get(ctx, "aggregator-config", metav1.GetOptions{})
+	configMap, err := testEnv.KubeClient.CoreV1().ConfigMaps("aggregator-app").Get(ctx, "server-config", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to fetch aggregator configmap: %v", err)
 	}

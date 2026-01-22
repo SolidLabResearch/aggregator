@@ -170,17 +170,17 @@ func loadTransformationCRs() ([]model.Transformation, error) {
 		}
 
 		t := model.Transformation{
-			ID:         getString(spec, "id"),
-			Image:      getString(spec, "image"),
-			EnvMapping: make(map[string]string),
-			FNO:        getString(spec, "fno"),
+			ID:           getString(spec, "id"),
+			Image:        getString(spec, "image"),
+			InputMapping: make(map[string]string),
+			FNO:          getString(spec, "fno"),
 		}
 
-		// envMapping
-		if env, ok := spec["envMapping"].(map[string]interface{}); ok {
-			t.EnvMapping = make(map[string]string)
+		// inputMapping
+		if env, ok := spec["inputMapping"].(map[string]interface{}); ok {
+			t.InputMapping = make(map[string]string)
 			for k, v := range env {
-				t.EnvMapping[k] = fmt.Sprint(v)
+				t.InputMapping[k] = fmt.Sprint(v)
 			}
 		}
 

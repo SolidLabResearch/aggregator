@@ -1,8 +1,8 @@
 package model
 
 type Transformation struct {
-	ID         string
-	Image      string
-	EnvMapping map[string]string
-	FNO        string
+	ID           string
+	Image        string
+	InputMapping map[string]string
+	FNO          string
 }

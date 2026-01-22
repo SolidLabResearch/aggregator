@@ -1,13 +1,15 @@
 package model
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
+	"sort"
 	"time"
 
+	"github.com/maartyman/rdfgo"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -15,34 +17,54 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-type ServiceRequest struct {
-	Id          string `json:"id"`
-	Description string `json:"description"`
-	Owner       User   `json:"owner"`
-}
-
 type Execution struct {
 	URI            string
 	Transformation string
-	Params         map[string]string
+	Params         map[string]rdfgo.ITerm
 }
 
 type Transformation struct {
-	ID         string
-	Image      string
-	EnvMapping map[string]string
+	ID            string
+	Image         string
+	InputMapping  map[string]string
+	OutputMapping map[string]OutputMapping
+}
+
+type OutputMapping struct {
+	Port int32
+	Path string
+}
+
+func (tf *Transformation) Ports() []int32 {
+	unique := make(map[int32]struct{})
+
+	for _, out := range tf.OutputMapping {
+		unique[out.Port] = struct{}{}
+	}
+
+	ports := make([]int32, 0, len(unique))
+	for p := range unique {
+		ports = append(ports, p)
+	}
+
+	sort.Slice(ports, func(i, j int) bool {
+		return ports[i] < ports[j]
+	})
+
+	return ports
 }
 
 type Service struct {
-	Id            string
-	Description   string
-	Namespace     string
-	PubEndpoints  []string
-	PrivEndpoints []string
-	Deployments   []appsv1.Deployment
-	Services      []corev1.Service
-	Ingresses     []networkingv1.Ingress
-	CreatedAt     time.Time
+	ID               string
+	Path             string
+	Exe              Execution
+	Namespace        string
+	Endpoints        []string
+	ClusterEndpoints []string
+	Deployments      []appsv1.Deployment
+	Services         []corev1.Service
+	Ingresses        []networkingv1.Ingress
+	CreatedAt        time.Time
 }
 
 func (service *Service) Stop() error {
@@ -89,8 +111,8 @@ func (service *Service) Status() string {
 	}
 
 	// Check if the service endpoint is actually responding
-	if len(service.PrivEndpoints) > 0 {
-		endpoint := service.PrivEndpoints[0]
+	if len(service.ClusterEndpoints) > 0 {
+		endpoint := service.ClusterEndpoints[0]
 
 		// Parse the URL to extract host and port
 		u, err := url.Parse(endpoint)
@@ -109,27 +131,104 @@ func (service *Service) Status() string {
 	return "running"
 }
 
-func (service *Service) MarshalJSON() ([]byte, error) {
-	type serviceJSON struct {
-		ID             string `json:"id"`
-		Status         string `json:"status"`
-		Transformation string `json:"transformation"`
-		CreatedAt      string `json:"created_at"`
-		Location       string `json:"location"`
+func (service *Service) FnORepresentation() ([]byte, error) {
+	stream := rdfgo.NewStream()
+
+	go func() {
+		defer close(stream)
+
+		// service URI is a service
+		quad, err := rdfgo.NewQuad(
+			rdfgo.NewNamedNode(service.Exe.URI),
+			rdfgo.IRI.RDF.Type,
+			FnO("Service"),
+			nil,
+		)
+		if err != nil {
+			return
+		}
+		stream <- quad
+
+		// service status
+		quad, err = rdfgo.NewQuad(
+			rdfgo.NewNamedNode(service.Exe.URI),
+			Agg("status"),
+			rdfgo.NewStringLiteral(service.Status(), "en"),
+			nil,
+		)
+		if err != nil {
+			return
+		}
+		stream <- quad
+
+		// service createdAt
+		quad, err = rdfgo.NewQuad(
+			rdfgo.NewNamedNode(service.Exe.URI),
+			Agg("createdAt"),
+			rdfgo.NewLiteral(service.CreatedAt.Format(time.RFC3339), "", DateTime),
+			nil,
+		)
+		if err != nil {
+			return
+		}
+		stream <- quad
+
+		// used transformation
+		tfNode := rdfgo.NewBlankNode("tf")
+
+		quad, err = rdfgo.NewQuad(
+			tfNode,
+			rdfgo.IRI.RDF.Type,
+			FnO("Execution"),
+			nil,
+		)
+		if err != nil {
+			return
+		}
+		stream <- quad
+
+		quad, err = rdfgo.NewQuad(
+			tfNode,
+			FnO("executes"),
+			rdfgo.NewNamedNode(service.Exe.Transformation),
+			nil,
+		)
+		if err != nil {
+			return
+		}
+		stream <- quad
+
+		for param, value := range service.Exe.Params {
+			quad, err = rdfgo.NewQuad(
+				tfNode,
+				rdfgo.NewNamedNode(param),
+				value,
+				nil,
+			)
+			if err != nil {
+				return
+			}
+			stream <- quad
+		}
+
+		quad, err = rdfgo.NewQuad(
+			rdfgo.NewNamedNode(service.Exe.URI),
+			Agg("transformation"),
+			tfNode,
+			nil,
+		)
+		if err != nil {
+			return
+		}
+		stream <- quad
+	}()
+
+	// serialize to turtle
+	var buf bytes.Buffer
+	_, err := rdfgo.Write(stream.ToIStream(), &buf, rdfgo.WriterOptions{Format: "turtle"})
+	if err != nil {
+		return nil, err
 	}
 
-	location := ""
-	if len(service.PubEndpoints) > 0 {
-		location = service.PubEndpoints[0]
-	}
-
-	out := serviceJSON{
-		ID:             fmt.Sprintf("%s://%s/config/%s/services/%s", Protocol, ExternalHost, service.Namespace, service.Id),
-		Status:         service.Status(),
-		Transformation: service.Description,
-		CreatedAt:      service.CreatedAt.Format(time.RFC3339),
-		Location:       location,
-	}
-
-	return json.Marshal(out)
+	return buf.Bytes(), nil
 }

@@ -8,7 +8,7 @@ import (
 )
 
 func TestTransformationsHead(t *testing.T) {
-	config := InstanceConfigData{
+	config := TransformationCatalog{
 		etagTransformations: 7,
 		transformations:     "test-transformations",
 	}
@@ -36,7 +36,7 @@ func TestTransformationsHead(t *testing.T) {
 }
 
 func TestTransformationsGet(t *testing.T) {
-	config := InstanceConfigData{
+	config := TransformationCatalog{
 		etagTransformations: 3,
 		transformations:     "test-transformations",
 	}
@@ -64,7 +64,7 @@ func TestTransformationsGet(t *testing.T) {
 }
 
 func TestTransformationsMethodNotAllowed(t *testing.T) {
-	config := InstanceConfigData{}
+	config := TransformationCatalog{}
 
 	req := httptest.NewRequest(http.MethodPost, "/transformations", nil)
 	recorder := httptest.NewRecorder()

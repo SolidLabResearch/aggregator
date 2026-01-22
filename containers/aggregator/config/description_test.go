@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"aggregator/model"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -64,7 +65,7 @@ func TestHandleAggregatorDescription(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	recorder := httptest.NewRecorder()
-	handleAggregatorDescription(recorder, req, model.User{Namespace: "test-ns"})
+	handleAggregatorDescription(recorder, req)
 
 	resp := recorder.Result()
 	defer resp.Body.Close()
@@ -100,7 +101,7 @@ func TestHandleAggregatorDescription(t *testing.T) {
 func TestHandleAggregatorDescription_MethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	recorder := httptest.NewRecorder()
-	handleAggregatorDescription(recorder, req, model.User{Namespace: "test-ns"})
+	handleAggregatorDescription(recorder, req)
 
 	resp := recorder.Result()
 	defer resp.Body.Close()
@@ -113,7 +114,7 @@ func TestHandleAggregatorDescription_MethodNotAllowed(t *testing.T) {
 func TestHandleAggregatorDescription_NotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/other", nil)
 	recorder := httptest.NewRecorder()
-	handleAggregatorDescription(recorder, req, model.User{Namespace: "test-ns"})
+	handleAggregatorDescription(recorder, req)
 
 	resp := recorder.Result()
 	defer resp.Body.Close()

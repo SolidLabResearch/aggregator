@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -258,6 +259,30 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 		return fmt.Errorf("failed to create Traefik RoleBinding: %w", err)
 	}
 
+	// Aggregator can read transformations from aggregator-app namespace
+	transformationBinding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("aggregator-transformation-reader-binding-%s", namespace),
+			Namespace: "aggregator-app",
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      sa.Name,
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "Role",
+			Name:     "aggregator-transformation-reader",
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+
+	if _, err := model.Clientset.RbacV1().RoleBindings("aggregator-app").Create(ctx, transformationBinding, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create Transformation RoleBinding: %w", err)
+	}
+
 	if err := ensureConfigMap(namespace, "aggregator-instance-config", map[string]string{
 		"access_token_expiry": accessTokenExpiry,
 		"created_at":          time.Now().Format(time.RFC3339),
@@ -312,31 +337,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 				"entryPoints": []string{"web"},
 				"routes": []interface{}{
 					map[string]interface{}{
-						"match": "Host(`" + model.ExternalHost + "`) && (Path(`/config/" + namespace + "`) || Path(`/config/" + namespace + "/`))",
-						"kind":  "Rule",
-						"services": []interface{}{
-							map[string]interface{}{
-								"name":      "aggregator",
-								"port":      5000,
-								"namespace": namespace,
-							},
-						},
-						"middlewares": buildIngressMiddlewares(useUMA, namespace, true),
-					},
-					map[string]interface{}{
-						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/config/" + namespace + "/services`)",
-						"kind":  "Rule",
-						"services": []interface{}{
-							map[string]interface{}{
-								"name":      "aggregator",
-								"port":      5000,
-								"namespace": namespace,
-							},
-						},
-						"middlewares": buildIngressMiddlewares(useUMA, namespace, false),
-					},
-					map[string]interface{}{
-						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/config/" + namespace + "/transformations`)",
+						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/" + namespace + "`)",
 						"kind":  "Rule",
 						"services": []interface{}{
 							map[string]interface{}{
@@ -369,7 +370,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 			},
 			"spec": map[string]interface{}{
 				"stripPrefix": map[string]interface{}{
-					"prefixes": []string{"/config/" + namespace},
+					"prefixes": []string{"/" + namespace},
 				},
 			},
 		},
@@ -425,7 +426,8 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 								{Name: "USER_NAMESPACE", Value: namespace},
 								{Name: "USER_ID", Value: resolvedOwner},
 								{Name: "AS_URL", Value: authzServerURL},
-								{Name: "DISABLE_AUTH", Value: fmt.Sprintf("%v", model.DisableAuth)},
+								{Name: "TRANSFORMATION_CATALOG", Value: os.Getenv("TRANSFORMATION_CATALOG")},
+								{Name: "SERVICE_COLLECTION", Value: os.Getenv("SERVICE_COLLECTION")},
 							},
 						},
 					},

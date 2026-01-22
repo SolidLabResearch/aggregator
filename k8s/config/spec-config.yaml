@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spec-config
+  namespace: aggregator-app
+data:
+  TRANSFORMATION_CATALOG: "/transformations"
+  SERVICE_COLLECTION: "/services"

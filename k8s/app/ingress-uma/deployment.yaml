@@ -24,7 +24,7 @@ spec:
             - containerPort: 8080
           envFrom:
             - configMapRef:
-                name: aggregator-config
+                name: server-config
           volumeMounts:
             - name: uma-key-volume
               mountPath: /keys

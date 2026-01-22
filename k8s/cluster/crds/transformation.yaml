@@ -24,7 +24,8 @@ spec:
               required:
                 - id
                 - image
-                - envMapping
+                - inputMapping
+                - outputMapping
                 - fno
               properties:
                 id:
@@ -39,8 +40,24 @@ spec:
                   type: string
                   description: "FnO (Function Ontology) description"
 
-                envMapping:
+                inputMapping:
                   type: object
-                  description: "Mapping from input parameter names to ENV variable names"
+                  description: "Mapping from parameter predicates to ENV variable names"
                   additionalProperties:
                     type: string
+                
+                outputMapping:
+                  type: object
+                  description: "Mapping from output predicates to port and path"
+                  additionalProperties:
+                    type: object
+                    required:
+                      - port
+                      - path
+                    properties:
+                      port:
+                        type: integer
+                        description: "Port number"
+                      path:
+                        type: string
+                        description: "Path"

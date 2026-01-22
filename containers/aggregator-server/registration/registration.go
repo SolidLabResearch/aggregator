@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -48,35 +49,35 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Authentication required for all flows except none in disable_auth mode
-	// Authentication required
-	issuer, id, mode, err := authenticateRequest(r)
-	if err != nil {
-		logrus.WithError(err).Warn("Authentication failed")
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-	if id == "" && registrationType != "none" {
-		logrus.Warn("Authentication missing for registration request")
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
+	if registrationType == "none" {
+		handleNoneFlow(w, req, uuid.NewString())
+	} else {
+		issuer, id, mode, err := authenticateRequest(r)
+		if err != nil {
+			logrus.WithError(err).Warn("Authentication failed")
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if id == "" {
+			logrus.Warn("Authentication missing for registration request")
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
 
-	// Route to appropriate handler based on registration_type
-	switch registrationType {
-	case "none":
-		handleNoneFlow(w, req, id)
-	case "provision":
-		handleProvisionFlow(w, req, id)
-	case "authorization_code":
-		handleAuthorizationCodeFlow(w, req, issuer, id, mode)
-	case "client_credentials":
-		handleClientCredentialsFlow(w, req, issuer, id)
-	case "device_code":
-		http.Error(w, "device_code flow not yet implemented", http.StatusNotImplemented)
-	default:
-		logrus.Warnf("Unsupported registration_type: %s", registrationType)
-		http.Error(w, "Unsupported registration_type", http.StatusBadRequest)
+		// Route to appropriate handler based on registration_type
+		switch registrationType {
+		case "provision":
+			handleProvisionFlow(w, req, id)
+		case "authorization_code":
+			handleAuthorizationCodeFlow(w, req, issuer, id, mode)
+		case "client_credentials":
+			handleClientCredentialsFlow(w, req, issuer, id)
+		case "device_code":
+			http.Error(w, "device_code flow not yet implemented", http.StatusNotImplemented)
+		default:
+			logrus.Warnf("Unsupported registration_type: %s", registrationType)
+			http.Error(w, "Unsupported registration_type", http.StatusBadRequest)
+		}
 	}
 }
 

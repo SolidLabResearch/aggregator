@@ -10,66 +10,61 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type InstanceConfigData struct {
+type TransformationCatalog struct {
 	etagTransformations int
 	transformations     string
-	owner               model.User
 }
 
-func InitInstanceConfiguration(mux *http.ServeMux, user model.User) error {
-	logrus.Info("Initializing instance configuration")
+func InitTransformationCatalog(mux *http.ServeMux) error {
+	logrus.Debugf("Initializing transformation catalog at %s", model.TransformationCatalog)
 
-	config := InstanceConfigData{
+	catalog := TransformationCatalog{
 		etagTransformations: 0,
 		transformations:     hardcodedInstanceTransformations,
-		owner:               user,
 	}
 
 	// Register HTTP handler
-	mux.HandleFunc("/transformations", config.HandleTransformationsEndpoint)
+	mux.HandleFunc(model.TransformationCatalog, catalog.HandleTransformationsEndpoint)
+	logrus.Infof("Handler registered at %s", model.TransformationCatalog)
 
-	// Build full URL
-	fullURL := fmt.Sprintf("%s://%s/config/%s/transformations", model.Protocol, model.ExternalHost, user.Namespace)
-
-	// Register resource
-	if err := auth.RegisterResource(fullURL, user.AuthzServerURL, []model.Scope{model.Read}); err != nil {
-		return fmt.Errorf("failed to register config resource %s: %w", fullURL, err)
+	// Register catalog resource and policy
+	fullURL := model.BaseUrl + model.TransformationCatalog
+	if err := auth.RegisterResource(fullURL, model.Owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
+		return fmt.Errorf("failed to register resource %s: %w", fullURL, err)
+	}
+	if err := auth.DefinePolicy(fullURL, model.Owner.UserId, model.Owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
+		return fmt.Errorf("failed to define policy for resource %s: %w", fullURL, err)
 	}
 
-	// Define policy (owner only)
-	if err := auth.DefinePolicy(fullURL, user.UserId, user.AuthzServerURL, []model.Scope{model.Read}); err != nil {
-		return fmt.Errorf("failed to define policy for resource %s", fullURL)
-	}
-
-	logrus.Info("Instance configuration initialization completed")
+	logrus.Infof("Initialized transformation catalog at %s", model.TransformationCatalog)
 	return nil
 }
 
 // HandleTransformationsEndpoint handles requests to the /transformations endpoint
-func (config InstanceConfigData) HandleTransformationsEndpoint(w http.ResponseWriter, r *http.Request) {
+func (catalog TransformationCatalog) HandleTransformationsEndpoint(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "HEAD":
-		config.headAvailableTransformations(w, r)
+		catalog.headAvailableTransformations(w, r)
 	case "GET":
-		config.getAvailableTransformations(w, r)
+		catalog.getAvailableTransformations(w, r)
 	default:
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 	}
 }
 
 // getAvailableTransformations HEAD /transformations retrieves all available transformations
-func (config *InstanceConfigData) headAvailableTransformations(w http.ResponseWriter, _ *http.Request) {
+func (catalog *TransformationCatalog) headAvailableTransformations(w http.ResponseWriter, _ *http.Request) {
 	header := w.Header()
-	header.Set("ETag", strconv.Itoa(config.etagTransformations))
+	header.Set("ETag", strconv.Itoa(catalog.etagTransformations))
 	header.Set("Content-Type", "text/turtle")
 }
 
 // getAvailableTransformations GET /transformations retrieves all available transformations
-func (config *InstanceConfigData) getAvailableTransformations(w http.ResponseWriter, _ *http.Request) {
+func (catalog *TransformationCatalog) getAvailableTransformations(w http.ResponseWriter, _ *http.Request) {
 	header := w.Header()
-	header.Set("ETag", strconv.Itoa(config.etagTransformations))
+	header.Set("ETag", strconv.Itoa(catalog.etagTransformations))
 	header.Set("Content-Type", "text/turtle")
-	_, err := w.Write([]byte(config.transformations))
+	_, err := w.Write([]byte(catalog.transformations))
 	if err != nil {
 		http.Error(w, "error when writing body", http.StatusInternalServerError)
 	}

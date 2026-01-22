@@ -38,13 +38,13 @@ func DefinePolicy(resourceId string, userId string, issuer string, scopes []mode
 		bytes.NewReader(jsonBody),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create a policy for resource %q: %w", resourceId, err)
+		return fmt.Errorf("failed to send policy request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("policy creation failed: status=%d, body=%s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("policy request failed: status=%d, body=%s", resp.StatusCode, string(respBody))
 	}
 
 	logrus.Infof("Policy created successfully for resource %s", resourceId)

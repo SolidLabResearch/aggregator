@@ -40,49 +40,6 @@ func authenticateRequest(r *http.Request) (issuer string, id string, mode string
 	}
 	logrus.WithField("token", tokenString).Debug("Authenticating request with token")
 
-	// If authentication is disabled (for testing), just parse and extract WebID without validation
-	if model.DisableAuth {
-		token, err := jwt.Parse([]byte(tokenString), jwt.WithValidate(false))
-		if err != nil {
-			return "", "", "", errors.New("invalid token format")
-		}
-
-		// Extract issuer from token
-		if iss, ok := token.Get("iss"); ok {
-			if issStr, ok := iss.(string); ok {
-				issuer = issStr
-			}
-		}
-
-		// Standard OIDC Auth Server mode
-		if model.AuthServer != "" && model.AuthServer == issuer {
-			// Extract subject as ID
-			if sub, ok := token.Get("sub"); ok {
-				if subStr, ok := sub.(string); ok {
-					return issuer, subStr, "oidc", nil
-				}
-			}
-
-			return "", "", "", errors.New("no subject claim in token")
-		}
-
-		// Solid-OIDC mode: extract WebID from token
-		if webidClaim, ok := token.Get("webid"); ok {
-			if webidStr, ok := webidClaim.(string); ok {
-				return issuer, webidStr, "solid-oidc", nil
-			}
-		}
-
-		// Fallback to subject claim
-		if sub, ok := token.Get("sub"); ok {
-			if subStr, ok := sub.(string); ok {
-				return issuer, subStr, "solid-oidc", nil
-			}
-		}
-
-		return "", "", "", errors.New("no webid or subject claim in token")
-	}
-
 	// Production mode: full token validation
 	// Parse token to extract issuer (needed to get JWKS URL)
 	unverifiedToken, err := jwt.Parse([]byte(tokenString), jwt.WithValidate(false))
@@ -122,7 +79,7 @@ func authenticateRequest(r *http.Request) (issuer string, id string, mode string
 		return "", "", "", err
 	}
 
-	if model.AuthServer != "" && model.AuthServer == issStr {
+	if model.UMAServer != "" && model.UMAServer == issStr {
 		// Standard OIDC Auth Server mode: extract subject as ID
 		if sub, ok := verifiedToken.Get("sub"); ok {
 			if subStr, ok := sub.(string); ok {

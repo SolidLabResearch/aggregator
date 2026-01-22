@@ -211,8 +211,9 @@ kind-deploy:
 		--from-file=private_key.pem=private_key.pem \
 		--dry-run=client -o yaml | kubectl apply -f -
 
-	@echo "📄 Applying aggregator ConfigMap and transformations..."
-	@kubectl apply -f k8s/config/app-config.yaml
+	@echo "📄 Applying configurations..."
+	@kubectl apply -f k8s/config/server-config.yaml
+	@kubectl apply -f k8s/config/spec-config.yaml
 	@kubectl apply -f k8s/config/transformations.yaml
 
 	@echo "📄 Adding localhost entries for ingress hosts..."

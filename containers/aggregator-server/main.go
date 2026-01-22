@@ -13,8 +13,6 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -45,8 +43,8 @@ func main() {
 	}
 
 	// Standard OIDC Authorization Server configuration
-	model.AuthServer = os.Getenv("AUTH_SERVER")
-	if model.AuthServer == "" {
+	model.UMAServer = os.Getenv("AUTH_SERVER")
+	if model.UMAServer == "" {
 		logrus.Info("Only Solid-OIDC with Web IDs is supported (no standard OIDC Authorization Server configured)")
 	} else {
 		model.ClientSecret = os.Getenv("CLIENT_SECRET")
@@ -75,13 +73,6 @@ func main() {
 		if model.ProvisionAuthorizationServer == "" {
 			logrus.Fatal("Environment variable PROVISION_AUTHORIZATION_SERVER must be set when provision registration is allowed")
 		}
-	}
-
-	// Read disable_auth config (for testing)
-	disableAuthStr := strings.ToLower(os.Getenv("DISABLE_AUTH"))
-	model.DisableAuth = disableAuthStr == "true"
-	if model.DisableAuth {
-		logrus.Warn("⚠️  Authentication is DISABLED (DISABLE_AUTH=true) - FOR TESTING ONLY!")
 	}
 
 	// Load in-cluster kubeConfig
@@ -118,43 +109,46 @@ func main() {
 	initRegistration(serverMux)
 
 	// While we wait for instance to start the aggregator server responds with 503 to config requests
-	serverMux.HandleFunc("/config/", func(w http.ResponseWriter, r *http.Request) {
-		namespace := strings.TrimPrefix(r.URL.Path, "/config/")
-		namespace = strings.TrimPrefix(namespace, "/")
-		if namespace == "" {
-			http.NotFound(w, r)
-			return
-		}
-		if idx := strings.Index(namespace, "/"); idx != -1 {
-			namespace = namespace[:idx]
-		}
-
-		if model.Clientset != nil {
-			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-			defer cancel()
-			ns, err := model.Clientset.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
-			if err != nil {
-				if apierrors.IsNotFound(err) {
-					http.NotFound(w, r)
-					return
-				}
-				http.Error(w, "Failed to check instance namespace", http.StatusInternalServerError)
-				return
-			}
-			if ns.Labels["created-by"] != "aggregator" {
+	/*
+		serverMux.HandleFunc("/config/", func(w http.ResponseWriter, r *http.Request) {
+			namespace := strings.TrimPrefix(r.URL.Path, "/config/")
+			namespace = strings.TrimPrefix(namespace, "/")
+			if namespace == "" {
 				http.NotFound(w, r)
 				return
 			}
-		}
+			if idx := strings.Index(namespace, "/"); idx != -1 {
+				namespace = namespace[:idx]
+			}
 
-		w.Header().Set("Retry-After", "1")
-		http.Error(w, "Aggregator instance not ready", http.StatusServiceUnavailable)
-	})
+			if model.Clientset != nil {
+				ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+				defer cancel()
+				ns, err := model.Clientset.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+				if err != nil {
+					if apierrors.IsNotFound(err) {
+						http.NotFound(w, r)
+						return
+					}
+					http.Error(w, "Failed to check instance namespace", http.StatusInternalServerError)
+					return
+				}
+				if ns.Labels["created-by"] != "aggregator" {
+					http.NotFound(w, r)
+					return
+				}
+			}
+
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "Aggregator instance not ready", http.StatusServiceUnavailable)
+		})
+	*/
 
 	// Start HTTP server
+	loggingMux := loggingMiddleware(serverMux)
 	srv := &http.Server{
 		Addr:    ":5000",
-		Handler: serverMux,
+		Handler: loggingMux,
 	}
 
 	go func() {
@@ -214,4 +208,18 @@ func hasRegistrationType(allowed []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logrus.WithFields(logrus.Fields{
+			"method": r.Method,
+			"path":   r.URL.Path,
+			"query":  r.URL.RawQuery,
+			"remote": r.RemoteAddr,
+			"agent":  r.UserAgent(),
+		}).Debug("Incoming request")
+
+		next.ServeHTTP(w, r)
+	})
 }

@@ -3,6 +3,7 @@ package registration
 import (
 	"aggregator/model"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -106,7 +107,7 @@ func checkOwnership(aggregatorID string, webID string) error {
 
 // createAggregatorInstanceRecord creates a new aggregator instance record
 func createAggregatorInstanceRecord(
-	ownerWebID string,
+	ownerID string,
 	registrationType string,
 	authorizationServer string,
 	namespace string,
@@ -118,11 +119,11 @@ func createAggregatorInstanceRecord(
 
 	instance := &model.AggregatorInstance{
 		AggregatorID:        aggregatorID,
-		OwnerID:             ownerWebID,
+		OwnerID:             ownerID,
 		RegistrationType:    registrationType,
 		AuthorizationServer: authorizationServer,
 		Namespace:           namespace,
-		BaseURL:             model.GetAggregatorURL(namespace),
+		BaseURL:             fmt.Sprintf("%s://%s/%s", model.Protocol, model.ExternalHost, namespace),
 		AccessToken:         accessToken,
 		RefreshToken:        refreshToken,
 		CreatedAt:           now,
