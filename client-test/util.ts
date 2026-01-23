@@ -33,9 +33,6 @@ async function parseAuthenticateHeader(wwwAuthenticateHeader: string): Promise<{
 }
 
 /**
- * Solid OIDC authenticated fetcher with DPoP support
- */
-/**
  * Solid OIDC authenticated fetcher
  */
 export class SolidOIDCAuth {
@@ -145,29 +142,45 @@ export class SolidOIDCAuth {
     }
 
     /**
-     * Create a UMA fetch function that uses Solid OIDC authentication
+     * Create Authorized fetch
      */
-    createUMAFetch() {
-        return async (url: string, init: RequestInit = {}): Promise<Response> => {
-            // Try request without token first
-            const noTokenResponse = await fetch(url, init);
-            if (noTokenResponse.status > 199 && noTokenResponse.status < 300) {
-                console.log('No Authorization token was required.')
+    createAuthFetch() {
+        return async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
+            // First attempt with no token.
+            const noTokenResponse = await fetch(input, init);
+            if (noTokenResponse.ok) {
+                console.log('No Authorization token was required.');
                 return noTokenResponse;
             }
 
-            const {tokenEndpoint, ticket} = await this.parseAuthenticateHeader(noTokenResponse.headers);
+            if (noTokenResponse.status !== 401) {
+                return noTokenResponse;
+            }
 
-            const {token, tokenType, error} = await this.fetchAccessToken(tokenEndpoint, ticket);
-            if (error) {
-                throw error;
+            const wwwAuthenticateHeader = noTokenResponse.headers.get("WWW-Authenticate");
+            const isUmaChallenge = wwwAuthenticateHeader?.trim().toLowerCase().startsWith("uma");
+
+            if (isUmaChallenge) {
+                const { tokenEndpoint, ticket } = await this.parseAuthenticateHeader(noTokenResponse.headers);
+
+                const { token, tokenType, error } = await this.fetchAccessToken(tokenEndpoint, ticket);
+                if (error) {
+                    throw error;
+                }
+
+                const headers = new Headers(init.headers);
+                headers.set('Authorization', `${tokenType} ${token}`);
+                return fetch(input, { ...init, headers });
+            }
+
+            await this.ensureValidToken();
+            if (!this.accessToken) {
+                return noTokenResponse;
             }
 
             const headers = new Headers(init.headers);
-            headers.set('Authorization', `${tokenType} ${token}`);
-
-            // Retry request with RPT
-            return fetch(url, {...init, headers});
+            headers.set('Authorization', `Bearer ${this.accessToken}`);
+            return fetch(input, { ...init, headers });
         }
     }
 
@@ -211,6 +224,14 @@ export class SolidOIDCAuth {
 
         if (asRequestResponse.status === 403) {
             const asRequestResponseJson = await asRequestResponse.json();
+            console.log("Additional claims required:", asRequestResponseJson);
+            if (!Array.isArray(asRequestResponseJson.required_claims) || asRequestResponseJson.required_claims.length === 0) {
+                return {
+                    error: new Error("UMA server requested additional claims but did not specify any"),
+                    token: undefined,
+                    tokenType: undefined
+                };
+            }
             claims = await this.gatherClaims(claims, asRequestResponseJson.required_claims);
             return this.fetchAccessToken(tokenEndpoint, asRequestResponseJson.ticket, claims);
         }
@@ -224,6 +245,10 @@ export class SolidOIDCAuth {
     }
 
     async gatherClaims(claims: Record<string, any>[], requiredClaims: any[]): Promise<Record<string, any>[]> {
+        if (!Array.isArray(requiredClaims) || requiredClaims.length === 0) {
+            return claims;
+        }
+
         for (const requiredClaim of requiredClaims) {
             switch (requiredClaim["claim_token_format"]) {
                 case "http://openid.net/specs/openid-connect-core-1_0.html#IDToken":

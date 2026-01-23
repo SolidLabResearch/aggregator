@@ -42,13 +42,13 @@ async function main() {
     await auth.init('alice@example.org', 'abc123');
     console.log(`=== Solid OIDC authentication initialized successfully\n`);
 
-    const umaFetch = auth.createUMAFetch();
+    const authFetch = auth.createAuthFetch();
 
     console.log(`=== Requesting pipeline at ${pipelineEndpoint} with body:\n`);
     console.log(PipelineDescription);
     console.log('');
 
-    const response = await umaFetch(pipelineEndpoint, request);
+    const response = await authFetch(pipelineEndpoint, request);
 
     console.log(`=== Response status: ${response.status}`);
     if (response.status !== 201) {

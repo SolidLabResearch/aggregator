@@ -18,13 +18,13 @@ async function main() {
 
   console.log(`=== Solid OIDC authentication initialized successfully\n`);
 
-  const umaFetch = auth.createUMAFetch();
+  const authFetch = auth.createAuthFetch();
 
   console.log("\n=== Fetching available transformations ===");
   console.log(`➡️  Endpoint: ${CONFIG_ENDPOINT}\n`);
 
   try {
-    const response = await umaFetch(CONFIG_ENDPOINT, { method: "GET" });
+    const response = await authFetch(CONFIG_ENDPOINT, { method: "GET" });
 
     console.log(`📡 Response status: ${response.status}`);
     console.log("📄 Response body:\n");

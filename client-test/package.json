@@ -7,6 +7,7 @@
   "scripts": {
     "build": "tsc",
     "s-create-service": "tsc && node dist/solid/create-service.js",
+    "s-register-provision": "tsc && node dist/solid/register-provision.js",
     "s-get-service": "tsc && node dist/solid/get-service.js",
     "s-get-trans": "tsc && node dist/solid/get-trans.js",
     "kc-register-user": "tsc && node dist/keycloak/register-user.js",

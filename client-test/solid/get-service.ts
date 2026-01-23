@@ -11,11 +11,11 @@ async function main() {
     await auth.init('alice@example.org', 'abc123');
     console.log(`=== Solid OIDC authentication initialized successfully\n`);
 
-    const umaFetch = auth.createUMAFetch();
+    const authFetch = auth.createAuthFetch();
 
     console.log(`=== Requesting services at ${pipelineEndpoint}`);
 
-    const response = await umaFetch(pipelineEndpoint, {
+    const response = await authFetch(pipelineEndpoint, {
         method: "GET"
     });
     console.log(`=== Response status: ${response.status}`);
@@ -36,7 +36,7 @@ async function main() {
     const serviceConfigUrl = pipelineEndpoint + `/${id}`;
 
     console.log(`=== Requesting service config at ${serviceConfigUrl}`);
-    const serviceResponse = await umaFetch(serviceConfigUrl, {
+    const serviceResponse = await authFetch(serviceConfigUrl, {
         method: "GET"
     });
     console.log(`=== Service config response status: ${serviceResponse.status}`);
@@ -52,7 +52,7 @@ async function main() {
     const serviceUrl = "http://localhost:5000" + `/${id}/`;
     console.log(`=== Requesting service results at ${serviceUrl}`);
 
-    const serviceResultsResponse = await umaFetch(serviceUrl, {
+    const serviceResultsResponse = await authFetch(serviceUrl, {
         method: "GET"
     });
 

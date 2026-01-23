@@ -406,22 +406,22 @@ async function main() {
     await auth.init('alice@example.org', 'abc123');
     console.log(`=== Solid OIDC authentication initialized successfully\n`);
 
-    const umaFetch = auth.createUMAFetch();
+    const authFetch = auth.createAuthFetch();
 
     try {
         // Step 1: Create the service
-        const serviceId = await createService(umaFetch);
+        const serviceId = await createService(authFetch);
         await sleep(5000); // Give the service time to start
 
         // Step 2: Get the SSE URL
         const sseUrl = await getServiceUrl(serviceId);
 
         // Step 3: Check current profile content
-        await checkAliceProfile(umaFetch);
+        await checkAliceProfile(authFetch);
 
         // Step 4: Connect to SSE and wait for the interactive sequence to complete
         console.log('🔗 Setting up interactive SSE connection...');
-        await connectToSSE(sseUrl, umaFetch);
+        await connectToSSE(sseUrl, authFetch);
 
         // The connectToSSE promise will only resolve when the demo is complete
         console.log('\n🏁 Demo completed successfully!');
