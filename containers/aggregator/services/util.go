@@ -63,34 +63,42 @@ func ParseRequestBody(fno string) (model.Execution, error) {
 	executionsIter := store.Match(nil, rdfgo.IRI.RDF.Type, model.FnO("Execution"), nil)
 	var executions []model.Execution
 	for q := range executionsIter {
-		exeUri := q.GetSubject().ToString()
-		exeUri = strings.Trim(exeUri, "<>")
+		exeUri := q.GetSubject()
 
-		// Get transformation URI
-		var transformationUri string
-		for t := range store.Match(rdfgo.NewNamedNode(exeUri), model.FnO("executes"), nil, nil) {
-			transformationUri = t.GetObject().ToString()
-			transformationUri = strings.Trim(transformationUri, "<>")
-			break
-		}
-
-		// Get parameters
-		params := make(map[string]rdfgo.ITerm)
-		for p := range store.Match(rdfgo.NewNamedNode(exeUri), nil, nil, nil) {
-			if p.GetPredicate().Equals(rdfgo.IRI.RDF.Type) || p.GetPredicate().Equals(model.FnO("executes")) {
-				continue
+		// Get transformation uri
+		for t := range store.Match(exeUri, model.FnO("executes"), nil, nil) {
+			tfUri := strings.Trim(t.GetObject().ToString(), "<>")
+			// Load and parse transformation
+			tf, err := LoadTransformationCR(tfUri)
+			if err != nil {
+				return model.Execution{}, err
 			}
-			params[strings.Trim(p.GetPredicate().ToString(), "<>")] = p.GetObject()
-		}
 
-		executions = append(executions, model.Execution{
-			URI:            exeUri,
-			Transformation: transformationUri,
-			Params:         params,
-		})
+			// Parse parameter inputs
+			params := make(map[string]rdfgo.ITerm)
+			for _, pred := range tf.Params {
+				for quad := range store.Match(exeUri, rdfgo.NewNamedNode(pred), nil, nil) {
+					params[pred] = quad.GetObject()
+				}
+			}
+
+			// Check if all parameters have an input
+			// TODO: check if all required parameters have an input
+			if len(params) != len(tf.Params) {
+				return model.Execution{}, fmt.Errorf("Not all inputs provided for execution %s", exeUri.ToString())
+			}
+
+			executions = append(executions, model.Execution{
+				URI:            strings.Trim(exeUri.ToString(), "<>"),
+				Transformation: tf,
+				Params:         params,
+				Outputs:        make(map[string]rdfgo.ITerm),
+			})
+		}
 	}
 
 	// Enforce exactly one execution
+	// TODO: allow multiple executions
 	if len(executions) == 0 {
 		return model.Execution{}, fmt.Errorf("no fno:Execution found in FnO description")
 	}
@@ -135,17 +143,29 @@ func LoadTransformationCR(uri string) (*model.Transformation, error) {
 		}
 
 		t := &model.Transformation{
-			ID:            getString(spec, "id"),
+			Base:          fmt.Sprintf("%s://%s/config/transformations#", model.Protocol, model.ExternalHost),
+			URI:           uri,
 			Image:         getString(spec, "image"),
+			FnO:           getString(spec, "fno"),
 			InputMapping:  make(map[string]string),
 			OutputMapping: make(map[string]model.OutputMapping),
 		}
+
+		// Parse FnO
+		t.ParseTransformation()
 
 		// Populate inputMapping
 		if env, ok := spec["inputMapping"].(map[string]interface{}); ok {
 			for k, v := range env {
 				t.InputMapping[k] = fmt.Sprint(v)
 			}
+		}
+		if len(t.Params) != len(t.InputMapping) {
+			logrus.WithFields(logrus.Fields{
+				"params":   t.Params,
+				"mappings": t.InputMapping,
+			}).Debugf("Parsed parameters and mappings")
+			return nil, fmt.Errorf("transformation CR %s has an incorrect amount of input mappings", id)
 		}
 
 		// Populate outputMapping
@@ -174,6 +194,13 @@ func LoadTransformationCR(uri string) (*model.Transformation, error) {
 					}
 				}
 			}
+		}
+		if len(t.Outputs) != len(t.OutputMapping) {
+			logrus.WithFields(logrus.Fields{
+				"outputs":  t.Params,
+				"mappings": t.OutputMapping,
+			}).Debug("Parsed outputs and mappings")
+			return nil, fmt.Errorf("transformation CR %s has an incorrect amount of output mappings", id)
 		}
 
 		return t, nil // Found the transformation, return
@@ -204,44 +231,10 @@ func ParametersToEnvVars(params map[string]rdfgo.ITerm, inputMapping map[string]
 		}
 		envVars = append(envVars, corev1.EnvVar{
 			Name:  envKey,
-			Value: strings.Trim(paramValue.ToString(), "<>"),
+			Value: strings.Trim(paramValue.GetValue(), "<>"),
 		})
 	}
 	return envVars, nil
-}
-
-func parseOutputs(fno string, tfUri string) (string, error) {
-	quadStream, errChan := rdfgo.Parse(
-		strings.NewReader(fno),
-		rdfgo.ParserOptions{Format: "text/turtle"},
-	)
-
-	go func() {
-		for parseErr := range errChan {
-			if parseErr != nil {
-				logrus.WithError(parseErr).Warn("Error parsing FnO description")
-			}
-		}
-	}()
-
-	store := rdfgo.NewStore()
-	store.Import(quadStream)
-
-	// Get all output predicates
-	predicates := []string{}
-	for output := range store.Match(rdfgo.NewNamedNode(tfUri), model.FnO("returns"), nil, nil) {
-		for pred := range store.Match(output.GetObject(), model.FnO("predicate"), nil, nil) {
-			predicates = append(predicates, strings.Trim(pred.GetObject().ToString(), "<>"))
-		}
-	}
-
-	if len(predicates) == 0 {
-		return "", errors.New("no outputs found")
-	} else if len(predicates) > 1 {
-		return "", errors.New("more than one output found")
-	}
-
-	return predicates[0], nil
 }
 
 func UriToID(uri string, prefix string) (string, error) {

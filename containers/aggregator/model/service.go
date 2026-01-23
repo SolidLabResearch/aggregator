@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"sort"
 	"time"
 
 	"github.com/maartyman/rdfgo"
@@ -17,49 +16,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-type Execution struct {
-	URI            string
-	Transformation string
-	Params         map[string]rdfgo.ITerm
-}
-
-type Transformation struct {
-	ID            string
-	Image         string
-	InputMapping  map[string]string
-	OutputMapping map[string]OutputMapping
-}
-
-type OutputMapping struct {
-	Port int32
-	Path string
-}
-
-func (tf *Transformation) Ports() []int32 {
-	unique := make(map[int32]struct{})
-
-	for _, out := range tf.OutputMapping {
-		unique[out.Port] = struct{}{}
-	}
-
-	ports := make([]int32, 0, len(unique))
-	for p := range unique {
-		ports = append(ports, p)
-	}
-
-	sort.Slice(ports, func(i, j int) bool {
-		return ports[i] < ports[j]
-	})
-
-	return ports
-}
-
 type Service struct {
 	ID               string
 	Path             string
 	Exe              Execution
 	Namespace        string
-	Endpoints        []string
 	ClusterEndpoints []string
 	Deployments      []appsv1.Deployment
 	Services         []corev1.Service
@@ -133,13 +94,14 @@ func (service *Service) Status() string {
 
 func (service *Service) FnORepresentation() ([]byte, error) {
 	stream := rdfgo.NewStream()
+	svcNode := rdfgo.NewNamedNode(service.Exe.URI)
 
 	go func() {
 		defer close(stream)
 
-		// service URI is a service
+		// service URI is a service and execution
 		quad, err := rdfgo.NewQuad(
-			rdfgo.NewNamedNode(service.Exe.URI),
+			svcNode,
 			rdfgo.IRI.RDF.Type,
 			FnO("Service"),
 			nil,
@@ -148,10 +110,21 @@ func (service *Service) FnORepresentation() ([]byte, error) {
 			return
 		}
 		stream <- quad
+		quad, err = rdfgo.NewQuad(
+			svcNode,
+			rdfgo.IRI.RDF.Type,
+			FnO("Execution"),
+			nil,
+		)
+		if err != nil {
+			return
+		}
+		stream <- quad
 
+		// SERVICE DETAILS
 		// service status
 		quad, err = rdfgo.NewQuad(
-			rdfgo.NewNamedNode(service.Exe.URI),
+			svcNode,
 			Agg("status"),
 			rdfgo.NewStringLiteral(service.Status(), "en"),
 			nil,
@@ -163,7 +136,7 @@ func (service *Service) FnORepresentation() ([]byte, error) {
 
 		// service createdAt
 		quad, err = rdfgo.NewQuad(
-			rdfgo.NewNamedNode(service.Exe.URI),
+			svcNode,
 			Agg("createdAt"),
 			rdfgo.NewLiteral(service.CreatedAt.Format(time.RFC3339), "", DateTime),
 			nil,
@@ -173,24 +146,12 @@ func (service *Service) FnORepresentation() ([]byte, error) {
 		}
 		stream <- quad
 
-		// used transformation
-		tfNode := rdfgo.NewBlankNode("tf")
-
+		// EXECUTION DETAILS
+		// transformation
 		quad, err = rdfgo.NewQuad(
-			tfNode,
-			rdfgo.IRI.RDF.Type,
-			FnO("Execution"),
-			nil,
-		)
-		if err != nil {
-			return
-		}
-		stream <- quad
-
-		quad, err = rdfgo.NewQuad(
-			tfNode,
+			svcNode,
 			FnO("executes"),
-			rdfgo.NewNamedNode(service.Exe.Transformation),
+			rdfgo.NewNamedNode(service.Exe.Transformation.URI),
 			nil,
 		)
 		if err != nil {
@@ -198,9 +159,10 @@ func (service *Service) FnORepresentation() ([]byte, error) {
 		}
 		stream <- quad
 
+		// parameters
 		for param, value := range service.Exe.Params {
 			quad, err = rdfgo.NewQuad(
-				tfNode,
+				svcNode,
 				rdfgo.NewNamedNode(param),
 				value,
 				nil,
@@ -211,12 +173,20 @@ func (service *Service) FnORepresentation() ([]byte, error) {
 			stream <- quad
 		}
 
-		quad, err = rdfgo.NewQuad(
-			rdfgo.NewNamedNode(service.Exe.URI),
-			Agg("transformation"),
-			tfNode,
-			nil,
-		)
+		// outputs
+		for output, value := range service.Exe.Outputs {
+			quad, err = rdfgo.NewQuad(
+				svcNode,
+				rdfgo.NewNamedNode(output),
+				value,
+				nil,
+			)
+			if err != nil {
+				return
+			}
+			stream <- quad
+		}
+
 		if err != nil {
 			return
 		}

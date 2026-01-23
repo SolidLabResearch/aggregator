@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/maartyman/rdfgo"
 	"github.com/sirupsen/logrus"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -27,15 +28,8 @@ func CreateAggregatorService(
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Load the corresponding tf CR
-	tf, err := LoadTransformationCR(exe.Transformation)
-	if err != nil {
-		logrus.WithError(err).Errorf("Failed to load transformation CR for %s", exe.Transformation)
-		return nil, fmt.Errorf("Unable to load transformation %s", exe.Transformation)
-	}
-
 	// Convert parameters to environment variables
-	envVars, err := ParametersToEnvVars(exe.Params, tf.InputMapping)
+	envVars, err := ParametersToEnvVars(exe.Params, exe.Transformation.InputMapping)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to convert parameters to environment variables")
 		return nil, fmt.Errorf("Failed to convert parameters to environment variables")
@@ -47,7 +41,6 @@ func CreateAggregatorService(
 		Path:             path,
 		Exe:              exe,
 		Namespace:        model.Namespace,
-		Endpoints:        []string{},
 		ClusterEndpoints: []string{},
 		Deployments:      []appsv1.Deployment{},
 		Services:         []corev1.Service{},
@@ -63,19 +56,19 @@ func CreateAggregatorService(
 	}
 
 	// Create Deployment
-	if err := createDeployment(&service, envVars, tf.Image, 1, useUMA, ctx); err != nil {
+	if err := createDeployment(&service, envVars, exe.Transformation.Image, 1, useUMA, ctx); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("pod creation failed: %w", err)
 	}
 
 	// Create Service
-	if err := createService(&service, tf.Ports(), ctx); err != nil {
+	if err := createService(&service, exe.Transformation.Ports(), ctx); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("service creation failed: %w", err)
 	}
 
 	// Create Ingress
-	if err := createIngressRoute(&service, tf.OutputMapping, model.Owner, ctx); err != nil {
+	if err := createIngressRoute(&service, exe.Transformation.OutputMapping, model.Owner, ctx); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("ingress route creation failed: %w", err)
 	}
@@ -301,6 +294,7 @@ func createIngressRoute(service *model.Service, mappings map[string]model.Output
 
 	// Register resources & endpoints with policies
 	for pred := range mappings {
+		outputUri := service.Exe.Transformation.Base + "/" + pred
 		resourceId := model.BaseUrl + service.Path + "/" + pred
 		if err := auth.RegisterResource(resourceId, owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
 			return fmt.Errorf("failed to register resource for IngressRoute %q: %w", irName, err)
@@ -308,7 +302,7 @@ func createIngressRoute(service *model.Service, mappings map[string]model.Output
 		if err := auth.DefinePolicy(resourceId, owner.UserId, owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
 			return fmt.Errorf("failed to create policy for IngressRoute %q: %w", irName, err)
 		}
-		service.Endpoints = append(service.Endpoints, resourceId)
+		service.Exe.Outputs[outputUri] = rdfgo.NewNamedNode(resourceId)
 	}
 
 	logrus.Infof("IngressRoute %s created successfully in namespace %s", irName, "aggregator-app")

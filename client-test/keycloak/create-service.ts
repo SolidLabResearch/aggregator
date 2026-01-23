@@ -1,6 +1,6 @@
 import { KeycloakOIDCAuth } from "../util.js";
 
-const SERVICES_ENDPOINT = "http://aggregator.local/4a137759-6212-436f-8116-07232b75e29b/services";
+const SERVICES_ENDPOINT = "http://aggregator.local/f00141b4-cc61-4fee-a4af-1263ef2ffe8d/services";
 
 const USERNAME = "doctor@example.com";
 const PASSWORD = "doctor";
@@ -9,7 +9,7 @@ const CLIENT_SECRET = "Yg8rGkQNQ4OqDh3AUR81EoSJtjPDXH4n";
 
 const SERVICE_ID = "comunica";
 const DESCRIPTION = `
-@base <http://aggregator.local/4a137759-6212-436f-8116-07232b75e29b/> .
+@base <http://aggregator.local/f00141b4-cc61-4fee-a4af-1263ef2ffe8d/> .
 @prefix trans: <http://aggregator.local/config/transformations#> .
 @prefix fno: <https://w3id.org/function/ontology#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .

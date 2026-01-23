@@ -191,7 +191,8 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 	// Parse request description
 	exe, err := services.ParseRequestBody(body)
 	if err != nil {
-		http.Error(w, "Failed to parse Body", http.StatusInternalServerError)
+		logrus.WithError(err).Errorf("Failed to parse body")
+		http.Error(w, "Failed to parse body", http.StatusInternalServerError)
 		return
 	}
 
