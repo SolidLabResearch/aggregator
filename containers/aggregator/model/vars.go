@@ -1,6 +1,8 @@
 package model
 
 import (
+	"net/http"
+
 	"github.com/sirupsen/logrus"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -9,6 +11,7 @@ import (
 // Network configuration
 var Protocol string
 var ExternalHost string
+var ProxyClient *http.Client
 
 // Aggregator identity
 var Owner User

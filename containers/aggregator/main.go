@@ -2,6 +2,7 @@ package main
 
 import (
 	"aggregator/config"
+	"aggregator/ingress"
 	"aggregator/model"
 	"context"
 	"fmt"
@@ -87,6 +88,15 @@ func main() {
 		logrus.Fatalf("Failed to create dynamic Kubernetes client: %v", err)
 	}
 
+	// Init HTTP proxy client
+	model.ProxyClient = &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90,
+		},
+	}
+
 	// Configure HTTP server
 	serverMux := http.NewServeMux()
 
@@ -107,11 +117,17 @@ func main() {
 		logrus.WithError(err).Fatalf("Failed to set up transformation catalog endpoint")
 	}
 
-	// Start HTTP server
-	loggedMux := loggingMiddleware(serverMux)
+	// Add middlewares
+	mwMux := ingress.Chain(serverMux,
+		ingress.UMAAuthMiddleware(),
+		ingress.StripPrefixMiddleware(model.Namespace),
+		ingress.LoggingMiddleware(),
+	)
+
+	// HTTP Serve
 	srv := &http.Server{
 		Addr:    ":5000",
-		Handler: loggedMux,
+		Handler: mwMux,
 	}
 
 	go func() {
@@ -136,18 +152,4 @@ func main() {
 	}
 
 	logrus.Info("Server stopped gracefully")
-}
-
-func loggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logrus.WithFields(logrus.Fields{
-			"method": r.Method,
-			"path":   r.URL.Path,
-			"query":  r.URL.RawQuery,
-			"remote": r.RemoteAddr,
-			"agent":  r.UserAgent(),
-		}).Debug("Incoming request")
-
-		next.ServeHTTP(w, r)
-	})
 }

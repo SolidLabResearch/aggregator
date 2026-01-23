@@ -6,6 +6,7 @@ metadata:
 spec:
   entryPoints:
     - web
+    - websecure
   routes:
     - match: Host(`aggregator.local`) && PathPrefix(`/uma`)
       kind: Rule

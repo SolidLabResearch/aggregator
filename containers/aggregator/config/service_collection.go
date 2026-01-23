@@ -224,7 +224,18 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 	err = collec.HandleFunc(servicePath, collec.HandleServiceEndpoint, []model.Scope{model.Read, model.Delete})
 	if err != nil {
 		logrus.WithError(err).Errorf("Error registering handler for service %s", serviceId)
+		http.Error(w, "Failed to create service from request", http.StatusInternalServerError)
 		return
+	}
+
+	// Create output endpoints
+	for output := range service.Exe.Transformation.OutputMapping {
+		err = collec.HandleFunc(servicePath+"/"+output, collec.HandleServiceOutput, []model.Scope{model.Read, model.Write})
+		if err != nil {
+			logrus.WithError(err).Errorf("Error registering handler for output %s", output)
+			http.Error(w, "Failed to create service from request", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Return service information
@@ -241,6 +252,7 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 	_, err = w.Write(repr)
 	if err != nil {
 		logrus.WithError(err).Error("Error writing service FnO representation to response body")
+		http.Error(w, "Failed to write response", http.StatusInternalServerError)
 		return
 	}
 }
@@ -254,4 +266,77 @@ func (collec *ServiceCollection) deleteService(w http.ResponseWriter, _ *http.Re
 
 	collec.etagServices++
 	w.WriteHeader(http.StatusOK)
+}
+
+// Handles all incoming service requests <service path>/<output>
+func (collec *ServiceCollection) HandleServiceOutput(w http.ResponseWriter, r *http.Request) {
+	// Trim leading/trailing slashes and split path
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 2 {
+		http.Error(w, "Invalid path, must be /<service-path>/<output>", http.StatusBadRequest)
+		return
+	}
+
+	// Last segment is the output
+	pred := parts[len(parts)-1]
+
+	// Everything else is the service path
+	servicePath := parts[:len(parts)-1]
+	serviceID := strings.Join(servicePath, "-")
+	service, ok := collec.services[serviceID]
+	if !ok {
+		http.Error(w, "Service not found", http.StatusNotFound)
+		return
+	}
+
+	mapping, exists := service.Exe.Transformation.OutputMapping[pred]
+	if !exists {
+		logrus.Errorf("No output mapping found for %s", pred)
+		http.Error(w, fmt.Sprintf("Requested service has no output %s", pred), http.StatusNotFound)
+		return
+	}
+
+	// Create new request to forward
+	forwardURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s",
+		serviceID,
+		model.Namespace,
+		mapping.Port,
+		mapping.Path,
+	)
+	req, err := http.NewRequest(r.Method, forwardURL, r.Body)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to create forward request")
+		http.Error(w, "Failed to reach requested service", http.StatusInternalServerError)
+		return
+	}
+
+	// Copy headers from original request
+	for k, vv := range r.Header {
+		for _, v := range vv {
+			req.Header.Add(k, v)
+		}
+	}
+
+	// Send request using proxy client
+	resp, err := model.ProxyClient.Do(req)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to forward request: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Copy response headers
+	for k, vv := range resp.Header {
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+
+	// Write status code
+	w.WriteHeader(resp.StatusCode)
+
+	// Copy response body
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		logrus.WithError(err).Error("Failed to copy response body")
+	}
 }

@@ -346,39 +346,10 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 								"namespace": namespace,
 							},
 						},
-						"middlewares": buildIngressMiddlewares(useUMA, namespace, true),
 					},
 				},
 			},
 		},
-	}
-
-	// We need to create the strip-prefix middleware in the user namespace
-	mwName := "strip-prefix-" + namespace
-	middlewareGVR := schema.GroupVersionResource{
-		Group:    "traefik.io",
-		Version:  "v1alpha1",
-		Resource: "middlewares",
-	}
-	mwObj := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "traefik.io/v1alpha1",
-			"kind":       "Middleware",
-			"metadata": map[string]interface{}{
-				"name":      mwName,
-				"namespace": namespace,
-			},
-			"spec": map[string]interface{}{
-				"stripPrefix": map[string]interface{}{
-					"prefixes": []string{"/" + namespace},
-				},
-			},
-		},
-	}
-
-	_, err = model.DynamicClient.Resource(middlewareGVR).Namespace(namespace).Create(ctx, mwObj, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create Middleware: %w", err)
 	}
 
 	_, err = model.DynamicClient.Resource(ingressRouteGVR).Namespace(namespace).Create(ctx, obj, metav1.CreateOptions{})
@@ -470,27 +441,6 @@ func updateAggregatorInstanceDeployments(namespace string, accessToken string, r
 	}
 
 	return nil
-}
-
-func buildIngressMiddlewares(useUMA bool, namespace string, includeStrip bool) []interface{} {
-	middlewares := make([]interface{}, 0, 3)
-	if useUMA {
-		middlewares = append(middlewares, map[string]interface{}{
-			"name":      "ingress-uma",
-			"namespace": "aggregator-app",
-		})
-	}
-	if includeStrip {
-		middlewares = append(middlewares, map[string]interface{}{
-			"name":      "strip-prefix-" + namespace,
-			"namespace": namespace,
-		})
-	}
-	middlewares = append(middlewares, map[string]interface{}{
-		"name":      "cors",
-		"namespace": "aggregator-app",
-	})
-	return middlewares
 }
 
 func buildTokensPayload(accessToken string, refreshToken string, accessTokenExpiry string) (map[string]string, error) {

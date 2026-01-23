@@ -32,51 +32,55 @@ func InitAuth(extHost string, disbaleAuth bool) {
 }
 
 func HandleAuthorizationRequest(w http.ResponseWriter, r *http.Request) {
-	// Extract the UMA information from the forwarded headers
-	scheme := strings.Trim(r.Header.Get("X-Forwarded-Proto"), "[]")
-	resourcePath := strings.Trim(r.Header.Get("X-Forwarded-Uri"), "[]")
-	resourceId := fmt.Sprintf("%s://%s%s", scheme, ExternalHost, resourcePath)
-	umaId := idIndex[resourceId]
+	var payload struct {
+		ResourceID string `json:"resource_id"`
+		Method     string `json:"method"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		logrus.WithError(err).Warn("Failed to decode UMA request")
+		http.Error(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	umaId := idIndex[payload.ResourceID]
 	if umaId == "" {
-		logrus.WithFields(logrus.Fields{"resource": resourceId}).Warn("No UMA id found for resource")
+		logrus.WithFields(logrus.Fields{"resource": payload.ResourceID}).Warn("No UMA id found for resource")
 		http.Error(w, "No UMA id found for resource", http.StatusUnauthorized)
 		return
 	}
 
-	issuer := issuerIndex[resourceId]
+	issuer := issuerIndex[payload.ResourceID]
 	if issuer == "" {
-		logrus.Warn("No Authentication Server Url found for resource")
-		http.Error(w, "No Authentication Server Url found for resource", http.StatusUnauthorized)
+		logrus.WithFields(logrus.Fields{"resource": payload.ResourceID}).Warn("No issuer found for resource")
+		http.Error(w, "No Authentication Server URL found", http.StatusUnauthorized)
 		return
 	}
 
-	method := forwardedMethod(r)
 	logrus.WithFields(logrus.Fields{
-		"resource": resourceId,
+		"resource": payload.ResourceID,
 		"uma_id":   umaId,
-		"method":   method,
+		"method":   payload.Method,
 		"as_url":   issuer,
 	}).Info("Authorize request")
 
-	// Always authorize if disabled for testing
+	// Always authorize if disabled
 	if DisableAuth {
 		logrus.Info("✅ Authentication disabled - access granted immediately")
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	// No ticket
-	if r.Header.Get("Authorization") == "" {
-		ticketlessAuthorization(w, r, umaId, issuer)
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		ticketlessAuthorization(w, r, umaId, payload.Method, issuer)
 		return
 	}
 
-	// With ticket
-	ticketedAuthorization(w, r, umaId, issuer)
+	ticketedAuthorization(w, r, umaId, payload.Method, issuer)
 }
 
-func ticketlessAuthorization(w http.ResponseWriter, r *http.Request, umaId string, issuer string) {
-	method := forwardedMethod(r)
+func ticketlessAuthorization(w http.ResponseWriter, r *http.Request, umaId string, method string, issuer string) {
 	permissions := make(map[string][]Scope)
 	scopes, err := determineScopes(method)
 	if err != nil {
@@ -109,8 +113,7 @@ func ticketlessAuthorization(w http.ResponseWriter, r *http.Request, umaId strin
 	w.WriteHeader(http.StatusUnauthorized)
 }
 
-func ticketedAuthorization(w http.ResponseWriter, r *http.Request, umaId string, issuer string) {
-	method := forwardedMethod(r)
+func ticketedAuthorization(w http.ResponseWriter, r *http.Request, umaId string, method string, issuer string) {
 	logrus.WithFields(logrus.Fields{"method": method, "path": r.URL.Path}).Info("🔍 Verifying authorization token")
 	permission, err := verifyTicket(r.Header.Get("Authorization"), []string{issuer})
 	if err != nil {
