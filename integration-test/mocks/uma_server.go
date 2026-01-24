@@ -20,17 +20,19 @@ import (
 
 // UMAAuthorizationServer mocks a UMA 2.0 Authorization Server
 type UMAAuthorizationServer struct {
-	server            *httptest.Server
-	issuer            string
-	mu                sync.RWMutex
-	resources         map[string]*UMAResource
-	tickets           map[string]*UMATicket
-	rpts              map[string]*RPT
-	policies          map[string]*Policy
-	derivationHandles map[string]*DerivationHandle
-	privateKey        *rsa.PrivateKey
-	publicKey         *rsa.PublicKey
-	jwksKid           string
+	server                   *httptest.Server
+	issuer                   string
+	mu                       sync.RWMutex
+	resources                map[string]*UMAResource
+	tickets                  map[string]*UMATicket
+	rpts                     map[string]*RPT
+	policies                 map[string]*Policy
+	derivationHandles        map[string]*DerivationHandle
+	clients                  map[string]*UMAClient
+	rejectDuplicateClientURI bool
+	privateKey               *rsa.PrivateKey
+	publicKey                *rsa.PublicKey
+	jwksKid                  string
 }
 
 type UMAResource struct {
@@ -76,6 +78,14 @@ type PolicyRule struct {
 	Scopes   []string
 }
 
+type UMAClient struct {
+	ClientID     string
+	ClientSecret string
+	OwnerWebID   string
+	ClientURI    string
+	ClientName   string
+}
+
 type DerivationHandle struct {
 	DerivationResourceID string
 	ResourceID           string
@@ -98,6 +108,7 @@ func NewUMAAuthorizationServer() *UMAAuthorizationServer {
 		rpts:              make(map[string]*RPT),
 		policies:          make(map[string]*Policy),
 		derivationHandles: make(map[string]*DerivationHandle),
+		clients:           make(map[string]*UMAClient),
 		privateKey:        privateKey,
 		publicKey:         &privateKey.PublicKey,
 		jwksKid:           generateRandomString(8),
@@ -108,6 +119,8 @@ func NewUMAAuthorizationServer() *UMAAuthorizationServer {
 	mux.HandleFunc("/jwks", as.handleJWKS)
 	mux.HandleFunc("/resource_set", as.handleResourceRegistration)
 	mux.HandleFunc("/resource_set/", as.handleResourceRegistration)
+	mux.HandleFunc("/register", as.handleClientRegistration)
+	mux.HandleFunc("/register/", as.handleClientRegistration)
 	mux.HandleFunc("/permission", as.handlePermissionRequest)
 	mux.HandleFunc("/token", as.handleTokenRequest)
 	mux.HandleFunc("/introspect", as.handleRPTIntrospection)
@@ -155,6 +168,13 @@ func (as *UMAAuthorizationServer) Close() {
 // URL returns the base URL of the mock UMA AS
 func (as *UMAAuthorizationServer) URL() string {
 	return as.issuer
+}
+
+// EnableClientURIConflicts forces client registration to fail on duplicate client_uri values.
+func (as *UMAAuthorizationServer) EnableClientURIConflicts() {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	as.rejectDuplicateClientURI = true
 }
 
 // RegisterResource adds a resource to the UMA AS
@@ -235,6 +255,7 @@ func (as *UMAAuthorizationServer) handleUMAConfiguration(w http.ResponseWriter, 
 	config := map[string]interface{}{
 		"issuer":                                as.issuer,
 		"token_endpoint":                        as.issuer + "/token",
+		"registration_endpoint":                 as.issuer + "/register",
 		"resource_registration_endpoint":        as.issuer + "/resource_set",
 		"permission_endpoint":                   as.issuer + "/permission",
 		"introspection_endpoint":                as.issuer + "/introspect",
@@ -247,6 +268,118 @@ func (as *UMAAuthorizationServer) handleUMAConfiguration(w http.ResponseWriter, 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(config)
+}
+
+func (as *UMAAuthorizationServer) handleClientRegistration(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		if r.URL.Path != "/register" {
+			http.Error(w, "Not found", http.StatusNotFound)
+			return
+		}
+
+		as.mu.RLock()
+		entries := make([]map[string]string, 0, len(as.clients))
+		for _, client := range as.clients {
+			entry := map[string]string{
+				"id":  client.ClientID,
+				"uri": client.ClientURI,
+			}
+			if client.ClientName != "" {
+				entry["name"] = client.ClientName
+			}
+			entries = append(entries, entry)
+		}
+		as.mu.RUnlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entries)
+		return
+	case http.MethodDelete:
+		clientID := strings.TrimPrefix(r.URL.Path, "/register/")
+		if clientID == "" || clientID == "/register" {
+			http.Error(w, "Not found", http.StatusNotFound)
+			return
+		}
+
+		as.mu.Lock()
+		if _, ok := as.clients[clientID]; !ok {
+			as.mu.Unlock()
+			http.Error(w, "Not found", http.StatusNotFound)
+			return
+		}
+		delete(as.clients, clientID)
+		as.mu.Unlock()
+
+		w.WriteHeader(http.StatusNoContent)
+		return
+	case http.MethodPost:
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "Invalid registration payload", http.StatusBadRequest)
+			return
+		}
+		defer r.Body.Close()
+
+		clientURI, _ := payload["client_uri"].(string)
+		clientName, _ := payload["client_name"].(string)
+
+		authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+		ownerWebID := ""
+		if strings.HasPrefix(authHeader, "WebID ") {
+			ownerWebID = strings.TrimSpace(strings.TrimPrefix(authHeader, "WebID "))
+		} else if strings.HasPrefix(authHeader, "Bearer ") {
+			ownerWebID = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+		}
+
+		as.mu.Lock()
+		if as.rejectDuplicateClientURI && clientURI != "" {
+			for _, client := range as.clients {
+				if client.ClientURI == clientURI {
+					as.mu.Unlock()
+					http.Error(w, "client already registered", http.StatusConflict)
+					return
+				}
+			}
+		}
+
+		for _, client := range as.clients {
+			if client.OwnerWebID != "" && client.OwnerWebID == ownerWebID {
+				as.mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"client_id":                  client.ClientID,
+					"client_secret":              client.ClientSecret,
+					"token_endpoint_auth_method": "client_secret_basic",
+				})
+				return
+			}
+		}
+
+		clientID := generateRandomString(16)
+		clientSecret := generateRandomString(32)
+		as.clients[clientID] = &UMAClient{
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			OwnerWebID:   ownerWebID,
+			ClientURI:    clientURI,
+			ClientName:   clientName,
+		}
+		as.mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"client_id":                  clientID,
+			"client_secret":              clientSecret,
+			"token_endpoint_auth_method": "client_secret_basic",
+		})
+		return
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 }
 
 func (as *UMAAuthorizationServer) handleResourceRegistration(w http.ResponseWriter, r *http.Request) {
@@ -309,11 +442,49 @@ func (as *UMAAuthorizationServer) handleTokenRequest(w http.ResponseWriter, r *h
 
 	grantType := r.FormValue("grant_type")
 
+	if grantType == "client_credentials" {
+		as.handleClientCredentialsGrant(w, r)
+		return
+	}
+
 	if grantType == "urn:ietf:params:oauth:grant-type:uma-ticket" {
 		as.handleUMATicketGrant(w, r)
 	} else {
 		http.Error(w, "Unsupported grant type", http.StatusBadRequest)
 	}
+}
+
+func (as *UMAAuthorizationServer) handleClientCredentialsGrant(w http.ResponseWriter, r *http.Request) {
+	scope := r.FormValue("scope")
+	if !strings.Contains(scope, "uma_protection") {
+		http.Error(w, "Invalid scope", http.StatusBadRequest)
+		return
+	}
+
+	clientID, clientSecret, ok := r.BasicAuth()
+	if !ok || clientID == "" {
+		http.Error(w, "Missing client credentials", http.StatusUnauthorized)
+		return
+	}
+
+	as.mu.RLock()
+	client, exists := as.clients[clientID]
+	as.mu.RUnlock()
+	if !exists || client.ClientSecret != clientSecret {
+		http.Error(w, "Invalid client credentials", http.StatusUnauthorized)
+		return
+	}
+
+	response := map[string]interface{}{
+		"access_token":  generateRandomString(32),
+		"token_type":    "Bearer",
+		"expires_in":    3600,
+		"refresh_token": generateRandomString(32),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(response)
 }
 
 func (as *UMAAuthorizationServer) handleUMATicketGrant(w http.ResponseWriter, r *http.Request) {
@@ -486,8 +657,8 @@ func (as *UMAAuthorizationServer) handleResourceListOrDetail(w http.ResponseWrit
 	}
 
 	response := map[string]interface{}{
-		"_id":            resource.ResourceID,
-		"name":           resource.Name,
+		"_id":             resource.ResourceID,
+		"name":            resource.Name,
 		"resource_scopes": append([]string(nil), resource.Scopes...),
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -552,7 +723,6 @@ func toRPTPermissions(perms []Permission) []map[string]interface{} {
 	}
 	return result
 }
-
 
 // evaluatePolicy checks if access should be granted based on policy
 func (as *UMAAuthorizationServer) evaluatePolicy(resourceID, webID string, requestedScopes []string) bool {

@@ -5,6 +5,7 @@ import (
 	"aggregator/model"
 	"context"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -29,11 +30,16 @@ func main() {
 	logrus.SetOutput(os.Stdout)
 
 	// Read Network configuration from environment variables
-	model.ExternalHost = os.Getenv("AGGREGATOR_EXTERNAL_HOST")
-	if model.ExternalHost == "" {
+	externalBase := strings.TrimSpace(os.Getenv("AGGREGATOR_EXTERNAL_HOST"))
+	if externalBase == "" {
 		logrus.Fatal("Environment variables AGGREGATOR_EXTERNAL_HOST must be set")
 	}
 	model.Protocol = "http"
+	model.ExternalHost = externalBase
+	if parsed, err := url.Parse(externalBase); err == nil && parsed.Scheme != "" {
+		model.Protocol = strings.ToLower(parsed.Scheme)
+		model.ExternalHost = parsed.Host
+	}
 
 	// Read Authorization configuration from environment variables
 	model.ClientId = os.Getenv("CLIENT_ID")
@@ -106,6 +112,9 @@ func main() {
 	if err != nil {
 		logrus.WithError(err).Fatalf("Failed to set up instance configuration endpoint")
 	}
+
+	// Initialize derived resource relay (internal only)
+	config.InitDerivedResourceRelay(serverMux, user)
 
 	// Start HTTP server
 	srv := &http.Server{

@@ -35,8 +35,8 @@ func RequestWithUMA(client *http.Client, r *http.Request) (*http.Response, error
 
 	// --- Step 1: Build destination URL ---
 	dest := &url.URL{
-		Scheme:   "https",
-		Host:     r.Host,
+		Scheme:   requestScheme(r),
+		Host:     requestHost(r),
 		Path:     r.URL.Path,
 		RawQuery: r.URL.RawQuery,
 	}
@@ -171,6 +171,23 @@ func RequestWithUMA(client *http.Client, r *http.Request) (*http.Response, error
 	}).Info("Retrying request with UMA RPT token")
 
 	return client.Do(ticketedReq)
+}
+
+func requestScheme(r *http.Request) string {
+	if r.URL != nil && r.URL.Scheme != "" {
+		return r.URL.Scheme
+	}
+	if r.TLS != nil {
+		return "https"
+	}
+	return "http"
+}
+
+func requestHost(r *http.Request) string {
+	if r.URL != nil && r.URL.Host != "" {
+		return r.URL.Host
+	}
+	return r.Host
 }
 
 // parseAuthenticateHeader parses the WWW-Authenticate header and fetches UMA config

@@ -116,7 +116,7 @@ func TestHandleAuthorizationCodeFinish_AllowsMissingOptionalTokenFields(t *testi
 	}
 
 	rec := httptest.NewRecorder()
-	handleAuthorizationCodeFinish(rec, req, instance.OwnerWebID)
+	handleAuthorizationCodeFinish(rec, req, instance.OwnerWebID, "")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Expected 200 OK, got %d", rec.Code)
@@ -194,7 +194,7 @@ func TestHandleAuthorizationCodeFinish_UsesStoredClientIDForRedirectValidation(t
 	}
 
 	rec := httptest.NewRecorder()
-	handleAuthorizationCodeFinish(rec, req, instance.OwnerWebID)
+	handleAuthorizationCodeFinish(rec, req, instance.OwnerWebID, "")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Expected 200 OK, got %d", rec.Code)

@@ -24,6 +24,16 @@ func TestCORS_Preflight_AllEndpoints(t *testing.T) {
 			methods: []string{http.MethodGet},
 		},
 		{
+			name:    "client-identifier",
+			url:     testEnv.AggregatorURL + "/client.json",
+			methods: []string{http.MethodGet},
+		},
+		{
+			name:    "server-transformations",
+			url:     testEnv.AggregatorURL + "/config/transformations",
+			methods: []string{http.MethodHead, http.MethodGet},
+		},
+		{
 			name:    "registration",
 			url:     testEnv.AggregatorURL + "/registration",
 			methods: []string{http.MethodPost, http.MethodDelete},
@@ -34,6 +44,11 @@ func TestCORS_Preflight_AllEndpoints(t *testing.T) {
 			methods: []string{http.MethodGet},
 		},
 		{
+			name:    "instance-transformations",
+			url:     desc.TransformationCatalog,
+			methods: []string{http.MethodHead, http.MethodGet},
+		},
+		{
 			name:    "service-collection",
 			url:     desc.ServiceCollection,
 			methods: []string{http.MethodHead, http.MethodGet, http.MethodPost},
@@ -42,6 +57,11 @@ func TestCORS_Preflight_AllEndpoints(t *testing.T) {
 			name:    "service-resource",
 			url:     service.ID,
 			methods: []string{http.MethodHead, http.MethodGet, http.MethodDelete},
+		},
+		{
+			name:    "service-location",
+			url:     service.Location,
+			methods: []string{http.MethodGet},
 		},
 	}
 
@@ -65,7 +85,7 @@ func assertCorsPreflight(t *testing.T, url string, method string) {
 	origin := "https://client.example"
 	req.Header.Set("Origin", origin)
 	req.Header.Set("Access-Control-Request-Method", method)
-	req.Header.Set("Access-Control-Request-Headers", "Authorization, Content-Type")
+	req.Header.Set("Access-Control-Request-Headers", "Authorization, Content-Type, Accept, If-None-Match")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -97,8 +117,11 @@ func assertCorsPreflight(t *testing.T, url string, method string) {
 	if allowHeaders == "" {
 		t.Fatal("Expected Access-Control-Allow-Headers header")
 	}
-	if !headerAllowsToken(allowHeaders, "Authorization") || !headerAllowsToken(allowHeaders, "Content-Type") {
-		t.Fatalf("Expected Access-Control-Allow-Headers to include Authorization and Content-Type, got %q", allowHeaders)
+	if !headerAllowsToken(allowHeaders, "Authorization") ||
+		!headerAllowsToken(allowHeaders, "Content-Type") ||
+		!headerAllowsToken(allowHeaders, "Accept") ||
+		!headerAllowsToken(allowHeaders, "If-None-Match") {
+		t.Fatalf("Expected Access-Control-Allow-Headers to include Authorization, Content-Type, Accept, and If-None-Match, got %q", allowHeaders)
 	}
 }
 
@@ -112,4 +135,101 @@ func headerAllowsToken(headerValue, token string) bool {
 		}
 	}
 	return false
+}
+
+func TestCORS_ResponseHeaders_PublicEndpoints(t *testing.T) {
+	instance := setupAggregatorInstance(t)
+	defer instance.cleanup()
+
+	desc := fetchAggregatorDescription(t, instance.baseURL, instance.authToken)
+	service := createService(t, desc.ServiceCollection, instance.authToken)
+
+	requests := []struct {
+		name    string
+		url     string
+		method  string
+		headers map[string]string
+	}{
+		{
+			name:   "server-description",
+			url:    testEnv.AggregatorURL + "/",
+			method: http.MethodGet,
+		},
+		{
+			name:   "client-identifier",
+			url:    testEnv.AggregatorURL + "/client.json",
+			method: http.MethodGet,
+		},
+		{
+			name:   "server-transformations",
+			url:    testEnv.AggregatorURL + "/config/transformations",
+			method: http.MethodGet,
+			headers: map[string]string{
+				"Accept": "text/turtle",
+			},
+		},
+		{
+			name:   "instance-description",
+			url:    instance.baseURL,
+			method: http.MethodGet,
+		},
+		{
+			name:   "instance-transformations",
+			url:    desc.TransformationCatalog,
+			method: http.MethodGet,
+			headers: map[string]string{
+				"Accept": "text/turtle",
+			},
+		},
+		{
+			name:   "service-collection",
+			url:    desc.ServiceCollection,
+			method: http.MethodGet,
+		},
+		{
+			name:   "service-resource",
+			url:    service.ID,
+			method: http.MethodGet,
+		},
+		{
+			name:   "service-location",
+			url:    service.Location,
+			method: http.MethodGet,
+		},
+	}
+
+	for _, req := range requests {
+		t.Run(req.name, func(t *testing.T) {
+			assertCorsResponse(t, req.url, req.method, req.headers)
+		})
+	}
+}
+
+func assertCorsResponse(t *testing.T, url string, method string, headers map[string]string) {
+	t.Helper()
+
+	req, err := http.NewRequest(method, url, nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+
+	origin := "https://client.example"
+	req.Header.Set("Origin", origin)
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	allowOrigin := resp.Header.Get("Access-Control-Allow-Origin")
+	if allowOrigin == "" {
+		t.Fatal("Expected Access-Control-Allow-Origin header on response")
+	}
+	if allowOrigin != "*" && allowOrigin != origin {
+		t.Fatalf("Expected Access-Control-Allow-Origin to be '*' or %q, got %q", origin, allowOrigin)
+	}
 }

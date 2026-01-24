@@ -8,13 +8,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
 )
 
 // handleClientCredentialsFlow handles the client_credentials registration type
-func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRequest, ownerWebID string) {
+func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRequest, ownerWebID string, idpIssuer string, ownerToken string) {
 	// Check if this is an update
 	isUpdate := req.AggregatorID != ""
 
@@ -31,10 +32,6 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 		http.Error(w, "authorization_server is required", http.StatusBadRequest)
 		return
 	}
-	if req.WebID == "" {
-		http.Error(w, "webid is required", http.StatusBadRequest)
-		return
-	}
 	if req.ClientID == "" {
 		http.Error(w, "client_id is required", http.StatusBadRequest)
 		return
@@ -43,16 +40,12 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 		http.Error(w, "client_secret is required", http.StatusBadRequest)
 		return
 	}
-
-	// Step 1: Discover IDP from the target WebID
-	idpIssuer, err := discoverIDPFromWebID(req.WebID)
-	if err != nil {
-		logrus.WithError(err).Errorf("Failed to discover IDP from WebID: %s", req.WebID)
-		http.Error(w, "Failed to discover IDP from WebID", http.StatusInternalServerError)
+	if idpIssuer == "" {
+		http.Error(w, "issuer is required", http.StatusBadRequest)
 		return
 	}
 
-	// Step 2: Fetch OIDC configuration
+	// Step 1: Fetch OIDC configuration
 	oidcConfig, err := fetchOIDCConfig(idpIssuer)
 	if err != nil {
 		logrus.WithError(err).Error("Unable to fetch OIDC configuration")
@@ -60,14 +53,14 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 		return
 	}
 
-	// Step 3: Perform client_credentials grant using provided client_id/client_secret
+	// Step 2: Perform client_credentials grant using provided client_id/client_secret
 	tokenData := url.Values{
 		"grant_type": {"client_credentials"},
 		"scope":      {"openid webid offline_access"},
 	}
 
 	// Some IDPs support a webid parameter to specify which WebID to act as
-	tokenData.Set("webid", req.WebID)
+	tokenData.Set("webid", ownerWebID)
 
 	resp, err := doTokenRequest(
 		oidcConfig.TokenEndpoint,
@@ -118,6 +111,32 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 		return
 	}
 
+	if !isUpdate && strings.TrimSpace(req.AuthorizationServer) != "" {
+		configCtx, configCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer configCancel()
+
+		umaConfig, err := fetchUMAConfig(req.AuthorizationServer)
+		if err != nil {
+			logrus.WithError(err).Error("Unable to fetch UMA configuration")
+			http.Error(w, "Unable to fetch UMA configuration", http.StatusInternalServerError)
+			return
+		}
+
+		clientURI := fmt.Sprintf("%s://%s", model.Protocol, model.ExternalHost)
+		rsClientID, rsClientSecret, pat, err := ensurePATForUMA(configCtx, umaConfig, tokenResp.AccessToken, clientURI)
+		if err != nil {
+			logrus.WithError(err).Error("Unable to obtain UMA protection API token")
+			http.Error(w, "Unable to obtain UMA protection API token", http.StatusInternalServerError)
+			return
+		}
+
+		if err := registerIngressUMAClient(req.AuthorizationServer, rsClientID, rsClientSecret, pat); err != nil {
+			logrus.WithError(err).Error("Failed to register UMA client with ingress")
+			http.Error(w, "Failed to register UMA client with ingress", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	tokenExpiry := ""
 	if tokenResp.ExpiresIn > 0 {
 		tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
@@ -135,7 +154,7 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 		if instance != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := updateAggregatorInstanceDeployments(instance.Namespace, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, ctx); err != nil {
+			if err := updateAggregatorInstanceDeployments(instance.Namespace, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, ownerToken, ctx); err != nil {
 				logrus.WithError(err).Errorf("Failed to update aggregator deployments: %s", req.AggregatorID)
 				http.Error(w, "Failed to update aggregator", http.StatusInternalServerError)
 				return
@@ -148,7 +167,7 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 		defer cancel()
 
 		// Create namespace for the aggregator
-		namespace, err := createNamespaceForAggregator(req.WebID, req.AuthorizationServer, ctx)
+		namespace, err := createNamespaceForAggregator(ownerWebID, req.AuthorizationServer, ctx)
 		if err != nil {
 			logrus.WithError(err).Error("Failed to create namespace")
 			http.Error(w, "Failed to create namespace", http.StatusInternalServerError)
@@ -156,7 +175,7 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 		}
 
 		// Deploy aggregator resources
-		if err := deployAggregatorResources(namespace, oidcConfig.TokenEndpoint, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, req.WebID, req.AuthorizationServer, ctx); err != nil {
+		if err := deployAggregatorResources(namespace, oidcConfig.TokenEndpoint, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, ownerWebID, ownerToken, req.AuthorizationServer, req.RegistrationType, "", ctx); err != nil {
 			logrus.WithError(err).Error("Failed to deploy aggregator")
 			http.Error(w, "Failed to deploy aggregator", http.StatusInternalServerError)
 			return
@@ -172,7 +191,7 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 			tokenResp.RefreshToken,
 		)
 
-		logrus.Infof("Aggregator created (client_credentials): %s for WebID %s (acting as %s)", instance.AggregatorID, ownerWebID, req.WebID)
+		logrus.Infof("Aggregator created (client_credentials): %s for WebID %s", instance.AggregatorID, ownerWebID)
 	}
 
 	// Return response

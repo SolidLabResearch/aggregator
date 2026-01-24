@@ -174,8 +174,8 @@ kind-start-traefik:
 		--create-namespace \
 		--set ingressClass.enabled=true \
 		--set ingressClass.name=aggregator-traefik \
-		--set ports.web.hostPort=80 \
-		--set ports.websecure.hostPort=443 \
+		--set ports.web.hostPort=5000 \
+		--set ports.websecure.hostPort=5001 \
 		--set service.type=ClusterIP \
 		--set providers.kubernetesCRD.allowCrossNamespace=true
 	@echo "⏳ Waiting for Traefik deployment to be ready..."
@@ -210,6 +210,10 @@ kind-deploy:
 	@echo "📄 Adding localhost entries for ingress hosts..."
 	@grep -qxF "127.0.0.1 aggregator.local" /etc/hosts || sudo -- sh -c "echo '127.0.0.1 aggregator.local' >> /etc/hosts"
 	@grep -qxF "127.0.0.1 wsl.local" /etc/hosts || sudo -- sh -c "echo '127.0.0.1 wsl.local' >> /etc/hosts"
+	@if [ -f /mnt/c/Windows/System32/drivers/etc/hosts ]; then \
+		echo "📄 Detected Windows hosts file, adding ingress host entries..."; \
+		grep -qxF "127.0.0.1 aggregator.local" /mnt/c/Windows/System32/drivers/etc/hosts || sudo -- sh -c "echo '127.0.0.1 aggregator.local' >> /mnt/c/Windows/System32/drivers/etc/hosts"; \
+	fi
 
 	@echo "📄 Applying ingress-uma..."
 	@kubectl apply -f k8s/app/ingress-uma.yaml
@@ -253,6 +257,9 @@ kind-undeploy:
 	@echo "🧹 Removing localhost entries..."
 	@sudo sed -i.bak '/aggregator\.local/d' /etc/hosts || true
 	@sudo sed -i.bak '/wsl\.local/d' /etc/hosts || true
+	@if [ -f /mnt/c/Windows/System32/drivers/etc/hosts ]; then \
+		sudo sed -i.bak '/aggregator\.local/d' /mnt/c/Windows/System32/drivers/etc/hosts || true; \
+	fi
 	@echo "✅ Deployment stopped (Traefik and cleaner still running)"
 
 kind-stop-traefik:
@@ -285,6 +292,9 @@ kind-clean:
 	@echo "🧹 Removing localhost entries..."
 	@sudo sed -i.bak '/aggregator\.local/d' /etc/hosts || true
 	@sudo sed -i.bak '/wsl\.local/d' /etc/hosts || true
+	@if [ -f /mnt/c/Windows/System32/drivers/etc/hosts ]; then \
+		sudo sed -i.bak '/aggregator\.local/d' /mnt/c/Windows/System32/drivers/etc/hosts || true; \
+	fi
 	@echo "🗑️ Removing generated key files..."
 	@rm -f private_key.pem
 	@echo "✅ Cleanup complete"
@@ -353,7 +363,7 @@ enable-wsl:
 # ------------------------
 integration-test:
 	@echo "🧪 Running integration tests..."
-	@cd integration-test && go mod download && go test -v -timeout 20m ./...
+	@cd integration-test && go mod download && go test -count=1 -v -timeout 20m ./...
 
 unit-test:
 	@echo "🧪 Running container unit tests (Go only)..."

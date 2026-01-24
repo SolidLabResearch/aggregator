@@ -53,23 +53,29 @@ func TestAuthenticateRequest_DisabledAuth(t *testing.T) {
 	model.DisableAuth = true
 
 	// Create a simple JWT token with WebID claim
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"webid": "https://alice.example/webid#me",
 		"iss":   "https://idp.example",
 		"exp":   time.Now().Add(time.Hour).Unix(),
 	})
-	tokenString, _ := token.SignedString([]byte("test-secret"))
+	tokenString, _ := jwtToken.SignedString([]byte("test-secret"))
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Authorization", "Bearer "+tokenString)
 
-	webID, err := authenticateRequest(req)
+	webID, issuer, authToken, err := authenticateRequest(req)
 
 	if err != nil {
 		t.Fatalf("Expected no error with disable_auth=true, got: %v", err)
 	}
 	if webID != "https://alice.example/webid#me" {
 		t.Errorf("Expected WebID 'https://alice.example/webid#me', got '%s'", webID)
+	}
+	if issuer != "https://idp.example" {
+		t.Errorf("Expected issuer 'https://idp.example', got '%s'", issuer)
+	}
+	if authToken != tokenString {
+		t.Errorf("Expected token to match input")
 	}
 }
 
@@ -81,23 +87,29 @@ func TestAuthenticateRequest_DisabledAuth_UsesSubClaim(t *testing.T) {
 	model.DisableAuth = true
 
 	// Create token with 'sub' claim instead of 'webid'
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub": "https://bob.example/webid#me",
 		"iss": "https://idp.example",
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
-	tokenString, _ := token.SignedString([]byte("test-secret"))
+	tokenString, _ := jwtToken.SignedString([]byte("test-secret"))
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Authorization", "Bearer "+tokenString)
 
-	webID, err := authenticateRequest(req)
+	webID, issuer, authToken, err := authenticateRequest(req)
 
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 	if webID != "https://bob.example/webid#me" {
 		t.Errorf("Expected WebID from 'sub' claim, got '%s'", webID)
+	}
+	if issuer != "https://idp.example" {
+		t.Errorf("Expected issuer 'https://idp.example', got '%s'", issuer)
+	}
+	if authToken != tokenString {
+		t.Errorf("Expected token to match input")
 	}
 }
 
@@ -108,16 +120,16 @@ func TestAuthenticateRequest_DisabledAuth_NoWebID(t *testing.T) {
 	model.DisableAuth = true
 
 	// Create token without webid or sub claim
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"iss": "https://idp.example",
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
-	tokenString, _ := token.SignedString([]byte("test-secret"))
+	tokenString, _ := jwtToken.SignedString([]byte("test-secret"))
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Authorization", "Bearer "+tokenString)
 
-	_, err := authenticateRequest(req)
+	_, _, _, err := authenticateRequest(req)
 
 	if err == nil {
 		t.Fatal("Expected error when token has no webid or sub claim")
@@ -133,7 +145,7 @@ func TestAuthenticateRequest_DisabledAuth_InvalidToken(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Authorization", "Bearer invalid-jwt-token")
 
-	_, err := authenticateRequest(req)
+	_, _, _, err := authenticateRequest(req)
 
 	if err == nil {
 		t.Fatal("Expected error for invalid JWT format")
@@ -147,12 +159,18 @@ func TestAuthenticateRequest_DisabledAuth_MissingAuthorization(t *testing.T) {
 	model.DisableAuth = true
 
 	req := httptest.NewRequest("GET", "/", nil)
-	webID, err := authenticateRequest(req)
+	webID, issuer, token, err := authenticateRequest(req)
 	if err != nil {
 		t.Fatalf("Expected no error when auth is disabled, got: %v", err)
 	}
 	if webID != "" {
 		t.Fatalf("Expected empty WebID when Authorization is missing, got %q", webID)
+	}
+	if issuer != "" {
+		t.Fatalf("Expected empty issuer when Authorization is missing, got %q", issuer)
+	}
+	if token != "" {
+		t.Fatalf("Expected empty token when Authorization is missing, got %q", token)
 	}
 }
 

@@ -37,7 +37,7 @@ func InitInstanceConfiguration(mux *http.ServeMux, user model.User) error {
 	}
 
 	// Define policy (owner only)
-	if err := auth.DefinePolicy(fullURL, user.UserId, user.AuthzServerURL, []model.Scope{model.Read}); err != nil {
+	if err := auth.DefinePolicy(fullURL, user.UserId, user.AuthzServerURL, []model.Scope{model.Read}, user.Namespace); err != nil {
 		return fmt.Errorf("failed to define policy for resource %s", fullURL)
 	}
 

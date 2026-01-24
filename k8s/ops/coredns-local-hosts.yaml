@@ -13,7 +13,8 @@ data:
         ready
         hosts {
           172.19.0.1 rs.local
-          172.19.0.1 as.local
+          172.19.0.1 uma.local
+          172.19.0.1 aggregator.local
           fallthrough
         }
         kubernetes cluster.local in-addr.arpa ip6.arpa {

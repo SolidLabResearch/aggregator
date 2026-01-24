@@ -14,6 +14,8 @@ We will make sure that `http://rs.local` is mapped to this address.
 echo "127.0.0.1 rs.local" | sudo tee -a /etc/hosts
 ```
 
+Possibly for windows you need to also add `127.0.0.1 rs.local` to `C:\Windows\System32\drivers\etc\hosts`.
+
 2) Add `rs.local` to the DNS of the kubernettes cluster:
 
 In `k8s/ops/coredns-local-hosts.yaml` under hosts, add the new mapping you want to add (keep the `172.19.0.1`):

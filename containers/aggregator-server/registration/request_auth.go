@@ -32,41 +32,46 @@ func extractBearerToken(r *http.Request) (string, error) {
 	return parts[1], nil
 }
 
-// authenticateRequest validates the IDP_client_token and extracts the WebID
-func authenticateRequest(r *http.Request) (webID string, err error) {
+// authenticateRequest validates the IDP_client_token and extracts the WebID and issuer.
+func authenticateRequest(r *http.Request) (webID string, issuer string, token string, err error) {
 	// If authentication is disabled (for testing), just parse and extract WebID without validation
 	if model.DisableAuth {
 		if r.Header.Get("Authorization") == "" {
-			return "", nil
+			return "", "", "", nil
 		}
 
 		tokenString, err := extractBearerToken(r)
 		if err != nil {
-			return "", err
+			return "", "", "", err
 		}
 
 		token, err := jwt.Parse([]byte(tokenString), jwt.WithValidate(false))
 		if err != nil {
-			return "", errors.New("invalid token format")
+			return "", "", "", errors.New("invalid token format")
+		}
+
+		issuer, err := issuerFromToken(token)
+		if err != nil {
+			return "", "", "", err
 		}
 
 		// Extract WebID from token
 		if webidClaim, ok := token.Get("webid"); ok {
 			if webidStr, ok := webidClaim.(string); ok {
-				return webidStr, nil
+				return webidStr, issuer, tokenString, nil
 			}
 		}
 		if sub, ok := token.Get("sub"); ok {
 			if subStr, ok := sub.(string); ok {
-				return subStr, nil
+				return subStr, issuer, tokenString, nil
 			}
 		}
-		return "", errors.New("no webid or sub claim in token")
+		return "", "", "", errors.New("no webid or sub claim in token")
 	}
 
 	tokenString, err := extractBearerToken(r)
 	if err != nil {
-		return "", err
+		return "", "", "", err
 	}
 
 	// Production mode: full token validation
@@ -74,17 +79,13 @@ func authenticateRequest(r *http.Request) (webID string, err error) {
 	unverifiedToken, err := jwt.Parse([]byte(tokenString), jwt.WithValidate(false))
 	if err != nil {
 		logrus.WithError(err).Warn("Failed to parse IDP client token")
-		return "", errors.New("invalid token format")
+		return "", "", "", errors.New("invalid token format")
 	}
 
 	// Get issuer from token
-	issuer, ok := unverifiedToken.Get("iss")
-	if !ok {
-		return "", errors.New("token missing issuer claim")
-	}
-	issuerStr, ok := issuer.(string)
-	if !ok {
-		return "", errors.New("invalid issuer claim")
+	issuerStr, err := issuerFromToken(unverifiedToken)
+	if err != nil {
+		return "", "", "", err
 	}
 
 	// Construct JWKS URL from issuer
@@ -92,37 +93,49 @@ func authenticateRequest(r *http.Request) (webID string, err error) {
 	jwksURL, err := discoverJWKSURL(issuerStr)
 	if err != nil {
 		logrus.WithError(err).Warnf("Failed to discover JWKS URL for issuer %s", issuerStr)
-		return "", errors.New("failed to discover JWKS endpoint")
+		return "", "", "", errors.New("failed to discover JWKS endpoint")
 	}
 
 	// Verify token signature using JWKS
 	verifiedToken, err := verifyTokenWithJWKS(tokenString, jwksURL)
 	if err != nil {
 		logrus.WithError(err).Warn("Token signature verification failed")
-		return "", errors.New("invalid token signature")
+		return "", "", "", errors.New("invalid token signature")
 	}
 
 	// Validate token claims
 	if err := validateTokenClaims(verifiedToken, issuerStr); err != nil {
 		logrus.WithError(err).Warn("Token validation failed")
-		return "", err
+		return "", "", "", err
 	}
 
 	// Extract WebID from verified token
 	// Try 'webid' claim first, then 'sub'
 	if webidClaim, ok := verifiedToken.Get("webid"); ok {
 		if webidStr, ok := webidClaim.(string); ok {
-			return webidStr, nil
+			return webidStr, issuerStr, tokenString, nil
 		}
 	}
 
 	if sub, ok := verifiedToken.Get("sub"); ok {
 		if subStr, ok := sub.(string); ok {
-			return subStr, nil
+			return subStr, issuerStr, tokenString, nil
 		}
 	}
 
-	return "", errors.New("no webid or sub claim in token")
+	return "", "", "", errors.New("no webid or sub claim in token")
+}
+
+func issuerFromToken(token jwt.Token) (string, error) {
+	issuer, ok := token.Get("iss")
+	if !ok {
+		return "", errors.New("token missing issuer claim")
+	}
+	issuerStr, ok := issuer.(string)
+	if !ok || strings.TrimSpace(issuerStr) == "" {
+		return "", errors.New("invalid issuer claim")
+	}
+	return issuerStr, nil
 }
 
 // discoverJWKSURL discovers the JWKS URL from an OIDC issuer

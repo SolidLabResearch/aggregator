@@ -49,7 +49,7 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Authentication required for all flows except none in disable_auth mode
-	ownerWebID, err := authenticateRequest(r)
+	ownerWebID, idpIssuer, ownerToken, err := authenticateRequest(r)
 	if err != nil {
 		logrus.WithError(err).Warn("Authentication failed")
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -64,13 +64,13 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 	// Route to appropriate handler based on registration_type
 	switch registrationType {
 	case "none":
-		handleNoneFlow(w, req, ownerWebID)
+		handleNoneFlow(w, req, ownerWebID, ownerToken)
 	case "provision":
-		handleProvisionFlow(w, req, ownerWebID)
+		handleProvisionFlow(w, req, ownerWebID, ownerToken)
 	case "authorization_code":
-		handleAuthorizationCodeFlow(w, req, ownerWebID)
+		handleAuthorizationCodeFlow(w, req, ownerWebID, idpIssuer, ownerToken)
 	case "client_credentials":
-		handleClientCredentialsFlow(w, req, ownerWebID)
+		handleClientCredentialsFlow(w, req, ownerWebID, idpIssuer, ownerToken)
 	case "device_code":
 		http.Error(w, "device_code flow not yet implemented", http.StatusNotImplemented)
 	default:
@@ -106,7 +106,7 @@ func handleRegistrationDelete(w http.ResponseWriter, r *http.Request) {
 	allowWithoutAuth := model.DisableAuth || strings.ToLower(instance.RegistrationType) == "none"
 	if !allowWithoutAuth {
 		// Authentication required
-		ownerWebID, err := authenticateRequest(r)
+		ownerWebID, _, _, err := authenticateRequest(r)
 		if err != nil {
 			logrus.WithError(err).Warn("Authentication failed")
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)

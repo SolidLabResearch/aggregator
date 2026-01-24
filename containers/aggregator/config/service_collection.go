@@ -55,7 +55,7 @@ func (config *UserConfigData) HandleFunc(pattern string, handler func(http.Respo
 	if err := auth.RegisterResource(fullURL, config.owner.AuthzServerURL, scopes); err != nil {
 		return fmt.Errorf("failed to register resource %s: %w", fullURL, err)
 	}
-	if err := auth.DefinePolicy(fullURL, config.owner.UserId, config.owner.AuthzServerURL, scopes); err != nil {
+	if err := auth.DefinePolicy(fullURL, config.owner.UserId, config.owner.AuthzServerURL, scopes, config.owner.Namespace); err != nil {
 		return fmt.Errorf("failed to define policy for %s: %w", fullURL, err)
 	}
 

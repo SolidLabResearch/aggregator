@@ -4,6 +4,8 @@ import http from 'http';
 
 const proxyUrl = process.env.http_proxy || process.env.HTTP_PROXY;
 const statusEndpoint = process.env.STATUS_ENDPOINT;
+const derivedResourceEndpoint = process.env.DERIVED_RESOURCE_ENDPOINT;
+const resourceLocation = process.env.RESOURCE_LOCATION;
 
 async function postStatus(status: string, statusText?: string): Promise<void> {
   if (!statusEndpoint) {
@@ -22,6 +24,34 @@ async function postStatus(status: string, statusText?: string): Promise<void> {
     });
   } catch (err) {
     console.error("Failed to post status update:", err);
+  }
+}
+
+async function postDerivedResource(location: string, sources: string[]): Promise<boolean> {
+  if (!derivedResourceEndpoint) {
+    return true;
+  }
+
+  try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    const response = await fetch(derivedResourceEndpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        location,
+        sources: sources.map((url) => ({ id: "", url })),
+      }),
+    });
+    if (!response.ok) {
+      console.error("Failed to post derived resource usage:", await response.text());
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("Failed to post derived resource usage:", err);
+    return false;
   }
 }
 
@@ -116,6 +146,7 @@ async function main() {
   }
 
   const sourceURLs = sourcesRaw.split(",").map(s => s.trim());
+  await postDerivedResource(resourceLocation || "/", sourceURLs);
 
   const contextRaw = process.env.CONTEXT;
   const schema = process.env.SCHEMA;

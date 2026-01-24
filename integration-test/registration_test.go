@@ -89,7 +89,7 @@ func TestRegistration_None_DisablesUMAIngressAndEgress(t *testing.T) {
 	// Build FnO Turtle description
 	source := "http://example.org/source"
 	query := "SELECT * WHERE { ?s ?p ?o }"
-	
+
 	// Get transformation catalog from server description
 	serverResp, err := http.Get(testEnv.AggregatorURL)
 	if err != nil {
@@ -99,7 +99,7 @@ func TestRegistration_None_DisablesUMAIngressAndEgress(t *testing.T) {
 	var serverDesc map[string]interface{}
 	json.NewDecoder(serverResp.Body).Decode(&serverDesc)
 	transformationsCatalog := serverDesc["transformation_catalog"].(string)
-	
+
 	turtleBody := fmt.Sprintf(`@prefix config: <%s> .
 @prefix fno: <https://w3id.org/function/ontology#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
@@ -139,7 +139,7 @@ _:execution a fno:Execution ;
 	// Extract short ID from full URL
 	parts := strings.Split(serviceID, "/")
 	shortID := parts[len(parts)-1]
-	
+
 	serviceCtx, serviceCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer serviceCancel()
 	deployment := waitForDeploymentExists(t, serviceCtx, namespace, shortID)
@@ -219,7 +219,7 @@ func TestRegistration_Provision_Create(t *testing.T) {
 	targetWebID := oidcProvider.URL() + "/webid#me"
 	oidcProvider.RegisterClient(testProvisionClientID, testProvisionClientSecret, []string{}, []string{"client_credentials"})
 	oidcProvider.RegisterUser(targetWebID, "provision-user", "provision-pass")
-	updateProvisionConfig(t, testProvisionClientID, testProvisionClientSecret, targetWebID, umaServer.URL())
+	updateProvisionConfig(t, testProvisionClientID, testProvisionClientSecret, targetWebID, oidcProvider.URL(), umaServer.URL())
 
 	reqBody := map[string]interface{}{
 		"registration_type":    "provision",
@@ -260,17 +260,39 @@ func TestRegistration_Provision_Create(t *testing.T) {
 		t.Errorf("Response missing aggregator_id")
 	}
 
-	webID, ok := response["webid"].(string)
-	if !ok || webID == "" {
-		t.Errorf("Response missing webid")
-	} else {
-		if webID != targetWebID {
-			t.Errorf("Expected webid %s, got %s", targetWebID, webID)
-		}
-		assertWebIDDereferenceable(t, webID)
+	subject, ok := response["subject"].(string)
+	if !ok || subject == "" {
+		t.Errorf("Response missing subject")
+	} else if subject != targetWebID {
+		t.Errorf("Expected subject %s, got %s", targetWebID, subject)
 	}
 
 	t.Logf("Provision flow created aggregator %s", aggregatorID)
+}
+
+func TestRegistration_Provision_ReRegisterOnClientURIConflict(t *testing.T) {
+	oidcProvider, err := mocks.NewOIDCProvider()
+	if err != nil {
+		t.Fatalf("Failed to create OIDC provider: %v", err)
+	}
+	defer oidcProvider.Close()
+
+	ownerWebID := "https://owner.example/webid#me"
+	authToken := createAuthToken(t, oidcProvider, ownerWebID)
+
+	umaServer := mocks.NewUMAAuthorizationServer()
+	umaServer.EnableClientURIConflicts()
+	defer umaServer.Close()
+
+	aggregatorID := createAggregatorViaProvision(t, oidcProvider, authToken, umaServer.URL())
+	if aggregatorID == "" {
+		t.Fatal("Expected aggregator ID for first provision")
+	}
+
+	aggregatorID = createAggregatorViaProvision(t, oidcProvider, authToken, umaServer.URL())
+	if aggregatorID == "" {
+		t.Fatal("Expected aggregator ID for re-provision")
+	}
 }
 
 func TestRegistration_Provision_InvalidCredentials(t *testing.T) {
@@ -291,7 +313,7 @@ func TestRegistration_Provision_InvalidCredentials(t *testing.T) {
 	validClientSecret := "provision-client-secret-valid"
 	oidcProvider.RegisterClient(validClientID, validClientSecret, []string{}, []string{"client_credentials"})
 	oidcProvider.RegisterUser(targetWebID, "provision-user", "provision-pass")
-	updateProvisionConfig(t, validClientID, "wrong-secret", targetWebID, umaServer.URL())
+	updateProvisionConfig(t, validClientID, "wrong-secret", targetWebID, oidcProvider.URL(), umaServer.URL())
 
 	reqBody := map[string]interface{}{
 		"registration_type": "provision",
@@ -318,52 +340,6 @@ func TestRegistration_Provision_InvalidCredentials(t *testing.T) {
 	}
 
 	t.Logf("Provision correctly rejected invalid credentials with status %d", resp.StatusCode)
-}
-
-func TestRegistration_Provision_InvalidWebID(t *testing.T) {
-	oidcProvider, err := mocks.NewOIDCProvider()
-	if err != nil {
-		t.Fatalf("Failed to create OIDC provider: %v", err)
-	}
-	defer oidcProvider.Close()
-
-	ownerWebID := "https://owner.example/webid#me"
-	authToken := createAuthToken(t, oidcProvider, ownerWebID)
-
-	umaServer := mocks.NewUMAAuthorizationServer()
-	defer umaServer.Close()
-
-	invalidWebID := "http://127.0.0.1:1/webid#me"
-	clientID := "provision-client-id-invalid-webid"
-	clientSecret := "provision-client-secret-invalid-webid"
-	oidcProvider.RegisterClient(clientID, clientSecret, []string{}, []string{"client_credentials"})
-	updateProvisionConfig(t, clientID, clientSecret, invalidWebID, umaServer.URL())
-
-	reqBody := map[string]interface{}{
-		"registration_type": "provision",
-	}
-	body, _ := json.Marshal(reqBody)
-
-	req, err := http.NewRequest("POST", testEnv.AggregatorURL+"/registration", bytes.NewBuffer(body))
-	if err != nil {
-		t.Fatalf("Failed to create request: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+authToken)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("Request failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusInternalServerError {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Expected 500 for invalid WebID, got %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	t.Logf("Provision correctly rejected invalid WebID with status %d", resp.StatusCode)
 }
 
 func TestRegistration_AuthorizationCode_Start(t *testing.T) {
@@ -713,20 +689,15 @@ func TestRegistration_ClientCredentials_Create(t *testing.T) {
 	umaServer := mocks.NewUMAAuthorizationServer()
 	defer umaServer.Close()
 
-	// The WebID that the aggregator will act as (hosted by mock OIDC provider)
-	targetWebID := oidcProvider.URL() + "/webid#me"
-
 	// Client credentials for the target WebID
 	targetClientID := "user-client-id"
 	targetClientSecret := "user-client-secret"
 
 	oidcProvider.RegisterClient(targetClientID, targetClientSecret, []string{}, []string{"client_credentials"})
-	oidcProvider.RegisterUser(targetWebID, "alice@example.org", "s3cr3t-password")
 
 	reqBody := map[string]interface{}{
 		"registration_type":    "client_credentials",
 		"authorization_server": umaServer.URL(),
-		"webid":                targetWebID,
 		"client_id":            targetClientID,
 		"client_secret":        targetClientSecret,
 	}
@@ -793,12 +764,9 @@ func TestRegistration_ClientCredentials_InvalidCredentials(t *testing.T) {
 
 	defer umaServer.Close()
 
-	webID := oidcProvider.URL() + "/webid#me"
-
 	reqBody := map[string]interface{}{
 		"registration_type":    "client_credentials",
 		"authorization_server": umaServer.URL(),
-		"webid":                webID,
 		"client_id":            "alice@example.org",
 		"client_secret":        "wrong-password",
 	}
@@ -839,17 +807,13 @@ func TestRegistration_TokenUpdate_ClientCredentials(t *testing.T) {
 	umaServer := mocks.NewUMAAuthorizationServer()
 	defer umaServer.Close()
 
-	targetWebID := oidcProvider.URL() + "/webid#me"
-
 	initialClientID := "user-client-id"
 	initialClientSecret := "user-client-secret"
 	oidcProvider.RegisterClient(initialClientID, initialClientSecret, []string{}, []string{"client_credentials"})
-	oidcProvider.RegisterUser(targetWebID, "alice@example.org", "s3cr3t-password")
 
 	createBody := map[string]interface{}{
 		"registration_type":    "client_credentials",
 		"authorization_server": umaServer.URL(),
-		"webid":                targetWebID,
 		"client_id":            initialClientID,
 		"client_secret":        initialClientSecret,
 	}
@@ -891,7 +855,6 @@ func TestRegistration_TokenUpdate_ClientCredentials(t *testing.T) {
 	updateBody := map[string]interface{}{
 		"registration_type":    "client_credentials",
 		"authorization_server": umaServer.URL(),
-		"webid":                targetWebID,
 		"client_id":            updatedClientID,
 		"client_secret":        updatedClientSecret,
 		"aggregator_id":        aggregatorID,

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -65,7 +66,7 @@ func deleteNamespaceResources(namespace string, ctx context.Context) error {
 }
 
 // deployAggregatorResources deploys the Egress UMA and Aggregator Instance
-func deployAggregatorResources(namespace string, tokenEndpoint string, accessToken string, refreshToken string, accessTokenExpiry string, ownerWebID string, authzServerURL string, ctx context.Context) error {
+func deployAggregatorResources(namespace string, tokenEndpoint string, accessToken string, refreshToken string, accessTokenExpiry string, ownerWebID string, ownerToken string, authzServerURL string, registrationType string, provisionWebID string, ctx context.Context) error {
 	replicas := int32(1)
 	useUMA := authzServerURL != ""
 	var err error
@@ -76,7 +77,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 			return fmt.Errorf("failed to ensure egress-uma RBAC: %w", err)
 		}
 
-		tokensPayload, err := buildTokensPayload(accessToken, refreshToken, accessTokenExpiry)
+		tokensPayload, err := buildTokensPayload(accessToken, refreshToken, accessTokenExpiry, ownerToken)
 		if err != nil {
 			return fmt.Errorf("failed to build egress-uma token payload: %w", err)
 		}
@@ -299,6 +300,8 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 		Resource: "ingressroutes",
 	}
 
+	hostMatch := hostWithoutPort(model.ExternalHost)
+
 	irName := "aggregator-instance-ingressroute"
 	obj := &unstructured.Unstructured{
 		Object: map[string]interface{}{
@@ -312,7 +315,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 				"entryPoints": []string{"web"},
 				"routes": []interface{}{
 					map[string]interface{}{
-						"match": "Host(`" + model.ExternalHost + "`) && (Path(`/config/" + namespace + "`) || Path(`/config/" + namespace + "/`)) && Method(`OPTIONS`)",
+						"match": "Host(`" + hostMatch + "`) && (Path(`/config/" + namespace + "`) || Path(`/config/" + namespace + "/`)) && Method(`OPTIONS`)",
 						"kind":  "Rule",
 						"services": []interface{}{
 							map[string]interface{}{
@@ -324,7 +327,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 						"middlewares": buildCorsOnlyMiddlewares(namespace, true),
 					},
 					map[string]interface{}{
-						"match": "Host(`" + model.ExternalHost + "`) && (Path(`/config/" + namespace + "`) || Path(`/config/" + namespace + "/`))",
+						"match": "Host(`" + hostMatch + "`) && (Path(`/config/" + namespace + "`) || Path(`/config/" + namespace + "/`))",
 						"kind":  "Rule",
 						"services": []interface{}{
 							map[string]interface{}{
@@ -336,7 +339,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 						"middlewares": buildIngressMiddlewares(useUMA, namespace, true),
 					},
 					map[string]interface{}{
-						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/config/" + namespace + "/services`) && Method(`OPTIONS`)",
+						"match": "Host(`" + hostMatch + "`) && PathPrefix(`/config/" + namespace + "/services`) && Method(`OPTIONS`)",
 						"kind":  "Rule",
 						"services": []interface{}{
 							map[string]interface{}{
@@ -348,7 +351,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 						"middlewares": buildCorsOnlyMiddlewares(namespace, false),
 					},
 					map[string]interface{}{
-						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/config/" + namespace + "/services`)",
+						"match": "Host(`" + hostMatch + "`) && PathPrefix(`/config/" + namespace + "/services`)",
 						"kind":  "Rule",
 						"services": []interface{}{
 							map[string]interface{}{
@@ -360,7 +363,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 						"middlewares": buildIngressMiddlewares(useUMA, namespace, false),
 					},
 					map[string]interface{}{
-						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/config/" + namespace + "/transformations`) && Method(`OPTIONS`)",
+						"match": "Host(`" + hostMatch + "`) && PathPrefix(`/config/" + namespace + "/transformations`) && Method(`OPTIONS`)",
 						"kind":  "Rule",
 						"services": []interface{}{
 							map[string]interface{}{
@@ -372,7 +375,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 						"middlewares": buildCorsOnlyMiddlewares(namespace, true),
 					},
 					map[string]interface{}{
-						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/config/" + namespace + "/transformations`)",
+						"match": "Host(`" + hostMatch + "`) && PathPrefix(`/config/" + namespace + "/transformations`)",
 						"kind":  "Rule",
 						"services": []interface{}{
 							map[string]interface{}{
@@ -487,13 +490,14 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 								{ContainerPort: 5000},
 							},
 							Env: []corev1.EnvVar{
-								{Name: "AGGREGATOR_EXTERNAL_HOST", Value: model.ExternalHost},
+								{Name: "AGGREGATOR_EXTERNAL_HOST", Value: fmt.Sprintf("%s://%s", model.Protocol, model.ExternalHost)},
 								{Name: "CLIENT_ID", Value: model.ClientId},
 								{Name: "CLIENT_SECRET", Value: model.ClientSecret},
 								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 								{Name: "USER_NAMESPACE", Value: namespace},
 								{Name: "USER_ID", Value: resolvedOwner},
 								{Name: "AS_URL", Value: authzServerURL},
+								{Name: "REGISTRATION_TYPE", Value: registrationType},
 								{Name: "DISABLE_AUTH", Value: fmt.Sprintf("%v", model.DisableAuth)},
 							},
 						},
@@ -501,6 +505,13 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 				},
 			},
 		},
+	}
+
+	if strings.TrimSpace(provisionWebID) != "" {
+		aggDeploy.Spec.Template.Spec.Containers[0].Env = append(
+			aggDeploy.Spec.Template.Spec.Containers[0].Env,
+			corev1.EnvVar{Name: "PROVISION_WEBID", Value: provisionWebID},
+		)
 	}
 
 	_, err = model.Clientset.AppsV1().Deployments(namespace).Create(ctx, aggDeploy, metav1.CreateOptions{})
@@ -512,14 +523,14 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 	return nil
 }
 
-func updateAggregatorInstanceDeployments(namespace string, accessToken string, refreshToken string, accessTokenExpiry string, ctx context.Context) error {
+func updateAggregatorInstanceDeployments(namespace string, accessToken string, refreshToken string, accessTokenExpiry string, ownerToken string, ctx context.Context) error {
 	if model.Clientset == nil {
 		logrus.Warn("Kubernetes client not initialized; skipping instance deployment updates")
 		return nil
 	}
 
 	if accessToken != "" || refreshToken != "" {
-		tokensPayload, err := buildTokensPayload(accessToken, refreshToken, accessTokenExpiry)
+		tokensPayload, err := buildTokensPayload(accessToken, refreshToken, accessTokenExpiry, ownerToken)
 		if err != nil {
 			return fmt.Errorf("failed to build egress-uma token payload: %w", err)
 		}
@@ -537,6 +548,21 @@ func updateAggregatorInstanceDeployments(namespace string, accessToken string, r
 	}
 
 	return nil
+}
+
+func hostWithoutPort(hostport string) string {
+	if hostport == "" {
+		return hostport
+	}
+	if host, _, err := net.SplitHostPort(hostport); err == nil {
+		return host
+	}
+	if strings.Count(hostport, ":") == 1 {
+		if idx := strings.LastIndex(hostport, ":"); idx > 0 {
+			return hostport[:idx]
+		}
+	}
+	return hostport
 }
 
 func buildIngressMiddlewares(useUMA bool, namespace string, includeStrip bool) []interface{} {
@@ -575,11 +601,14 @@ func buildCorsOnlyMiddlewares(namespace string, includeStrip bool) []interface{}
 	return middlewares
 }
 
-func buildTokensPayload(accessToken string, refreshToken string, accessTokenExpiry string) (map[string]string, error) {
+func buildTokensPayload(accessToken string, refreshToken string, accessTokenExpiry string, ownerToken string) (map[string]string, error) {
 	payload := map[string]string{
 		"access_token":        accessToken,
 		"refresh_token":       refreshToken,
 		"access_token_expiry": accessTokenExpiry,
+	}
+	if strings.TrimSpace(ownerToken) != "" {
+		payload["owner_token"] = ownerToken
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

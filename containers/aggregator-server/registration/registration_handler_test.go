@@ -15,6 +15,7 @@ func authToken(t *testing.T, webID string) string {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"webid": webID,
+		"iss":   "https://idp.example",
 	})
 	tokenString, err := token.SignedString([]byte("test-secret"))
 	if err != nil {
@@ -199,8 +200,7 @@ func TestRegistrationHandler_Post_ClientCredentials_MissingFields(t *testing.T) 
 
 	testCases := []string{
 		`{"registration_type":"client_credentials","authorization_server":"https://as.example"}`,
-		`{"registration_type":"client_credentials","authorization_server":"https://as.example","webid":"https://alice.example/webid#me"}`,
-		`{"registration_type":"client_credentials","authorization_server":"https://as.example","webid":"https://alice.example/webid#me","client_id":"client"}`,
+		`{"registration_type":"client_credentials","authorization_server":"https://as.example","client_id":"client"}`,
 	}
 
 	for _, body := range testCases {

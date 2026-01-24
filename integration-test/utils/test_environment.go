@@ -54,7 +54,7 @@ type Service struct {
 func SetupTestEnvironment(ctx context.Context) (*TestEnvironment, error) {
 	env := &TestEnvironment{
 		ClusterName:   "aggregator",
-		AggregatorURL: "http://aggregator.local",
+		AggregatorURL: "http://aggregator.local:5000",
 	}
 
 	if err := env.configureMockOIDCHost(ctx); err != nil {
@@ -328,7 +328,8 @@ func (env *TestEnvironment) ensureTestDeployment(ctx context.Context) error {
 	// Health check: verify aggregator is responding via Traefik
 	fmt.Println("🔍 Verifying aggregator is responding...")
 	for i := 0; i < 10; i++ {
-		execCmd = exec.CommandContext(ctx, "curl", "-sf", "http://aggregator.local/")
+		checkURL := strings.TrimRight(env.AggregatorURL, "/") + "/"
+		execCmd = exec.CommandContext(ctx, "curl", "-sf", checkURL)
 		if err := execCmd.Run(); err == nil {
 			fmt.Println("✅ Aggregator is responding via Traefik")
 			break
@@ -501,8 +502,8 @@ func (env *TestEnvironment) installTraefik(ctx context.Context) error {
 		"--create-namespace",
 		"--set", "ingressClass.enabled=true",
 		"--set", "ingressClass.name=aggregator-traefik",
-		"--set", "ports.web.hostPort=80",
-		"--set", "ports.websecure.hostPort=443",
+		"--set", "ports.web.hostPort=5000",
+		"--set", "ports.websecure.hostPort=5001",
 		"--set", "service.type=ClusterIP",
 		"--set", "providers.kubernetesCRD.allowCrossNamespace=true")
 	if output, err := execCmd.CombinedOutput(); err != nil {

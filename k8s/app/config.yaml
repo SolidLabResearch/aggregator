@@ -11,8 +11,11 @@ data:
   disable_auth: "false"                                                         # Disable authentication for testing purposes (true, false)
   client_id: "aggregator"                                                       # OAuth2 Client ID
   client_secret: "AtctW4sdbmjcfF9gQJIf5RoK6T6wetwG"                             # OAuth2 Client Secret
-  allowed_registration_types: "authorization_code,client_credentials,provision,none" # Comma-separated registration types
-  provision_client_id: "provision-client-id"                                    # Client credentials for provision flow
-  provision_client_secret: "provision-client-secret"                            # Client secret for provision flow
-  provision_webid: "https://provision.example/webid#me"                         # WebID to provision
-  provision_authorization_server: "https://uma.example"                         # UMA authorization server
+  external_host: "http://aggregator.local:5000"                                 # External base URL for building public URLs
+  allowed_registration_types: "provision"                                       # Comma-separated registration types
+  idp_server_type: "solid"                                                      # Use solid or keyckloak as identity provider server
+  provision_client_id: "demo@example.org"                                       # Client credentials for provision flow
+  provision_client_secret: "abc123"                                             # Client secret for provision flow
+  provision_webid: "http://rs.local:3000/demo/profile/card#me"                  # WebID to provision (optional, only for solid flow)
+  provision_idp: "http://rs.local:3000"                                         # OIDC issuer URL
+  provision_authorization_server: "http://uma.local:4000/uma"                   # UMA server

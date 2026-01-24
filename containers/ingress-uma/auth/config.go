@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 type UmaConfig struct {
 	Issuer                       string `json:"issuer"`
 	JwksUri                      string `json:"jwks_uri"`
+	TokenEndpoint                string `json:"token_endpoint"`
+	RegistrationEndpoint         string `json:"registration_endpoint"`
 	PermissionEndpoint           string `json:"permission_endpoint"`
 	IntrospectionEndpoint        string `json:"introspection_endpoint"`
 	ResourceRegistrationEndpoint string `json:"resource_registration_endpoint"`
@@ -24,7 +27,8 @@ var requiredFields = map[string]func(UmaConfig) string{
 }
 
 func fetchUmaConfig(issuer string) (UmaConfig, error) {
-	url := fmt.Sprintf("%s/.well-known/uma2-configuration", issuer)
+	trimmed := strings.TrimRight(strings.TrimSpace(issuer), "/")
+	url := fmt.Sprintf("%s/.well-known/uma2-configuration", trimmed)
 
 	resp, err := http.Get(url)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"aggregator/model"
 	"context"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -235,6 +236,8 @@ func createDeployment(service *model.Service, replicas int32, useUMA bool, ctx c
 		container.Env = append([]corev1.EnvVar{
 			{Name: "HTTP_PROXY", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", service.Namespace)},
 			{Name: "http_proxy", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", service.Namespace)},
+			{Name: "DERIVED_RESOURCE_ENDPOINT", Value: fmt.Sprintf("http://aggregator.%s.svc.cluster.local:5000/derived-resources", service.Namespace)},
+			{Name: "RESOURCE_LOCATION", Value: fmt.Sprintf("http://%s/services/%s/%s", model.ExternalHost, service.Namespace, service.Id)},
 		}, container.Env...)
 	}
 
@@ -270,6 +273,7 @@ func createDeployment(service *model.Service, replicas int32, useUMA bool, ctx c
 	logrus.Infof("Deployment %s created successfully in namespace %s", service.Id, service.Namespace)
 	return nil
 }
+
 
 func createServiceResource(service *model.Service, ctx context.Context) error {
 	svcName := "svc-" + service.Id
@@ -337,6 +341,7 @@ func createIngressRoute(service *model.Service, owner model.User, ctx context.Co
 	}
 
 	useUMA := strings.TrimSpace(owner.AuthzServerURL) != ""
+	hostMatch := hostWithoutPort(model.ExternalHost)
 	middlewares := []interface{}{
 		map[string]interface{}{
 			"name":      "cors",
@@ -367,7 +372,7 @@ func createIngressRoute(service *model.Service, owner model.User, ctx context.Co
 				"entryPoints": []string{"web"},
 				"routes": []interface{}{
 					map[string]interface{}{
-						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/services/" + namespace + "/" + service.Id + "`) && Method(`OPTIONS`)",
+						"match": "Host(`" + hostMatch + "`) && PathPrefix(`/services/" + namespace + "/" + service.Id + "`) && Method(`OPTIONS`)",
 						"kind":  "Rule",
 						"services": []interface{}{
 							map[string]interface{}{
@@ -388,7 +393,7 @@ func createIngressRoute(service *model.Service, owner model.User, ctx context.Co
 						},
 					},
 					map[string]interface{}{
-						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/services/" + namespace + "/" + service.Id + "`)",
+						"match": "Host(`" + hostMatch + "`) && PathPrefix(`/services/" + namespace + "/" + service.Id + "`)",
 						"kind":  "Rule",
 						"services": []interface{}{
 							map[string]interface{}{
@@ -418,11 +423,26 @@ func createIngressRoute(service *model.Service, owner model.User, ctx context.Co
 	if err := auth.RegisterResource(resourceID, owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
 		return fmt.Errorf("failed to register resource for IngressRoute %q: %w", irName, err)
 	}
-	if err := auth.DefinePolicy(resourceID, owner.UserId, owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
+	if err := auth.DefinePolicy(resourceID, owner.UserId, owner.AuthzServerURL, []model.Scope{model.Read}, owner.Namespace); err != nil {
 		return fmt.Errorf("failed to create policy for IngressRoute %q: %w", irName, err)
 	}
 	service.PubEndpoints = append(service.PubEndpoints, resourceID)
 
 	logrus.Infof("IngressRoute %s created successfully in namespace %s", irName, "aggregator-app")
 	return nil
+}
+
+func hostWithoutPort(hostport string) string {
+	if hostport == "" {
+		return hostport
+	}
+	if host, _, err := net.SplitHostPort(hostport); err == nil {
+		return host
+	}
+	if strings.Count(hostport, ":") == 1 {
+		if idx := strings.LastIndex(hostport, ":"); idx > 0 {
+			return hostport[:idx]
+		}
+	}
+	return hostport
 }

@@ -32,7 +32,7 @@ func InitAggregatorDescription(mux *http.ServeMux, user model.User) error {
 	if err := auth.RegisterResource(fullURL, user.AuthzServerURL, []model.Scope{model.Read}); err != nil {
 		return fmt.Errorf("failed to register aggregator description %s: %w", fullURL, err)
 	}
-	if err := auth.DefinePolicy(fullURL, user.UserId, user.AuthzServerURL, []model.Scope{model.Read}); err != nil {
+	if err := auth.DefinePolicy(fullURL, user.UserId, user.AuthzServerURL, []model.Scope{model.Read}, user.Namespace); err != nil {
 		return fmt.Errorf("failed to define policy for aggregator description %s: %w", fullURL, err)
 	}
 

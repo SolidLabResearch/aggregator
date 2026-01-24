@@ -6,6 +6,7 @@ import (
 	reg "aggregator/registration"
 	"context"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -32,11 +33,16 @@ func main() {
 	logrus.SetOutput(os.Stdout)
 
 	// Read Network configuration from environment variables
-	model.ExternalHost = os.Getenv("AGGREGATOR_EXTERNAL_HOST")
-	if model.ExternalHost == "" {
+	externalBase := strings.TrimSpace(os.Getenv("AGGREGATOR_EXTERNAL_HOST"))
+	if externalBase == "" {
 		logrus.Fatal("Environment variables AGGREGATOR_EXTERNAL_HOST must be set")
 	}
 	model.Protocol = "http"
+	model.ExternalHost = externalBase
+	if parsed, err := url.Parse(externalBase); err == nil && parsed.Scheme != "" {
+		model.Protocol = strings.ToLower(parsed.Scheme)
+		model.ExternalHost = parsed.Host
+	}
 
 	// Read Authorization configuration from environment variables
 	model.ClientId = os.Getenv("CLIENT_ID")
@@ -51,7 +57,9 @@ func main() {
 	model.ProvisionClientID = os.Getenv("PROVISION_CLIENT_ID")
 	model.ProvisionClientSecret = os.Getenv("PROVISION_CLIENT_SECRET")
 	model.ProvisionWebID = os.Getenv("PROVISION_WEBID")
+	model.ProvisionIDP = os.Getenv("PROVISION_IDP")
 	model.ProvisionAuthorizationServer = os.Getenv("PROVISION_AUTHORIZATION_SERVER")
+	model.IDPServerType = strings.ToLower(strings.TrimSpace(os.Getenv("IDP_SERVER_TYPE")))
 
 	allowedTypes := parseAllowedRegistrationTypes(os.Getenv("ALLOWED_REGISTRATION_TYPES"))
 	model.AllowedRegistrationTypes = allowedTypes
@@ -64,6 +72,9 @@ func main() {
 		}
 		if model.ProvisionWebID == "" {
 			logrus.Fatal("Environment variable PROVISION_WEBID must be set when provision registration is allowed")
+		}
+		if model.ProvisionIDP == "" {
+			logrus.Fatal("Environment variable PROVISION_IDP must be set when provision registration is allowed")
 		}
 		if model.ProvisionAuthorizationServer == "" {
 			logrus.Fatal("Environment variable PROVISION_AUTHORIZATION_SERVER must be set when provision registration is allowed")

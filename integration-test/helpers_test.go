@@ -907,7 +907,7 @@ func assertWebIDDereferenceable(t *testing.T, webID string) {
 	}
 }
 
-func updateProvisionConfig(t *testing.T, clientID, clientSecret, webID, authorizationServer string) {
+func updateProvisionConfig(t *testing.T, clientID, clientSecret, webID, idpIssuer, authorizationServer string) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -924,10 +924,42 @@ func updateProvisionConfig(t *testing.T, clientID, clientSecret, webID, authoriz
 	configMap.Data["provision_client_id"] = clientID
 	configMap.Data["provision_client_secret"] = clientSecret
 	configMap.Data["provision_webid"] = webID
+	configMap.Data["provision_idp"] = idpIssuer
 	configMap.Data["provision_authorization_server"] = authorizationServer
 
 	if _, err := testEnv.KubeClient.CoreV1().ConfigMaps("aggregator-app").Update(ctx, configMap, metav1.UpdateOptions{}); err != nil {
 		t.Fatalf("Failed to update aggregator configmap: %v", err)
+	}
+
+	secretClient := testEnv.KubeClient.CoreV1().Secrets("aggregator-app")
+	secret, err := secretClient.Get(ctx, "aggregator-provision-uma", metav1.GetOptions{})
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			t.Fatalf("Failed to fetch UMA provision secret: %v", err)
+		}
+		secret = &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "aggregator-provision-uma",
+				Namespace: "aggregator-app",
+			},
+			Type: corev1.SecretTypeOpaque,
+			Data: map[string][]byte{
+				"provision_uma_client_id":     []byte(""),
+				"provision_uma_client_secret": []byte(""),
+			},
+		}
+		if _, err := secretClient.Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("Failed to create UMA provision secret: %v", err)
+		}
+	} else {
+		if secret.Data == nil {
+			secret.Data = map[string][]byte{}
+		}
+		secret.Data["provision_uma_client_id"] = []byte("")
+		secret.Data["provision_uma_client_secret"] = []byte("")
+		if _, err := secretClient.Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+			t.Fatalf("Failed to update UMA provision secret: %v", err)
+		}
 	}
 
 	deployment, err := testEnv.KubeClient.AppsV1().Deployments("aggregator-app").Get(ctx, "aggregator-server", metav1.GetOptions{})
@@ -984,7 +1016,7 @@ func createAggregatorViaProvision(t *testing.T, oidcProvider *mocks.OIDCProvider
 	targetWebID := oidcProvider.URL() + "/webid#me"
 	oidcProvider.RegisterClient(testProvisionClientID, testProvisionClientSecret, []string{}, []string{"client_credentials"})
 	oidcProvider.RegisterUser(targetWebID, "provision-user", "provision-pass")
-	updateProvisionConfig(t, testProvisionClientID, testProvisionClientSecret, targetWebID, umaServerURL)
+	updateProvisionConfig(t, testProvisionClientID, testProvisionClientSecret, targetWebID, oidcProvider.URL(), umaServerURL)
 
 	createBody := map[string]interface{}{
 		"registration_type":    "provision",
@@ -1114,14 +1146,18 @@ func waitForServiceReady(t *testing.T, serviceURL string, authToken string, time
 }
 
 func buildFnOExecution(query string, source string) string {
-	return fmt.Sprintf(`@base <http://aggregator.local/config/transformations#> .
+	baseURL := "http://aggregator.local:5000"
+	if testEnv != nil && strings.TrimSpace(testEnv.AggregatorURL) != "" {
+		baseURL = strings.TrimRight(testEnv.AggregatorURL, "/")
+	}
+	return fmt.Sprintf(`@base <%s/config/transformations#> .
 @prefix fno: <https://w3id.org/function/ontology#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 <> a fno:Execution ;
     fno:executes <SPARQLEvaluation> ;
     <queryString> "%s"^^xsd:string ;
     <sources> ( "%s"^^xsd:string ) .
-`, query, source)
+`, baseURL, query, source)
 }
 
 func assertEnvValue(t *testing.T, envs []corev1.EnvVar, name string, expected string) {

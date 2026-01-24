@@ -10,7 +10,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func handleNoneFlow(w http.ResponseWriter, req model.RegistrationRequest, ownerWebID string) {
+func handleNoneFlow(w http.ResponseWriter, req model.RegistrationRequest, ownerWebID string, ownerToken string) {
 	if req.AggregatorID != "" {
 		http.Error(w, "none updates are not supported", http.StatusBadRequest)
 		return
@@ -26,7 +26,7 @@ func handleNoneFlow(w http.ResponseWriter, req model.RegistrationRequest, ownerW
 		return
 	}
 
-	if err := deployAggregatorResources(namespace, "", "", "", "", ownerWebID, "", ctx); err != nil {
+	if err := deployAggregatorResources(namespace, "", "", "", "", ownerWebID, ownerToken, "", req.RegistrationType, "", ctx); err != nil {
 		logrus.WithError(err).Error("Failed to deploy aggregator")
 		http.Error(w, "Failed to deploy aggregator", http.StatusInternalServerError)
 		return

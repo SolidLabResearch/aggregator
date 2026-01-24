@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/url"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,7 +15,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-var ExternalHost = os.Getenv("EXTERNAL_HOST")
 var DisableAuth = strings.ToLower(os.Getenv("DISABLE_AUTH")) == "true"
 
 func init() {
@@ -28,9 +28,15 @@ func init() {
 }
 
 func main() {
+	rawExternalHost := strings.TrimSpace(os.Getenv("EXTERNAL_HOST"))
+	if rawExternalHost == "" {
+		logrus.Fatal("EXTERNAL_HOST must be set")
+	}
+	externalHost := parseExternalHost(rawExternalHost)
+
 	mux := http.NewServeMux()
-	signing.InitSigning(mux, "/keys/private_key.pem", ExternalHost)
-	auth.InitAuth(ExternalHost, DisableAuth)
+	signing.InitSigning(mux, "/keys/private_key.pem", externalHost)
+	auth.InitAuth(externalHost, DisableAuth)
 
 	// Synchronize resources (NOT SUPPORTED YET)
 	// err := auth.SynchronizeResources(ASURL)
@@ -42,6 +48,8 @@ func main() {
 	mux.HandleFunc("/authorize", auth.HandleAuthorizationRequest)
 	mux.HandleFunc("/resources", auth.HandleResourceRequest)
 	mux.HandleFunc("/policies", auth.HandlePolicyRequest)
+	mux.HandleFunc("/registrations", auth.HandleRegistrationRequest)
+	mux.HandleFunc("/derived-resources", auth.HandleDerivedResourceRequest)
 
 	// Start HTTP server in a goroutine
 	go func() {
@@ -71,4 +79,12 @@ func main() {
 
 	// Now it is safe to exit
 	logrus.Info("Exiting container after resource cleanup")
+}
+
+func parseExternalHost(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err == nil && parsed.Host != "" {
+		return parsed.Host
+	}
+	return raw
 }

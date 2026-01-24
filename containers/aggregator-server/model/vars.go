@@ -16,7 +16,9 @@ var AllowedRegistrationTypes []string
 var ProvisionClientID string
 var ProvisionClientSecret string
 var ProvisionWebID string
+var ProvisionIDP string
 var ProvisionAuthorizationServer string
+var IDPServerType string
 
 var Clientset kubernetes.Interface
 var DynamicClient *dynamic.DynamicClient
