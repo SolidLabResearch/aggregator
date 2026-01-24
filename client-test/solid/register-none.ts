@@ -1,6 +1,6 @@
 import { fetch } from "cross-fetch";
 
-const AGGREGATOR_URL = "http://aggregator.local";
+const AGGREGATOR_URL = "http://aggregator.local:5000";
 
 const QUERY_SOURCES = ["http://rs.local:3000/bob/profile/card", "http://rs.local:3000/alice/profile/card"];
 const QUERY_STRING = "SELECT * WHERE { ?s ?p ?o }";
