@@ -299,6 +299,14 @@ func (env *TestEnvironment) ensureTestDeployment(ctx context.Context) error {
 		}
 	}
 
+	// Force a rollout so ConfigMap changes are picked up by the running pods.
+	execCmd = exec.CommandContext(ctx, "kubectl", "rollout", "restart",
+		"deployment/aggregator-server",
+		"-n", "aggregator-app")
+	if output, err := execCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to restart aggregator deployment: %w\nOutput: %s", err, string(output))
+	}
+
 	// Wait for deployment to be ready
 	fmt.Println("⏳ Waiting for aggregator to be ready...")
 	execCmd = exec.CommandContext(ctx, "kubectl", "wait",
