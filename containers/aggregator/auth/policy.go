@@ -33,7 +33,7 @@ func DefinePolicy(resourceId string, userId string, issuer string, scopes []mode
 
 	logrus.Debugf("Creating policy for resource %s with body: %s", resourceId, string(jsonBody))
 	resp, err := http.Post(
-		"http://ingress-uma.aggregator-app.svc.cluster.local/policies",
+		fmt.Sprintf("http://ingress-uma.%s.svc.cluster.local:8080/policies", model.ServerNamespace),
 		"application/json",
 		bytes.NewReader(jsonBody),
 	)

@@ -194,50 +194,13 @@ kind-start-cleaner:
 	@echo "✅ Aggregator cleaner deployed"
 
 kind-deploy:
-	@echo "📄 Deploying aggregator application..."
-	@kubectl config use-context kind-aggregator
-
-	@echo "📄 Applying custom resources definitions..."
-	@kubectl apply -f k8s/cluster/crds/transformation.yaml
-
-	@echo "📄 Applying namespaces..."
-	@kubectl apply -f k8s/namespaces/app.yaml
-
-	@echo "📄 Applying Traefik middlewares..."
-	@kubectl apply -f k8s/app/traefik/middlewares.yaml
-
-	@echo "📄 Creating secret for ingress-uma..."
-	@kubectl -n aggregator-app create secret generic ingress-uma-key \
-		--from-file=private_key.pem=private_key.pem \
-		--dry-run=client -o yaml | kubectl apply -f -
-
-	@echo "📄 Applying configurations..."
-	@kubectl apply -f k8s/config/server-config.yaml
-	@kubectl apply -f k8s/config/spec-config.yaml
-	@kubectl apply -f k8s/config/transformations.yaml
-
 	@echo "📄 Adding localhost entries for ingress hosts..."
 	@grep -qxF "127.0.0.1 aggregator.local" /etc/hosts || sudo -- sh -c "echo '127.0.0.1 aggregator.local' >> /etc/hosts"
 	@grep -qxF "127.0.0.1 wsl.local" /etc/hosts || sudo -- sh -c "echo '127.0.0.1 wsl.local' >> /etc/hosts"
 
-	@echo "📄 Applying ingress-uma..."
-	@kubectl apply -k k8s/app/ingress-uma/
-	@kubectl rollout status deployment ingress-uma -n aggregator-app --timeout=90s
-
-	@echo "⏳ Waiting for ingress-uma JWKS endpoint..."
-	@for i in {1..30}; do \
-		STATUS=$$(curl -s -o /dev/null -w "%{http_code}" http://aggregator.local/uma/.well-known/jwks.json || echo "000"); \
-		if [ "$$STATUS" = "200" ]; then \
-			echo "✅ Ingress-uma endpoint is ready"; break; \
-		else \
-			echo "⏳ Waiting for Ingress JWKS endpoint... (status=$$STATUS)"; sleep 2; \
-		fi; \
-	done
-
-	@echo "📄 Applying aggregator server and service..."
-	@kubectl apply -k k8s/app/server/
+	@echo "📄 Deploying aggregator application..."
+	@helm upgrade --install aggregator-server ./aggregator-server -f config.yaml -n aggregator-app --create-namespace
 	@kubectl rollout status deployment aggregator-server -n aggregator-app --timeout=120s
-
 	@echo "✅ Aggregator application deployed successfully!"
 
 deploy: kind-start-traefik kind-deploy
@@ -253,6 +216,7 @@ kind-undeploy:
 		echo "🔧 Setting kubectl context..."; \
 		kubectl config use-context kind-aggregator || true; \
 		echo "🧹 Deleting aggregator namespace..."; \
+		helm uninstall aggregator-server -n aggregator-app; \
 		kubectl delete namespace aggregator-app --ignore-not-found || true; \
 	else \
 		echo "ℹ️  Kind cluster 'aggregator' does not exist, skipping deployment cleanup"; \
@@ -260,9 +224,6 @@ kind-undeploy:
 	@echo "🧹 Removing localhost entries..."
 	@sudo sed -i.bak '/aggregator\.local/d' /etc/hosts || true
 	@sudo sed -i.bak '/wsl\.local/d' /etc/hosts || true
-	@echo "🧹 Removing transformations..."
-	@kubectl delete transformations --all
-	@kubectl delete crd transformations.fno.knows.idlab.ugent.be
 	@echo "✅ Deployment stopped (Traefik and cleaner still running)"
 
 kind-stop-traefik:

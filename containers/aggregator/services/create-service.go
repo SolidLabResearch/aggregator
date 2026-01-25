@@ -35,7 +35,7 @@ func CreateAggregatorService(
 		ID:               id,
 		Path:             path,
 		Exe:              exe,
-		Namespace:        model.Namespace,
+		Namespace:        model.UserNamespace,
 		ClusterEndpoints: []string{},
 		Deployments:      []appsv1.Deployment{},
 		Services:         []corev1.Service{},

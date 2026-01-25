@@ -299,7 +299,7 @@ func (collec *ServiceCollection) HandleServiceOutput(w http.ResponseWriter, r *h
 	// Create new request to forward
 	forwardURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s",
 		serviceID,
-		model.Namespace,
+		model.UserNamespace,
 		mapping.Port,
 		mapping.Path,
 	)

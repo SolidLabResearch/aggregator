@@ -242,7 +242,17 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 		}
 
 		// Deploy aggregator instance
-		if err := deployAggregatorResources(namespace, storedData.TokenEndpoint, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, id, storedData.AuthorizationServer, ctx); err != nil {
+		err = deployAggregatorResources(
+			namespace,
+			storedData.TokenEndpoint,
+			tokenResp.AccessToken,
+			tokenResp.RefreshToken,
+			tokenExpiry,
+			id,
+			storedData.AuthorizationServer,
+			ctx,
+		)
+		if err != nil {
 			logrus.WithError(err).Error("Failed to deploy aggregator")
 			http.Error(w, "Failed to deploy aggregator", http.StatusInternalServerError)
 			return

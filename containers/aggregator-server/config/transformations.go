@@ -154,7 +154,7 @@ func loadTransformationCRs() ([]model.Transformation, error) {
 
 	crList, err := model.DynamicClient.
 		Resource(gvr).
-		Namespace("aggregator-app").
+		Namespace(model.Namespace).
 		List(context.TODO(), v1.ListOptions{})
 
 	if err != nil {

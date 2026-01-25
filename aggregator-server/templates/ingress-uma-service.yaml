@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingress-uma
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aggregator.labels" $ | nindent 4 }}
+  annotations:
+    {{- include "aggregator.annotations" $ | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "aggregator.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: ingress-uma
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080

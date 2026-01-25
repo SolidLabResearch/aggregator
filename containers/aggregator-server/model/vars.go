@@ -22,8 +22,10 @@ var ProvisionClientSecret string
 var ProvisionWebID string
 var ProvisionAuthorizationServer string
 
-// Kubernetes clients
+// Kubernetes
+var Namespace string
 var Clientset kubernetes.Interface
 var DynamicClient *dynamic.DynamicClient
+var IngressClassName *string
 
 var LogLevel logrus.Level

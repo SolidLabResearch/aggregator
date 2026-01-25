@@ -42,10 +42,16 @@ func main() {
 	mux.HandleFunc("/resources", auth.HandleResourceRequest)
 	mux.HandleFunc("/policies", auth.HandlePolicyRequest)
 
+	// healthz endpoint
+	mux.HandleFunc("/healthz", healthz)
+
+	// Logging middleware
+	loggedMux := loggingMiddleware(mux)
+
 	// Start HTTP server in a goroutine
 	go func() {
 		logrus.Info("Starting UMA RS auth server on :8080")
-		if err := http.ListenAndServe(":8080", mux); err != nil {
+		if err := http.ListenAndServe("0.0.0.0:8080", loggedMux); err != nil {
 			logrus.Fatalf("Server failed: %v", err)
 		}
 	}()
@@ -70,4 +76,23 @@ func main() {
 
 	// Now it is safe to exit
 	logrus.Info("Exiting container after resource cleanup")
+}
+
+func healthz(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logrus.WithFields(logrus.Fields{
+			"method": r.Method,
+			"path":   r.URL.Path,
+			"query":  r.URL.RawQuery,
+			"remote": r.RemoteAddr,
+			"agent":  r.UserAgent(),
+		}).Debug("Incoming request")
+
+		next.ServeHTTP(w, r)
+	})
 }

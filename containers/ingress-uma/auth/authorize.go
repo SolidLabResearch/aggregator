@@ -73,14 +73,14 @@ func HandleAuthorizationRequest(w http.ResponseWriter, r *http.Request) {
 
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		ticketlessAuthorization(w, r, umaId, payload.Method, issuer)
+		ticketlessAuthorization(w, umaId, payload.Method, issuer)
 		return
 	}
 
 	ticketedAuthorization(w, r, umaId, payload.Method, issuer)
 }
 
-func ticketlessAuthorization(w http.ResponseWriter, r *http.Request, umaId string, method string, issuer string) {
+func ticketlessAuthorization(w http.ResponseWriter, umaId string, method string, issuer string) {
 	permissions := make(map[string][]Scope)
 	scopes, err := determineScopes(method)
 	if err != nil {
@@ -322,12 +322,4 @@ func verifyTicket(token string, validIssuers []string) ([]Permission, error) {
 
 	// If we get here, the token is valid, and (if present) 'permissions' is well-formed.
 	return claims.Permissions, nil
-}
-
-func forwardedMethod(r *http.Request) string {
-	method := strings.Trim(r.Header.Get("X-Forwarded-Method"), "[]")
-	if method == "" {
-		method = r.Method
-	}
-	return method
 }

@@ -13,11 +13,10 @@ import (
 	"github.com/sirupsen/logrus"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
@@ -27,8 +26,8 @@ func createNamespaceForAggregator(ownerID string, authzServerURL string, ctx con
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nsName,
 			Labels: map[string]string{
-				"created-by":      "aggregator",
-				"istio-injection": "enabled",
+				"aggregator.idlab/created-by": model.Namespace,
+				"istio-injection":             "enabled",
 			},
 			Annotations: map[string]string{
 				"owner":  ownerID,
@@ -66,11 +65,21 @@ func deleteNamespaceResources(namespace string, ctx context.Context) error {
 }
 
 // deployAggregatorResources deploys the Egress UMA and Aggregator Instance
-func deployAggregatorResources(namespace string, tokenEndpoint string, accessToken string, refreshToken string, accessTokenExpiry string, ownerID string, authzServerURL string, ctx context.Context) error {
+func deployAggregatorResources(
+	namespace string,
+	tokenEndpoint string,
+	accessToken string,
+	refreshToken string,
+	accessTokenExpiry string,
+	ownerID string,
+	authzServerURL string,
+	ctx context.Context,
+) error {
+	aggregatorId := uuid.NewString()
 	replicas := int32(1)
 	useUMA := authzServerURL != ""
 	var err error
-	resolvedOwner := resolveOwnerID(ownerID, namespace)
+	resolvedOwner := resolveOwnerID(ownerID, aggregatorId)
 
 	if useUMA {
 		if err := ensureEgressUMARbac(namespace, ctx); err != nil {
@@ -86,25 +95,26 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 		}
 
 		// --- Egress UMA Deployment ---
+		egressName := fmt.Sprintf("%s-egress-uma", aggregatorId)
 		umaDeploy := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "egress-uma",
-				Namespace: namespace,
+				Name:      egressName,
+				Namespace: model.Namespace,
 				Labels: map[string]string{
-					"app": "egress-uma",
+					"app": egressName,
 				},
 			},
 			Spec: appsv1.DeploymentSpec{
 				Replicas: &replicas,
 				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
-						"app": "egress-uma",
+						"app": egressName,
 					},
 				},
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: map[string]string{
-							"app": "egress-uma",
+							"app": egressName,
 						},
 					},
 					Spec: corev1.PodSpec{
@@ -220,50 +230,11 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 		return fmt.Errorf("failed to create RoleBinding: %w", err)
 	}
 
-	traefikRole := &rbacv1.Role{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "aggregator-instance-traefik-editor",
-			Namespace: namespace,
-		},
-		Rules: []rbacv1.PolicyRule{
-			{
-				APIGroups: []string{"traefik.io"},
-				Resources: []string{"ingressroutes", "middlewares"},
-				Verbs:     []string{"get", "list", "create", "update", "delete"},
-			},
-		},
-	}
-	if _, err := model.Clientset.RbacV1().Roles(namespace).Create(ctx, traefikRole, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-		return fmt.Errorf("failed to create Traefik Role: %w", err)
-	}
-
-	traefikBinding := &rbacv1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "aggregator-instance-traefik-binding",
-			Namespace: namespace,
-		},
-		Subjects: []rbacv1.Subject{
-			{
-				Kind:      "ServiceAccount",
-				Name:      sa.Name,
-				Namespace: namespace,
-			},
-		},
-		RoleRef: rbacv1.RoleRef{
-			Kind:     "Role",
-			Name:     traefikRole.Name,
-			APIGroup: "rbac.authorization.k8s.io",
-		},
-	}
-	if _, err := model.Clientset.RbacV1().RoleBindings(namespace).Create(ctx, traefikBinding, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-		return fmt.Errorf("failed to create Traefik RoleBinding: %w", err)
-	}
-
-	// Aggregator can read transformations from aggregator-app namespace
+	// Aggregator can read transformations from server namespace
 	transformationBinding := &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("aggregator-transformation-reader-binding-%s", namespace),
-			Namespace: "aggregator-app",
+			Namespace: model.Namespace,
 		},
 		Subjects: []rbacv1.Subject{
 			{
@@ -279,7 +250,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 		},
 	}
 
-	if _, err := model.Clientset.RbacV1().RoleBindings("aggregator-app").Create(ctx, transformationBinding, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+	if _, err := model.Clientset.RbacV1().RoleBindings(model.Namespace).Create(ctx, transformationBinding, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("failed to create Transformation RoleBinding: %w", err)
 	}
 
@@ -318,32 +289,31 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 		return fmt.Errorf("failed to create Aggregator Instance service: %w", err)
 	}
 
-	ingressRouteGVR := schema.GroupVersionResource{
-		Group:    "traefik.io",
-		Version:  "v1alpha1",
-		Resource: "ingressroutes",
-	}
-
-	irName := "aggregator-instance-ingressroute"
-	obj := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "traefik.io/v1alpha1",
-			"kind":       "IngressRoute",
-			"metadata": map[string]interface{}{
-				"name":      irName,
-				"namespace": namespace,
-			},
-			"spec": map[string]interface{}{
-				"entryPoints": []string{"web"},
-				"routes": []interface{}{
-					map[string]interface{}{
-						"match": "Host(`" + model.ExternalHost + "`) && PathPrefix(`/" + namespace + "`)",
-						"kind":  "Rule",
-						"services": []interface{}{
-							map[string]interface{}{
-								"name":      "aggregator",
-								"port":      5000,
-								"namespace": namespace,
+	ingress := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "aggregator-instance-ingress",
+			Namespace: namespace,
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: model.IngressClassName,
+			Rules: []networkingv1.IngressRule{
+				{
+					Host: model.ExternalHost,
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{
+								{
+									Path:     "/" + namespace,
+									PathType: func() *networkingv1.PathType { pt := networkingv1.PathTypePrefix; return &pt }(),
+									Backend: networkingv1.IngressBackend{
+										Service: &networkingv1.IngressServiceBackend{
+											Name: "aggregator",
+											Port: networkingv1.ServiceBackendPort{
+												Number: 5000,
+											},
+										},
+									},
+								},
 							},
 						},
 					},
@@ -352,9 +322,9 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 		},
 	}
 
-	_, err = model.DynamicClient.Resource(ingressRouteGVR).Namespace(namespace).Create(ctx, obj, metav1.CreateOptions{})
+	_, err = model.Clientset.NetworkingV1().Ingresses(namespace).Create(ctx, ingress, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to create IngressRoute: %w", err)
+		return fmt.Errorf("failed to create Ingress: %w", err)
 	}
 
 	// --- Aggregator Instance Deployment ---
@@ -363,7 +333,8 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 			Name:      "aggregator",
 			Namespace: namespace,
 			Labels: map[string]string{
-				"app": "aggregator",
+				"app":        "aggregator",
+				"created-by": model.Namespace,
 			},
 		},
 		Spec: appsv1.DeploymentSpec{
@@ -395,6 +366,7 @@ func deployAggregatorResources(namespace string, tokenEndpoint string, accessTok
 								{Name: "CLIENT_SECRET", Value: model.ClientSecret},
 								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 								{Name: "USER_NAMESPACE", Value: namespace},
+								{Name: "SERVER_NAMESPACE", Value: model.Namespace},
 								{Name: "USER_ID", Value: resolvedOwner},
 								{Name: "AS_URL", Value: authzServerURL},
 								{Name: "TRANSFORMATION_CATALOG", Value: os.Getenv("TRANSFORMATION_CATALOG")},

@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: server-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aggregator.labels" $ | nindent 4 }}
+  annotations:
+    {{- include "aggregator.annotations" $ | nindent 4 }}
+data:
+  NAMESPACE: {{ .Release.Namespace }}
+  LOG_LEVEL: {{ .Values.loglevel }}
+  EXTERNAL_HOST: {{ .Values.host }}
+  CLIENT_ID: {{ .Values.auth.clientId }}
+  AUTH_SERVER: {{ .Values.auth.server }}
+  CLIENT_SECRET: {{ .Values.auth.clientSecret }}
+  ALLOWED_REGISTRATION_TYPES: {{ join "," .Values.auth.allowedRegistrationTypes | quote }}

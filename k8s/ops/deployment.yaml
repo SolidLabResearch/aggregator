@@ -19,3 +19,4 @@ spec:
           image: aggregator-cleaner
           imagePullPolicy: Never
           args: ["--ns=aggregator-app"]
+---

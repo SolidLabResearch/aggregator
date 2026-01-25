@@ -5,6 +5,7 @@ import (
 	"aggregator/model"
 	reg "aggregator/registration"
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -90,6 +91,18 @@ func main() {
 		logrus.Fatalf("Failed to create dynamic Kubernetes client: %v", err)
 	}
 
+	ingressClassName := os.Getenv("INGRESS_CLASS_NAME")
+	if ingressClassName == "" {
+		logrus.Info("No IngressClass configured. Using the default IngressClass.")
+		model.IngressClassName = nil
+	} else {
+		model.IngressClassName = &ingressClassName
+	}
+	model.Namespace = os.Getenv("NAMESPACE")
+	if model.Namespace == "" {
+		logrus.Fatalf("Environment variable NAMESPACE must be set")
+	}
+
 	// Configure HTTP server
 	serverMux := http.NewServeMux()
 
@@ -143,6 +156,9 @@ func main() {
 			http.Error(w, "Aggregator instance not ready", http.StatusServiceUnavailable)
 		})
 	*/
+
+	// Healthz endpoint waits for ingress-uma to be ready
+	serverMux.HandleFunc("/healthz", healthz)
 
 	// Start HTTP server
 	loggingMux := loggingMiddleware(serverMux)
@@ -210,16 +226,49 @@ func hasRegistrationType(allowed []string, target string) bool {
 	return false
 }
 
+func healthz(w http.ResponseWriter, r *http.Request) {
+	umaURL := fmt.Sprintf(
+		"http://ingress-uma.%s.svc.cluster.local:8080/healthz",
+		model.Namespace,
+	)
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, umaURL, nil)
+	if err != nil {
+		http.Error(w, "Failed to build request", http.StatusInternalServerError)
+		return
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logrus.WithError(err).Warn("ingress-uma not reachable")
+		http.Error(w, "Dependency not ready", http.StatusServiceUnavailable)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		logrus.Warnf("ingress-uma unhealthy: %d", resp.StatusCode)
+		http.Error(w, "Dependency unhealthy", http.StatusServiceUnavailable)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
+}
+
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logrus.WithFields(logrus.Fields{
-			"method": r.Method,
-			"path":   r.URL.Path,
-			"query":  r.URL.RawQuery,
-			"remote": r.RemoteAddr,
-			"agent":  r.UserAgent(),
-		}).Debug("Incoming request")
-
+		agent := r.UserAgent()
+		if !strings.HasPrefix(agent, "kube-probe") {
+			logrus.WithFields(logrus.Fields{
+				"method": r.Method,
+				"path":   r.URL.Path,
+				"query":  r.URL.RawQuery,
+				"remote": r.RemoteAddr,
+				"agent":  agent,
+			}).Debug("Incoming request")
+		}
 		next.ServeHTTP(w, r)
 	})
 }

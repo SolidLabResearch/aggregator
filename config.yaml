@@ -1,0 +1,43 @@
+host: aggregator.local
+auth:
+  clientId: aggregator
+  allowedRegistrationTypes:
+    - none
+
+ingressClassName: aggregator-traefik
+
+transformations:
+  - name: get
+    spec:
+      id: Get
+      image: fetch
+      fno: |
+        @prefix fno: <https://w3id.org/function/ontology#> .
+        @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+        @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+        <Get>
+          a fno:Function ;
+          fno:expects ( <URL> ) ;
+          fno:returns ( <Response> ) .
+
+        <URL>
+          a fno:Parameter ;
+          fno:predicate <url> ;
+          fno:type xsd:string ;
+          fno:required "true"^^xsd:boolean .
+
+        <Response>
+          a fno:Output ;
+          fno:predicate <resp> .
+      inputMapping:
+        url: GET_URL
+      outputMapping:
+        resp:
+          port: 8080
+          path: /
+
+ingressUma:
+  disableAuth: true
+
+loglevel: debug

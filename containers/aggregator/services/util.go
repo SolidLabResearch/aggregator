@@ -21,6 +21,7 @@ var idValidator = regexp.MustCompile(idPattern)
 var forbidden = map[string]struct{}{
 	model.TransformationCatalog: {},
 	model.ServiceCollection:     {},
+	"aggregator":                {},
 }
 
 func ValidServiceUri(uri string) (string, string, error) {
@@ -125,7 +126,7 @@ func LoadTransformationCR(uri string) (*model.Transformation, error) {
 	// List CRs in the namespace
 	crList, err := model.DynamicClient.
 		Resource(gvr).
-		Namespace("aggregator-app").
+		Namespace(model.ServerNamespace).
 		List(context.TODO(), v1.ListOptions{})
 	if err != nil {
 		return nil, err

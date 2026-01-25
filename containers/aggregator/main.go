@@ -44,9 +44,13 @@ func main() {
 	}
 
 	// Read Aggregator Identity
-	model.Namespace = os.Getenv("USER_NAMESPACE")
-	if model.Namespace == "" {
+	model.UserNamespace = os.Getenv("USER_NAMESPACE")
+	if model.UserNamespace == "" {
 		logrus.Fatal("Environment variable USER_NAMESPACE must be set")
+	}
+	model.ServerNamespace = os.Getenv("SERVER_NAMESPACE")
+	if model.ServerNamespace == "" {
+		logrus.Fatal("Environment variable SERVER_NAMESPACE must be set")
 	}
 	id := os.Getenv("USER_ID")
 	if id == "" {
@@ -72,7 +76,7 @@ func main() {
 		logrus.Warn("Environment variable SERVICE_COLLECTION was not set. default=/services")
 		model.ServiceCollection = "/services"
 	}
-	model.BaseUrl = fmt.Sprintf("%s://%s/%s", model.Protocol, model.ExternalHost, model.Namespace)
+	model.BaseUrl = fmt.Sprintf("%s://%s/%s", model.Protocol, model.ExternalHost, model.UserNamespace)
 
 	// Load in-cluster kubeConfig
 	kubeConfig, err := rest.InClusterConfig()
@@ -120,7 +124,7 @@ func main() {
 	// Add middlewares
 	mwMux := ingress.Chain(serverMux,
 		ingress.UMAAuthMiddleware(),
-		ingress.StripPrefixMiddleware(model.Namespace),
+		ingress.StripPrefixMiddleware(model.UserNamespace),
 		ingress.LoggingMiddleware(),
 	)
 

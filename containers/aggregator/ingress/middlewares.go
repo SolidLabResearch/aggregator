@@ -54,7 +54,11 @@ func UMAAuthMiddleware() Middleware {
 				return
 			}
 
-			req, err := http.NewRequest("POST", "http://ingress-uma.aggregator-app.svc.cluster.local/authorize", bytes.NewReader(data))
+			req, err := http.NewRequest(
+				"POST",
+				fmt.Sprintf("http://ingress-uma.%s.svc.cluster.local:8080/authorize", model.ServerNamespace),
+				bytes.NewReader(data),
+			)
 			if err != nil {
 				logrus.Errorf("Error creating UMA request: %v", err)
 				http.Error(w, "Authorization service error", http.StatusInternalServerError)

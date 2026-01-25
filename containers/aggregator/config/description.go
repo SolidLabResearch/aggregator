@@ -49,7 +49,7 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenExpiry, err := fetchAccessTokenExpiry(model.Namespace)
+	tokenExpiry, err := fetchAccessTokenExpiry(model.UserNamespace)
 	loginStatus := false
 	if err == nil && tokenExpiry != "" {
 		parsed, parseErr := time.Parse(time.RFC3339, tokenExpiry)
@@ -58,7 +58,7 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	createdAt, err := fetchCreatedAt(model.Namespace)
+	createdAt, err := fetchCreatedAt(model.UserNamespace)
 	if err != nil || createdAt == "" {
 		createdAt = time.Now().Format(time.RFC3339)
 	}
