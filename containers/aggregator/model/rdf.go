@@ -50,7 +50,7 @@ func (tf *Transformation) ParseTransformation() {
 		strings.NewReader(tf.FnO),
 		rdfgo.ParserOptions{
 			Format:  "text/turtle",
-			BaseIRI: fmt.Sprintf("%s://%s/config/transformations#", Protocol, ExternalHost),
+			BaseIRI: fmt.Sprintf("%s://%s%s#", Protocol, ExternalHost, TransformationCatalog),
 		},
 	)
 

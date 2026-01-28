@@ -14,6 +14,7 @@ import (
 	"aggregator/model"
 	"aggregator/services"
 
+	rdfgo "github.com/maartyman/rdfgo/lib/data_model"
 	"github.com/sirupsen/logrus"
 )
 
@@ -230,7 +231,10 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 
 	// Create output endpoints
 	for output := range service.Exe.Transformation.OutputMapping {
-		err = collec.HandleFunc(servicePath+"/"+output, collec.HandleServiceOutput, []model.Scope{model.Read, model.Write})
+		path := servicePath + "/" + output
+		uri := service.Exe.Transformation.Base + output
+		service.Exe.Outputs[uri] = rdfgo.NewNamedNode(model.BaseUrl + path)
+		err = collec.HandleFunc(path, collec.HandleServiceOutput, []model.Scope{model.Read, model.Write})
 		if err != nil {
 			logrus.WithError(err).Errorf("Error registering handler for output %s", output)
 			http.Error(w, "Failed to create service from request", http.StatusInternalServerError)

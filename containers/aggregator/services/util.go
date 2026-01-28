@@ -111,7 +111,7 @@ func ParseRequestBody(fno string) (model.Execution, error) {
 }
 
 func LoadTransformationCR(uri string) (*model.Transformation, error) {
-	id, err := StripPrefix(uri, fmt.Sprintf("%s://%s/config/transformations#", model.Protocol, model.ExternalHost))
+	id, err := StripPrefix(uri, fmt.Sprintf("%s://%s%s#", model.Protocol, model.ExternalHost, model.TransformationCatalog))
 	if err != nil {
 		return nil, fmt.Errorf("invalid transformation URI %q", uri)
 	}
@@ -144,7 +144,7 @@ func LoadTransformationCR(uri string) (*model.Transformation, error) {
 		}
 
 		t := &model.Transformation{
-			Base:          fmt.Sprintf("%s://%s/config/transformations#", model.Protocol, model.ExternalHost),
+			Base:          fmt.Sprintf("%s://%s%s#", model.Protocol, model.ExternalHost, model.TransformationCatalog),
 			URI:           uri,
 			Image:         getString(spec, "image"),
 			FnO:           getString(spec, "fno"),
@@ -222,7 +222,7 @@ func ParametersToEnvVars(params map[string]rdfgo.ITerm, inputMapping map[string]
 		{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 	}
 	for paramKey, paramValue := range params {
-		pred, err := StripPrefix(paramKey, fmt.Sprintf("%s://%s/config/transformations#", model.Protocol, model.ExternalHost))
+		pred, err := StripPrefix(paramKey, fmt.Sprintf("%s://%s%s#", model.Protocol, model.ExternalHost, model.TransformationCatalog))
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse parameter key %q: %w", paramKey, err)
 		}

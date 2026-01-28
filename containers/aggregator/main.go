@@ -65,16 +65,14 @@ func main() {
 		AuthzServerURL: asUrl,
 	}
 
-	// Read Aggregator Configuration
+	// Read spec configuration
 	model.TransformationCatalog = os.Getenv("TRANSFORMATION_CATALOG")
 	if model.TransformationCatalog == "" {
-		logrus.Warn("Environment variable TRANSFORMATION_CATALOG was not set. default=/transformations")
-		model.TransformationCatalog = "/transformations"
+		logrus.Fatal("Environment variable TRANSFORMATION_CATALOG must be set.")
 	}
 	model.ServiceCollection = os.Getenv("SERVICE_COLLECTION")
 	if model.TransformationCatalog == "" {
-		logrus.Warn("Environment variable SERVICE_COLLECTION was not set. default=/services")
-		model.ServiceCollection = "/services"
+		logrus.Fatal("Environment variable SERVICE_COLLECTION must be set")
 	}
 	model.BaseUrl = fmt.Sprintf("%s://%s/%s", model.Protocol, model.ExternalHost, model.ID)
 

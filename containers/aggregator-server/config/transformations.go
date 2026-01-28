@@ -37,7 +37,7 @@ func InitTransformationsConfiguration(mux *http.ServeMux) error {
 	config.updateCatalog()
 
 	// Register HTTP handler
-	mux.HandleFunc("/config/transformations", config.HandleTransformationsEndpoint)
+	mux.HandleFunc(model.TransformationCatalog, config.HandleTransformationsEndpoint)
 
 	logrus.Info("Transformations configuration initialization completed")
 	return nil

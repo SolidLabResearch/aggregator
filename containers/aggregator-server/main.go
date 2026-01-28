@@ -103,6 +103,18 @@ func main() {
 		logrus.Fatalf("Environment variable NAMESPACE must be set")
 	}
 
+	// Read spec configuration
+	model.TransformationCatalog = os.Getenv("TRANSFORMATION_CATALOG")
+	if model.TransformationCatalog == "" {
+		logrus.Warn("Environment variable TRANSFORMATION_CATALOG was not set. default=/transformations")
+		model.TransformationCatalog = "/transformations"
+	}
+	model.ServiceCollection = os.Getenv("SERVICE_COLLECTION")
+	if model.TransformationCatalog == "" {
+		logrus.Warn("Environment variable SERVICE_COLLECTION was not set. default=/services")
+		model.ServiceCollection = "/services"
+	}
+
 	// Configure HTTP server
 	serverMux := http.NewServeMux()
 

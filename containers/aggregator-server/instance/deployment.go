@@ -4,7 +4,6 @@ import (
 	"aggregator/model"
 	"context"
 	"fmt"
-	"os"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -145,8 +144,8 @@ func ensureDeployment(aggregatorId string, replicas int32, userId string, asURL 
 								{Name: "NAMESPACE", Value: model.Namespace},
 								{Name: "USER_ID", Value: userId},
 								{Name: "AS_URL", Value: asURL},
-								{Name: "TRANSFORMATION_CATALOG", Value: os.Getenv("TRANSFORMATION_CATALOG")},
-								{Name: "SERVICE_COLLECTION", Value: os.Getenv("SERVICE_COLLECTION")},
+								{Name: "TRANSFORMATION_CATALOG", Value: model.TransformationCatalog},
+								{Name: "SERVICE_COLLECTION", Value: model.ServiceCollection},
 							},
 						},
 					},

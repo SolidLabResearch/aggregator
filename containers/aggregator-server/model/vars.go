@@ -28,4 +28,8 @@ var Clientset kubernetes.Interface
 var DynamicClient *dynamic.DynamicClient
 var IngressClassName *string
 
+// Spec configuration
+var TransformationCatalog string
+var ServiceCollection string
+
 var LogLevel logrus.Level

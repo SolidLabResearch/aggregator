@@ -178,11 +178,6 @@ func (service *Service) FnORepresentation() ([]byte, error) {
 			}
 			stream <- quad
 		}
-
-		if err != nil {
-			return
-		}
-		stream <- quad
 	}()
 
 	// serialize to turtle
