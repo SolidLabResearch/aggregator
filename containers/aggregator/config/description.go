@@ -3,14 +3,12 @@ package config
 import (
 	"aggregator/auth"
 	"aggregator/model"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // AggregatorDescription represents the aggregator instance description
@@ -79,28 +77,20 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// fetchAccessTokenExpiry reads the "access_token_expiry" key from the mounted ConfigMap
 func fetchAccessTokenExpiry() (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	configName := "aggregator-" + model.ID + "-config"
-	cm, err := model.Clientset.CoreV1().ConfigMaps(model.Namespace).Get(ctx, configName, metav1.GetOptions{})
+	data, err := os.ReadFile("/etc/config/access_token_expiry")
 	if err != nil {
 		return "", err
 	}
-
-	return strings.TrimSpace(cm.Data["access_token_expiry"]), nil
+	return strings.TrimSpace(string(data)), nil
 }
 
+// fetchCreatedAt reads the "created_at" key from the mounted ConfigMap
 func fetchCreatedAt() (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	configName := "aggregator-" + model.ID + "-config"
-	cm, err := model.Clientset.CoreV1().ConfigMaps(model.Namespace).Get(ctx, configName, metav1.GetOptions{})
+	data, err := os.ReadFile("/etc/config/created_at")
 	if err != nil {
 		return "", err
 	}
-
-	return strings.TrimSpace(cm.Data["created_at"]), nil
+	return strings.TrimSpace(string(data)), nil
 }

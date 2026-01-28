@@ -1,4 +1,4 @@
-package registration
+package instance
 
 import (
 	"context"
@@ -44,7 +44,7 @@ func TestEnsureConfigMap_RetriesOnConflict(t *testing.T) {
 		"tokens.json": `{"access_token":"new"}`,
 	}
 
-	if err := ensureConfigMap("test-ns", "egress-uma-config", payload, ctx); err != nil {
+	if _, err := ensureConfigMap("test-ns", "egress-uma-config", payload, ctx); err != nil {
 		t.Fatalf("Expected update retry to succeed, got error: %v", err)
 	}
 

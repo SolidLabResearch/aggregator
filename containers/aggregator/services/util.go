@@ -118,7 +118,7 @@ func LoadTransformationCR(uri string) (*model.Transformation, error) {
 
 	// Define GVR
 	gvr := schema.GroupVersionResource{
-		Group:    "fno.knows.idlab.ugent.be",
+		Group:    "agg.idlab.ugent.be",
 		Version:  "v1",
 		Resource: "transformations",
 	}

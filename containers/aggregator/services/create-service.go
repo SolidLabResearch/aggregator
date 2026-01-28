@@ -10,7 +10,6 @@ import (
 	"github.com/sirupsen/logrus"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
@@ -32,15 +31,11 @@ func CreateAggregatorService(
 
 	useUMA := strings.TrimSpace(model.Owner.AuthzServerURL) != ""
 	service := model.Service{
-		InstanceID:       id,
-		NamespaceID:      id + "-" + model.ID,
-		Path:             path,
-		Exe:              exe,
-		ClusterEndpoints: []string{},
-		Deployments:      []appsv1.Deployment{},
-		Services:         []corev1.Service{},
-		Ingresses:        []networkingv1.Ingress{},
-		CreatedAt:        time.Now(),
+		InstanceID:  id,
+		NamespaceID: id + "-" + model.ID,
+		Path:        path,
+		Exe:         exe,
+		CreatedAt:   time.Now(),
 	}
 
 	// Clean up if anything fails
@@ -126,11 +121,10 @@ func createDeployment(
 		},
 	}
 
-	deploy, err := model.Clientset.AppsV1().Deployments(model.Namespace).Create(ctx, deploySpec, metav1.CreateOptions{})
+	_, err := model.Clientset.AppsV1().Deployments(model.Namespace).Create(ctx, deploySpec, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create deployment %s: %w", service.NamespaceID, err)
 	}
-	service.Deployments = append(service.Deployments, *deploy)
 
 	logrus.Infof("Deployment %s created successfully", service.NamespaceID)
 	return nil
@@ -169,11 +163,10 @@ func createService(service *model.Service, ports []int32, ctx context.Context) e
 	}
 
 	// Create Service
-	svc, err := model.Clientset.CoreV1().Services(model.Namespace).Create(ctx, svcSpec, metav1.CreateOptions{})
+	_, err = model.Clientset.CoreV1().Services(model.Namespace).Create(ctx, svcSpec, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create service: %w", err)
 	}
-	service.Services = append(service.Services, *svc)
 
 	return nil
 }

@@ -1,6 +1,7 @@
 package registration
 
 import (
+	"aggregator/instance"
 	"aggregator/model"
 	"context"
 	"encoding/json"
@@ -83,19 +84,6 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 
 // handleRegistrationDelete handles DELETE requests for removing aggregators
 func handleRegistrationDelete(w http.ResponseWriter, r *http.Request) {
-	// Authentication required
-	_, id, _, err := authenticateRequest(r)
-	if err != nil {
-		logrus.WithError(err).Warn("Authentication failed")
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-	if id == "" {
-		logrus.Warn("Authentication missing for delete request")
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
 	// Parse request body
 	var req struct {
 		AggregatorID string `json:"aggregator_id"`
@@ -111,27 +99,43 @@ func handleRegistrationDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check ownership
-	if err := checkOwnership(req.AggregatorID, id); err != nil {
-		logrus.WithError(err).Warnf("Ownership check failed for aggregator %s", req.AggregatorID)
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-
-	// Get instance to clean up resources
-	instance, err := getAggregatorInstance(req.AggregatorID)
+	// Get aggregator inst
+	inst, err := getAggregatorInstance(req.AggregatorID)
 	if err != nil {
 		http.Error(w, "Aggregator not found", http.StatusNotFound)
 		return
+	}
+
+	if inst.RegistrationType != "none" {
+		// Authentication required
+		_, id, _, err := authenticateRequest(r)
+		if err != nil {
+			logrus.WithError(err).Warn("Authentication failed")
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if id == "" {
+			logrus.Warn("Authentication missing for delete request")
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// Check ownership
+		if err := checkOwnership(req.AggregatorID, id); err != nil {
+			logrus.WithError(err).Warnf("Ownership check failed for aggregator %s", req.AggregatorID)
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
 	}
 
 	// Delete Kubernetes resources
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := deleteNamespaceResources(instance.Namespace, ctx); err != nil {
-		logrus.WithError(err).Errorf("Failed to delete namespace resources for aggregator %s", req.AggregatorID)
-		http.Error(w, "Failed to delete aggregator resources", http.StatusInternalServerError)
+	// Delete aggregator
+	if err := instance.DeleteAggregator(inst.AggregatorID, ctx); err != nil {
+		logrus.WithError(err).Errorf("Failed to delete aggregator %s", req.AggregatorID)
+		http.Error(w, "Failed to delete aggregator", http.StatusInternalServerError)
 		return
 	}
 

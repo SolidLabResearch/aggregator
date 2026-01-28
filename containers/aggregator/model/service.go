@@ -4,46 +4,54 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"net"
-	"net/url"
 	"time"
 
 	"github.com/maartyman/rdfgo"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type Service struct {
-	NamespaceID      string
-	InstanceID       string
-	Path             string
-	Exe              Execution
-	ClusterEndpoints []string
-	Deployments      []appsv1.Deployment
-	Services         []corev1.Service
-	Ingresses        []networkingv1.Ingress
-	CreatedAt        time.Time
+	NamespaceID string
+	InstanceID  string
+	Path        string
+	Exe         Execution
+	CreatedAt   time.Time
 }
 
 func (service *Service) Stop() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	// Label selector to match the resources
+	labelSelector := fmt.Sprintf(
+		"app.kubernetes.io/name=aggregator-service,agg.knows.idlab.ugent.be/managed-by=%s,agg.knows.idlab.ugent.be/id=%s",
+		ID,
+		service.InstanceID,
+	)
+	// Ensure dependent resources are deleted
+	deletePolicy := metav1.DeletePropagationForeground
+
 	// Delete Deployments
-	for _, dep := range service.Deployments {
-		err := Clientset.AppsV1().Deployments(Namespace).Delete(ctx, dep.Name, metav1.DeleteOptions{})
-		if err != nil && !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to delete deployment %s: %w", dep.Name, err)
-		}
+	if err := Clientset.AppsV1().Deployments(Namespace).DeleteCollection(ctx, metav1.DeleteOptions{
+		PropagationPolicy: &deletePolicy,
+	}, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	}); err != nil {
+		return fmt.Errorf("failed to delete deployments: %w", err)
 	}
 
 	// Delete Services
-	for _, svc := range service.Services {
-		err := Clientset.CoreV1().Services(Namespace).Delete(ctx, svc.Name, metav1.DeleteOptions{})
-		if err != nil && !errors.IsNotFound(err) {
+	services, err := Clientset.CoreV1().Services(Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list services: %w", err)
+	}
+
+	for _, svc := range services.Items {
+		if err := Clientset.CoreV1().Services(Namespace).Delete(ctx, svc.Name, metav1.DeleteOptions{
+			PropagationPolicy: &deletePolicy,
+		}); err != nil {
 			return fmt.Errorf("failed to delete service %s: %w", svc.Name, err)
 		}
 	}
@@ -53,34 +61,45 @@ func (service *Service) Stop() error {
 
 func (service *Service) Status() string {
 	ctx := context.Background()
-	for _, dep := range service.Deployments {
-		d, err := Clientset.AppsV1().Deployments(Namespace).Get(ctx, dep.Name, metav1.GetOptions{})
+
+	// Label selector to match the resources
+	labelSelector := fmt.Sprintf(
+		"app.kubernetes.io/name=aggregator-service,agg.knows.idlab.ugent.be/managed-by=%s,agg.knows.idlab.ugent.be/id=%s",
+		ID,
+		service.InstanceID,
+	)
+
+	// Check services and their endpoints
+	services, err := Clientset.CoreV1().Services(Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return "errored"
+	}
+	if len(services.Items) == 0 {
+		return "stopped"
+	}
+
+	for _, svc := range services.Items {
+		endpoints, err := Clientset.CoreV1().Endpoints(Namespace).Get(ctx, svc.Name, metav1.GetOptions{})
 		if err != nil {
 			return "errored"
 		}
-		if d.Status.AvailableReplicas == 0 {
-			return "starting" // or stopped/starting
+
+		// Check if the service has any ready endpoints
+		hasReady := false
+		for _, subset := range endpoints.Subsets {
+			if len(subset.Addresses) > 0 {
+				hasReady = true
+				break
+			}
+		}
+		if !hasReady {
+			return "starting" // service exists but no pods are ready
 		}
 	}
 
-	// Check if the service endpoint is actually responding
-	if len(service.ClusterEndpoints) > 0 {
-		endpoint := service.ClusterEndpoints[0]
-
-		// Parse the URL to extract host and port
-		u, err := url.Parse(endpoint)
-		if err != nil {
-			return "starting"
-		}
-
-		// Try to establish a TCP connection
-		conn, err := net.DialTimeout("tcp", u.Host, 200*time.Millisecond)
-		if err != nil {
-			return "starting"
-		}
-		defer conn.Close()
-	}
-
+	// All deployments have available replicas & services have endpoints
 	return "running"
 }
 

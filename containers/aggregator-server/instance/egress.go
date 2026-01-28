@@ -26,12 +26,12 @@ func ensureEgress(
 		return fmt.Errorf("failed to build egress-uma token payload: %w", err)
 	}
 
-	cmName := aggregatorId + "-egress-uma-config"
-	if err := ensureConfigMap(cmName, tokensPayload, ctx); err != nil {
+	cmName, err := ensureConfigMap(aggregatorId, "egress-uma-config", tokensPayload, ctx)
+	if err != nil {
 		return fmt.Errorf("failed to ensure egress-uma configmap: %w", err)
 	}
 
-	if err := ensureEgressDeployment(aggregatorId, 1, tokenEndpoint, ctx); err != nil {
+	if err := ensureEgressDeployment(aggregatorId, 1, tokenEndpoint, cmName, ctx); err != nil {
 		return fmt.Errorf("failed to ensure egress-uma deployment: %w", err)
 	}
 
@@ -56,8 +56,8 @@ func buildTokensPayload(accessToken string, refreshToken string, accessTokenExpi
 	return map[string]string{"tokens.json": string(data)}, nil
 }
 
-func ensureEgressDeployment(aggregatorId string, replicas int32, tokenEndpoint string, ctx context.Context) error {
-	egressName := aggregatorId + "-egress-uma"
+func ensureEgressDeployment(aggregatorId string, replicas int32, tokenEndpoint string, configName string, ctx context.Context) error {
+	egressName := "aggregator-" + aggregatorId + "-egress-uma"
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      egressName,
@@ -87,7 +87,7 @@ func ensureEgressDeployment(aggregatorId string, replicas int32, tokenEndpoint s
 						"app.kubernetes.io/name":              "aggregator-instance",
 						"app.kubernetes.io/components":        "egress-uma",
 						"app.kubernetes.io/part-of":           "aggregator-platform",
-						"app.kubernetes.io/managed-by":        "aggregator-server",
+						"app.kubernetes.io/managed-by":        "aggregator-instance",
 						"agg.knows.idlab.ugent.be/managed-by": aggregatorId,
 						"agg.knows.idlab.ugent.be/id":         egressName,
 					},
@@ -106,13 +106,13 @@ func ensureEgressDeployment(aggregatorId string, replicas int32, tokenEndpoint s
 								{Name: "CLIENT_ID", Value: model.ClientId},
 								{Name: "CLIENT_SECRET", Value: model.ClientSecret},
 								{Name: "TOKEN_ENDPOINT", Value: tokenEndpoint},
-								{Name: "UPDATE_TOKENS_FILE", Value: "/etc/egress-uma/tokens.json"},
+								{Name: "UPDATE_TOKENS_FILE", Value: "/etc/config/tokens.json"},
 								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      egressName + "-config",
-									MountPath: "/etc/egress-uma",
+									Name:      configName,
+									MountPath: "/etc/config",
 									ReadOnly:  true,
 								},
 							},
@@ -120,11 +120,11 @@ func ensureEgressDeployment(aggregatorId string, replicas int32, tokenEndpoint s
 					},
 					Volumes: []corev1.Volume{
 						{
-							Name: egressName + "-config",
+							Name: configName,
 							VolumeSource: corev1.VolumeSource{
 								ConfigMap: &corev1.ConfigMapVolumeSource{
 									LocalObjectReference: corev1.LocalObjectReference{
-										Name: egressName + "-config",
+										Name: configName,
 									},
 								},
 							},
@@ -144,7 +144,7 @@ func ensureEgressDeployment(aggregatorId string, replicas int32, tokenEndpoint s
 }
 
 func ensureEgressService(aggregatorId string, ctx context.Context) error {
-	egressName := aggregatorId + "-egress-uma"
+	egressName := "aggregator-" + aggregatorId + "-egress-uma"
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      egressName,
@@ -153,7 +153,7 @@ func ensureEgressService(aggregatorId string, ctx context.Context) error {
 				"app.kubernetes.io/name":              "aggregator-instance",
 				"app.kubernetes.io/components":        "egress-uma",
 				"app.kubernetes.io/part-of":           "aggregator-platform",
-				"app.kubernetes.io/managed-by":        "aggregator-server",
+				"app.kubernetes.io/managed-by":        "aggregator-instance",
 				"agg.knows.idlab.ugent.be/managed-by": aggregatorId,
 				"agg.knows.idlab.ugent.be/id":         egressName,
 			},
@@ -162,6 +162,7 @@ func ensureEgressService(aggregatorId string, ctx context.Context) error {
 			Selector: map[string]string{
 				"app.kubernetes.io/name":              "aggregator-instance",
 				"app.kubernetes.io/components":        "egress-uma",
+				"app.kubernetes.io/managed-by":        "aggregator-instance",
 				"agg.knows.idlab.ugent.be/managed-by": aggregatorId,
 				"agg.knows.idlab.ugent.be/id":         egressName,
 			},

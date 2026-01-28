@@ -22,11 +22,16 @@ func ensurePermissions(aggregatorId string, ctx context.Context) error {
 }
 
 func ensureServiceAccount(aggregatorId string, ctx context.Context) error {
-	saName := "aggregator-" + aggregatorId
+	saName := "aggregator-" + aggregatorId + "-sa"
 	sa := &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      saName,
 			Namespace: model.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by":        "aggregator-instance",
+				"agg.knows.idlab.ugent.be/managed-by": aggregatorId,
+				"agg.knows.idlab.ugent.be/id":         saName,
+			},
 		},
 	}
 	_, err := model.Clientset.CoreV1().ServiceAccounts(model.Namespace).Create(ctx, sa, metav1.CreateOptions{})
@@ -37,13 +42,15 @@ func ensureServiceAccount(aggregatorId string, ctx context.Context) error {
 }
 
 func ensureRoleBindings(aggregatorId string, ctx context.Context) error {
-	saName := "aggregator-" + aggregatorId
-
+	saName := "aggregator-" + aggregatorId + "-sa"
 	// Aggregator can manage fno services
 	managerBinding := &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("aggregator-%s-manager-binding", aggregatorId),
+			Name:      fmt.Sprintf("%s-manager-binding", aggregatorId),
 			Namespace: model.Namespace,
+			Labels: map[string]string{
+				"agg.knows.idlab.ugent.be/managed-by": aggregatorId,
+			},
 		},
 		Subjects: []rbacv1.Subject{
 			{
@@ -69,6 +76,9 @@ func ensureRoleBindings(aggregatorId string, ctx context.Context) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("aggregator-%s-tf-reader-binding", aggregatorId),
 			Namespace: model.Namespace,
+			Labels: map[string]string{
+				"agg.knows.idlab.ugent.be/managed-by": aggregatorId,
+			},
 		},
 		Subjects: []rbacv1.Subject{
 			{

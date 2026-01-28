@@ -1,5 +1,5 @@
 {{- range .Values.transformations }}
-apiVersion: fno.knows.idlab.ugent.be/v1
+apiVersion: agg.idlab.ugent.be/v1
 kind: Transformation
 metadata:
   name: {{ .name | required "Transformation name is required" }}

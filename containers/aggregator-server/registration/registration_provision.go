@@ -1,6 +1,7 @@
 package registration
 
 import (
+	"aggregator/instance"
 	"aggregator/model"
 	"context"
 	"encoding/json"
@@ -105,19 +106,21 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	namespace, err := createNamespaceForAggregator(webID, authorizationServer, ctx)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to create namespace")
-		http.Error(w, "Failed to create namespace", http.StatusInternalServerError)
-		return
-	}
-
 	tokenExpiry := ""
 	if tokenResp.ExpiresIn > 0 {
 		tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
 	}
 
-	if err := deployAggregatorResources(namespace, oidcConfig.TokenEndpoint, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, webID, authorizationServer, ctx); err != nil {
+	aggregatorId, err := instance.DeployAggregator(
+		oidcConfig.TokenEndpoint,
+		tokenResp.AccessToken,
+		tokenResp.RefreshToken,
+		tokenExpiry,
+		webID,
+		authorizationServer,
+		ctx,
+	)
+	if err != nil {
 		logrus.WithError(err).Error("Failed to deploy aggregator")
 		http.Error(w, "Failed to deploy aggregator", http.StatusInternalServerError)
 		return
@@ -127,7 +130,7 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 		id,
 		"provision",
 		authorizationServer,
-		namespace,
+		aggregatorId,
 		tokenResp.AccessToken,
 		tokenResp.RefreshToken,
 	)

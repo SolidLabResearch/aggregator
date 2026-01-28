@@ -1,6 +1,6 @@
 apiVersion: v2
-name: aggregator-server
-description: A Kubernetes aggregator server that deploys uma-governed aggregators
+name: aggregation-platform
+description: A Kubernetes aggregation platform that deploys uma-governed aggregators
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

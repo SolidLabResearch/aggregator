@@ -1,6 +1,7 @@
 package registration
 
 import (
+	"aggregator/instance"
 	"aggregator/model"
 	"context"
 	"encoding/json"
@@ -209,7 +210,7 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 		tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
 	}
 
-	var instance *model.AggregatorInstance
+	var inst *model.AggregatorInstance
 	if isUpdate {
 		// Update existing aggregator tokens
 		if err := updateAggregatorInstanceTokens(storedData.AggregatorID, tokenResp.AccessToken, tokenResp.RefreshToken); err != nil {
@@ -217,11 +218,11 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 			http.Error(w, "Failed to update aggregator", http.StatusInternalServerError)
 			return
 		}
-		instance, _ = getAggregatorInstance(storedData.AggregatorID)
-		if instance != nil {
+		inst, _ = getAggregatorInstance(storedData.AggregatorID)
+		if inst != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := updateAggregatorInstanceDeployments(instance.Namespace, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, ctx); err != nil {
+			if err := instance.UpdateAggregator(inst.AggregatorID, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, ctx); err != nil {
 				logrus.WithError(err).Errorf("Failed to update aggregator deployments: %s", storedData.AggregatorID)
 				http.Error(w, "Failed to update aggregator", http.StatusInternalServerError)
 				return
@@ -233,17 +234,8 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		// Create namespace
-		namespace, err := createNamespaceForAggregator(id, storedData.AuthorizationServer, ctx)
-		if err != nil {
-			logrus.WithError(err).Error("Failed to create namespace")
-			http.Error(w, "Failed to create namespace", http.StatusInternalServerError)
-			return
-		}
-
 		// Deploy aggregator instance
-		err = deployAggregatorResources(
-			namespace,
+		aggregatorId, err := instance.DeployAggregator(
 			storedData.TokenEndpoint,
 			tokenResp.AccessToken,
 			tokenResp.RefreshToken,
@@ -259,22 +251,22 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 		}
 
 		// Create aggregator record
-		instance = createAggregatorInstanceRecord(
+		inst = createAggregatorInstanceRecord(
 			id,
 			"authorization_code",
 			storedData.AuthorizationServer,
-			namespace,
+			aggregatorId,
 			tokenResp.AccessToken,
 			tokenResp.RefreshToken,
 		)
 
-		logrus.Infof("Aggregator created: %s for ID %s", instance.AggregatorID, id)
+		logrus.Infof("Aggregator created: %s for ID %s", inst.AggregatorID, id)
 	}
 
 	// Return response
 	response := model.RegistrationResponse{
-		AggregatorID: instance.AggregatorID,
-		Aggregator:   instance.BaseURL,
+		AggregatorID: inst.AggregatorID,
+		Aggregator:   inst.BaseURL,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

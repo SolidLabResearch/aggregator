@@ -1,6 +1,7 @@
 package registration
 
 import (
+	"aggregator/instance"
 	"aggregator/model"
 	"context"
 	"encoding/json"
@@ -115,7 +116,7 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 		tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
 	}
 
-	var instance *model.AggregatorInstance
+	var inst *model.AggregatorInstance
 	if isUpdate {
 		// Update existing aggregator tokens
 		if err := updateAggregatorInstanceTokens(req.AggregatorID, tokenResp.AccessToken, tokenResp.RefreshToken); err != nil {
@@ -123,11 +124,11 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 			http.Error(w, "Failed to update aggregator", http.StatusInternalServerError)
 			return
 		}
-		instance, _ = getAggregatorInstance(req.AggregatorID)
-		if instance != nil {
+		inst, _ = getAggregatorInstance(req.AggregatorID)
+		if inst != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := updateAggregatorInstanceDeployments(instance.Namespace, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, ctx); err != nil {
+			if err := instance.UpdateAggregator(inst.AggregatorID, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, ctx); err != nil {
 				logrus.WithError(err).Errorf("Failed to update aggregator deployments: %s", req.AggregatorID)
 				http.Error(w, "Failed to update aggregator", http.StatusInternalServerError)
 				return
@@ -139,38 +140,39 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		// Create namespace for the aggregator
-		namespace, err := createNamespaceForAggregator(req.WebID, req.AuthorizationServer, ctx)
-		if err != nil {
-			logrus.WithError(err).Error("Failed to create namespace")
-			http.Error(w, "Failed to create namespace", http.StatusInternalServerError)
-			return
-		}
-
 		// Deploy aggregator resources
-		if err := deployAggregatorResources(namespace, oidcConfig.TokenEndpoint, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, req.WebID, req.AuthorizationServer, ctx); err != nil {
+		aggregatorId, err := instance.DeployAggregator(
+			oidcConfig.TokenEndpoint,
+			tokenResp.AccessToken,
+			tokenResp.RefreshToken,
+			tokenExpiry,
+			req.WebID,
+			req.AuthorizationServer,
+			ctx,
+		)
+		if err != nil {
 			logrus.WithError(err).Error("Failed to deploy aggregator")
 			http.Error(w, "Failed to deploy aggregator", http.StatusInternalServerError)
 			return
 		}
 
 		// Create aggregator record
-		instance = createAggregatorInstanceRecord(
+		inst = createAggregatorInstanceRecord(
 			id,
 			"client_credentials",
 			req.AuthorizationServer,
-			namespace,
+			aggregatorId,
 			tokenResp.AccessToken,
 			tokenResp.RefreshToken,
 		)
 
-		logrus.Infof("Aggregator created (client_credentials): %s for ID %s (acting as %s)", instance.AggregatorID, id, req.WebID)
+		logrus.Infof("Aggregator created (client_credentials): %s for ID %s (acting as %s)", inst.AggregatorID, id, req.WebID)
 	}
 
 	// Return response
 	response := model.RegistrationResponse{
-		AggregatorID: instance.AggregatorID,
-		Aggregator:   instance.BaseURL,
+		AggregatorID: inst.AggregatorID,
+		Aggregator:   inst.BaseURL,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

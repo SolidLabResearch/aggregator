@@ -12,7 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-func ensureDeployment(aggregatorId string, replicas int32, userId string, asURL string, ctx context.Context) error {
+func ensureDeployment(aggregatorId string, replicas int32, userId string, asURL string, configName string, ctx context.Context) error {
 	aggName := "aggregator-" + aggregatorId
 
 	// Aggregator Service
@@ -56,6 +56,14 @@ func ensureDeployment(aggregatorId string, replicas int32, userId string, asURL 
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      aggName,
 			Namespace: model.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":              "aggregator-instance",
+				"app.kubernetes.io/components":        "server",
+				"app.kubernetes.io/part-of":           "aggregator-platform",
+				"app.kubernetes.io/managed-by":        "aggregator-server",
+				"agg.knows.idlab.ugent.be/managed-by": model.Namespace,
+				"agg.knows.idlab.ugent.be/id":         aggregatorId,
+			},
 		},
 		Spec: networkingv1.IngressSpec{
 			IngressClassName: model.IngressClassName,
@@ -146,6 +154,25 @@ func ensureDeployment(aggregatorId string, replicas int32, userId string, asURL 
 								{Name: "AS_URL", Value: asURL},
 								{Name: "TRANSFORMATION_CATALOG", Value: model.TransformationCatalog},
 								{Name: "SERVICE_COLLECTION", Value: model.ServiceCollection},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      configName,
+									MountPath: "/etc/config",
+									ReadOnly:  true,
+								},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: configName,
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: configName,
+									},
+								},
 							},
 						},
 					},

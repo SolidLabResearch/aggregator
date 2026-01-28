@@ -51,7 +51,7 @@ metadata:
   name: aggregator-transformation-reader
   namespace: aggregator-app
 rules:
-  - apiGroups: ["fno.knows.idlab.ugent.be"]
+  - apiGroups: ["agg.idlab.ugent.be"]
     resources: ["transformations"]
     verbs: ["get","list","watch"]
 ---
