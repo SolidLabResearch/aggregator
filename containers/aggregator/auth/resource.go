@@ -30,7 +30,7 @@ func RegisterResource(resourceId string, issuer string, scopes []model.Scope) er
 	}
 
 	resp, err := http.Post(
-		fmt.Sprintf("http://ingress-uma.%s.svc.cluster.local:8080/resources", model.ServerNamespace),
+		fmt.Sprintf("http://ingress-uma.%s.svc.cluster.local:8080/resources", model.Namespace),
 		"application/json",
 		bytes.NewReader(jsonBody),
 	)

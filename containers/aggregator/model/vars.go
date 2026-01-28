@@ -15,8 +15,8 @@ var ProxyClient *http.Client
 
 // Aggregator identity
 var Owner User
-var UserNamespace string
-var ServerNamespace string
+var ID string
+var Namespace string
 
 // Aggregator configuration
 var BaseUrl string

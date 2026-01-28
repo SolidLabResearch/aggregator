@@ -1,6 +1,7 @@
 package registration
 
 import (
+	"aggregator/instance"
 	"aggregator/model"
 	"context"
 	"encoding/json"
@@ -10,7 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func handleNoneFlow(w http.ResponseWriter, req model.RegistrationRequest, id string) {
+func handleNoneFlow(w http.ResponseWriter, req model.RegistrationRequest, userId string) {
 	if req.AggregatorID != "" {
 		http.Error(w, "none updates are not supported", http.StatusBadRequest)
 		return
@@ -19,31 +20,24 @@ func handleNoneFlow(w http.ResponseWriter, req model.RegistrationRequest, id str
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	namespace, err := createNamespaceForAggregator(id, "", ctx)
+	aggregatorId, err := instance.DeployAggregator("", "", "", "", userId, "", ctx)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to create namespace")
-		http.Error(w, "Failed to create namespace", http.StatusInternalServerError)
-		return
-	}
-
-	if err := deployAggregatorResources(namespace, "", "", "", "", id, "", ctx); err != nil {
 		logrus.WithError(err).Error("Failed to deploy aggregator")
 		http.Error(w, "Failed to deploy aggregator", http.StatusInternalServerError)
 		return
 	}
 
 	instance := createAggregatorInstanceRecord(
-		id,
+		userId,
 		"none",
 		"",
-		namespace,
+		aggregatorId,
 		"",
 		"",
 	)
 
 	response := model.RegistrationResponse{
-		AggregatorID: instance.AggregatorID,
-		Aggregator:   instance.BaseURL,
+		Aggregator: instance.BaseURL,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

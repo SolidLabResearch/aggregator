@@ -26,7 +26,7 @@ var forbidden = map[string]struct{}{
 
 func ValidServiceUri(uri string) (string, string, error) {
 	// Validate service path
-	servicePath, err := UriToID(uri, model.BaseUrl)
+	servicePath, err := StripPrefix(uri, model.BaseUrl)
 	if err != nil {
 		return "", "", fmt.Errorf("Invalid execution URI: %w", err)
 	}
@@ -111,7 +111,7 @@ func ParseRequestBody(fno string) (model.Execution, error) {
 }
 
 func LoadTransformationCR(uri string) (*model.Transformation, error) {
-	id, err := UriToID(uri, fmt.Sprintf("%s://%s/config/transformations#", model.Protocol, model.ExternalHost))
+	id, err := StripPrefix(uri, fmt.Sprintf("%s://%s/config/transformations#", model.Protocol, model.ExternalHost))
 	if err != nil {
 		return nil, fmt.Errorf("invalid transformation URI %q", uri)
 	}
@@ -126,7 +126,7 @@ func LoadTransformationCR(uri string) (*model.Transformation, error) {
 	// List CRs in the namespace
 	crList, err := model.DynamicClient.
 		Resource(gvr).
-		Namespace(model.ServerNamespace).
+		Namespace(model.Namespace).
 		List(context.TODO(), v1.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -222,7 +222,7 @@ func ParametersToEnvVars(params map[string]rdfgo.ITerm, inputMapping map[string]
 		{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 	}
 	for paramKey, paramValue := range params {
-		pred, err := UriToID(paramKey, fmt.Sprintf("%s://%s/config/transformations#", model.Protocol, model.ExternalHost))
+		pred, err := StripPrefix(paramKey, fmt.Sprintf("%s://%s/config/transformations#", model.Protocol, model.ExternalHost))
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse parameter key %q: %w", paramKey, err)
 		}
@@ -238,7 +238,7 @@ func ParametersToEnvVars(params map[string]rdfgo.ITerm, inputMapping map[string]
 	return envVars, nil
 }
 
-func UriToID(uri string, prefix string) (string, error) {
+func StripPrefix(uri string, prefix string) (string, error) {
 	id, found := strings.CutPrefix(uri, prefix)
 	if !found {
 		return "", fmt.Errorf(

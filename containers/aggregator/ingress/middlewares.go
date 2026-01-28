@@ -56,7 +56,7 @@ func UMAAuthMiddleware() Middleware {
 
 			req, err := http.NewRequest(
 				"POST",
-				fmt.Sprintf("http://ingress-uma.%s.svc.cluster.local:8080/authorize", model.ServerNamespace),
+				fmt.Sprintf("http://ingress-uma.%s.svc.cluster.local:8080/authorize", model.Namespace),
 				bytes.NewReader(data),
 			)
 			if err != nil {

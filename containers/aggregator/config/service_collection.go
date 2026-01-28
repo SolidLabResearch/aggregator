@@ -133,7 +133,7 @@ func generateServiceETag(repr []byte) string {
 
 // headService HEAD /<namespace>/services/<id> returns the ETag header for the service with the given ID
 func (collec *ServiceCollection) headService(w http.ResponseWriter, _ *http.Request, service model.Service) {
-	logrus.WithFields(logrus.Fields{"service_id": service.ID}).Debug("Request HEAD for service")
+	logrus.WithFields(logrus.Fields{"service_id": service.InstanceID}).Debug("Request HEAD for service")
 
 	repr, err := service.FnORepresentation()
 	if err != nil {
@@ -150,7 +150,7 @@ func (collec *ServiceCollection) headService(w http.ResponseWriter, _ *http.Requ
 
 // getService GET /<service path> returns the service FnO representation for the service with the given ID
 func (collec *ServiceCollection) getService(w http.ResponseWriter, _ *http.Request, service model.Service) {
-	logrus.WithFields(logrus.Fields{"service_id": service.ID}).Info("Request GET for service")
+	logrus.WithFields(logrus.Fields{"service_id": service.InstanceID}).Info("Request GET for service")
 
 	repr, err := service.FnORepresentation()
 	if err != nil {
@@ -217,7 +217,7 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Store service
-	collec.services[service.ID] = *service
+	collec.services[service.InstanceID] = *service
 	collec.etagServices++
 
 	// Create service endpoint
@@ -259,10 +259,10 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 
 // DELETE config deletes a service with the given ID
 func (collec *ServiceCollection) deleteService(w http.ResponseWriter, _ *http.Request, service model.Service) {
-	logrus.WithFields(logrus.Fields{"service_id": service.ID}).Info("Request to delete service")
+	logrus.WithFields(logrus.Fields{"service_id": service.InstanceID}).Info("Request to delete service")
 
 	service.Stop()
-	delete(collec.services, service.ID)
+	delete(collec.services, service.InstanceID)
 
 	collec.etagServices++
 	w.WriteHeader(http.StatusOK)
@@ -298,8 +298,8 @@ func (collec *ServiceCollection) HandleServiceOutput(w http.ResponseWriter, r *h
 
 	// Create new request to forward
 	forwardURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s",
-		serviceID,
-		model.UserNamespace,
+		service.NamespaceID,
+		model.Namespace,
 		mapping.Port,
 		mapping.Path,
 	)

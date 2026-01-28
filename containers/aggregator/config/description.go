@@ -49,7 +49,7 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenExpiry, err := fetchAccessTokenExpiry(model.UserNamespace)
+	tokenExpiry, err := fetchAccessTokenExpiry()
 	loginStatus := false
 	if err == nil && tokenExpiry != "" {
 		parsed, parseErr := time.Parse(time.RFC3339, tokenExpiry)
@@ -58,7 +58,7 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	createdAt, err := fetchCreatedAt(model.UserNamespace)
+	createdAt, err := fetchCreatedAt()
 	if err != nil || createdAt == "" {
 		createdAt = time.Now().Format(time.RFC3339)
 	}
@@ -79,11 +79,12 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func fetchAccessTokenExpiry(namespace string) (string, error) {
+func fetchAccessTokenExpiry() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	cm, err := model.Clientset.CoreV1().ConfigMaps(namespace).Get(ctx, "aggregator-instance-config", metav1.GetOptions{})
+	configName := "aggregator-" + model.ID + "-config"
+	cm, err := model.Clientset.CoreV1().ConfigMaps(model.Namespace).Get(ctx, configName, metav1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
@@ -91,11 +92,12 @@ func fetchAccessTokenExpiry(namespace string) (string, error) {
 	return strings.TrimSpace(cm.Data["access_token_expiry"]), nil
 }
 
-func fetchCreatedAt(namespace string) (string, error) {
+func fetchCreatedAt() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	cm, err := model.Clientset.CoreV1().ConfigMaps(namespace).Get(ctx, "aggregator-instance-config", metav1.GetOptions{})
+	configName := "aggregator-" + model.ID + "-config"
+	cm, err := model.Clientset.CoreV1().ConfigMaps(model.Namespace).Get(ctx, configName, metav1.GetOptions{})
 	if err != nil {
 		return "", err
 	}

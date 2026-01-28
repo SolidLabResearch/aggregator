@@ -30,7 +30,7 @@ func TestFetchAccessTokenExpiry(t *testing.T) {
 		},
 	})
 
-	expiry, err := fetchAccessTokenExpiry("test-ns")
+	expiry, err := fetchAccessTokenExpiry()
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

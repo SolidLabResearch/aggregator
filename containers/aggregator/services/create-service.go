@@ -32,10 +32,10 @@ func CreateAggregatorService(
 
 	useUMA := strings.TrimSpace(model.Owner.AuthzServerURL) != ""
 	service := model.Service{
-		ID:               id,
+		InstanceID:       id,
+		NamespaceID:      id + "-" + model.ID,
 		Path:             path,
 		Exe:              exe,
-		Namespace:        model.UserNamespace,
 		ClusterEndpoints: []string{},
 		Deployments:      []appsv1.Deployment{},
 		Services:         []corev1.Service{},
@@ -75,12 +75,15 @@ func createDeployment(
 	ctx context.Context,
 ) error {
 	labels := map[string]string{
-		"app":       service.ID,
-		"namespace": service.Namespace,
+		"app.kubernetes.io/name":              "aggregator-service",
+		"app.kubernetes.io/part-of":           "aggregator-platform",
+		"app.kubernetes.io/managed-by":        "aggregator-instance",
+		"agg.knows.idlab.ugent.be/managed-by": model.ID,
+		"agg.knows.idlab.ugent.be/id":         service.InstanceID,
 	}
 
 	container := corev1.Container{
-		Name:            service.ID,
+		Name:            service.InstanceID,
 		Image:           image,
 		ImagePullPolicy: corev1.PullNever,
 		Env:             envVars,
@@ -91,21 +94,25 @@ func createDeployment(
 
 	if useUMA {
 		container.Env = append([]corev1.EnvVar{
-			{Name: "HTTP_PROXY", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", service.Namespace)},
-			{Name: "http_proxy", Value: fmt.Sprintf("http://egress-uma.%s.svc.cluster.local:8080", service.Namespace)},
+			{Name: "HTTP_PROXY", Value: fmt.Sprintf("http://%s-egress-uma.%s.svc.cluster.local:8080", model.ID, model.Namespace)},
+			{Name: "http_proxy", Value: fmt.Sprintf("http://%s-egress-uma.%s.svc.cluster.local:8080", model.ID, model.Namespace)},
 		}, container.Env...)
 	}
 
 	deploySpec := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      service.ID,
-			Namespace: service.Namespace,
+			Name:      service.NamespaceID,
+			Namespace: model.Namespace,
 			Labels:    labels,
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{
-				MatchLabels: labels,
+				MatchLabels: map[string]string{
+					"app.kubernetes.io/name":              "aggregator-service",
+					"agg.knows.idlab.ugent.be/managed-by": model.ID,
+					"agg.knows.idlab.ugent.be/id":         service.InstanceID,
+				},
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
@@ -119,21 +126,21 @@ func createDeployment(
 		},
 	}
 
-	deploy, err := model.Clientset.AppsV1().Deployments(service.Namespace).Create(ctx, deploySpec, metav1.CreateOptions{})
+	deploy, err := model.Clientset.AppsV1().Deployments(model.Namespace).Create(ctx, deploySpec, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to create deployment %s: %w", service.ID, err)
+		return fmt.Errorf("failed to create deployment %s: %w", service.NamespaceID, err)
 	}
 	service.Deployments = append(service.Deployments, *deploy)
 
-	logrus.Infof("Deployment %s created successfully in namespace %s", service.ID, service.Namespace)
+	logrus.Infof("Deployment %s created successfully", service.NamespaceID)
 	return nil
 }
 
 func createService(service *model.Service, ports []int32, ctx context.Context) error {
 	// Check if service already exists
-	_, err := model.Clientset.CoreV1().Services(service.Namespace).Get(ctx, service.ID, metav1.GetOptions{})
+	_, err := model.Clientset.CoreV1().Services(model.Namespace).Get(ctx, service.NamespaceID, metav1.GetOptions{})
 	if err == nil {
-		return fmt.Errorf("service %s already exists in namespace %s", service.ID, service.Namespace)
+		return fmt.Errorf("service %s already exists", service.NamespaceID)
 	}
 
 	// Build service ports
@@ -148,22 +155,23 @@ func createService(service *model.Service, ports []int32, ctx context.Context) e
 	// Specify Service
 	svcSpec := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: service.ID,
+			Name: service.NamespaceID,
 		},
 		Spec: corev1.ServiceSpec{
 			Type: corev1.ServiceTypeClusterIP,
 			Selector: map[string]string{
-				"app":       service.ID,
-				"namespace": service.Namespace,
+				"app.kubernetes.io/name":              "aggregator-service",
+				"agg.knows.idlab.ugent.be/managed-by": model.ID,
+				"agg.knows.idlab.ugent.be/id":         service.InstanceID,
 			},
 			Ports: servicePorts,
 		},
 	}
 
 	// Create Service
-	svc, err := model.Clientset.CoreV1().Services(service.Namespace).Create(ctx, svcSpec, metav1.CreateOptions{})
+	svc, err := model.Clientset.CoreV1().Services(model.Namespace).Create(ctx, svcSpec, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to create service in namespace %s: %w", service.Namespace, err)
+		return fmt.Errorf("failed to create service: %w", err)
 	}
 	service.Services = append(service.Services, *svc)
 

@@ -5,6 +5,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "aggregator.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: server
   annotations:
     {{- include "aggregator.annotations" $ | nindent 4 }}
 spec:

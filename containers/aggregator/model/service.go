@@ -17,10 +17,10 @@ import (
 )
 
 type Service struct {
-	ID               string
+	NamespaceID      string
+	InstanceID       string
 	Path             string
 	Exe              Execution
-	Namespace        string
 	ClusterEndpoints []string
 	Deployments      []appsv1.Deployment
 	Services         []corev1.Service
@@ -34,7 +34,7 @@ func (service *Service) Stop() error {
 
 	// Delete Deployments
 	for _, dep := range service.Deployments {
-		err := Clientset.AppsV1().Deployments(service.Namespace).Delete(ctx, dep.Name, metav1.DeleteOptions{})
+		err := Clientset.AppsV1().Deployments(Namespace).Delete(ctx, dep.Name, metav1.DeleteOptions{})
 		if err != nil && !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete deployment %s: %w", dep.Name, err)
 		}
@@ -42,17 +42,9 @@ func (service *Service) Stop() error {
 
 	// Delete Services
 	for _, svc := range service.Services {
-		err := Clientset.CoreV1().Services(service.Namespace).Delete(ctx, svc.Name, metav1.DeleteOptions{})
+		err := Clientset.CoreV1().Services(Namespace).Delete(ctx, svc.Name, metav1.DeleteOptions{})
 		if err != nil && !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete service %s: %w", svc.Name, err)
-		}
-	}
-
-	// Delete Ingresses
-	for _, ing := range service.Ingresses {
-		err := Clientset.NetworkingV1().Ingresses(service.Namespace).Delete(ctx, ing.Name, metav1.DeleteOptions{})
-		if err != nil && !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to delete ingress %s: %w", ing.Name, err)
 		}
 	}
 
@@ -62,7 +54,7 @@ func (service *Service) Stop() error {
 func (service *Service) Status() string {
 	ctx := context.Background()
 	for _, dep := range service.Deployments {
-		d, err := Clientset.AppsV1().Deployments(service.Namespace).Get(ctx, dep.Name, metav1.GetOptions{})
+		d, err := Clientset.AppsV1().Deployments(Namespace).Get(ctx, dep.Name, metav1.GetOptions{})
 		if err != nil {
 			return "errored"
 		}
@@ -103,7 +95,7 @@ func (service *Service) FnORepresentation() ([]byte, error) {
 		quad, err := rdfgo.NewQuad(
 			svcNode,
 			rdfgo.IRI.RDF.Type,
-			FnO("Service"),
+			Agg("Service"),
 			nil,
 		)
 		if err != nil {
