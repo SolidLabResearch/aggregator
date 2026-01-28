@@ -222,7 +222,7 @@ func resolveOwnerID(ownerID string, aggregatorId string) string {
 }
 
 func ensureConfigMap(aggregatorId string, name string, data map[string]string, ctx context.Context) (string, error) {
-	cmName := "aggregator-" + aggregatorId + "-" + name
+	cmName := name + "-" + aggregatorId
 	if len(data) == 0 {
 		return cmName, fmt.Errorf("configmap data is required")
 	}

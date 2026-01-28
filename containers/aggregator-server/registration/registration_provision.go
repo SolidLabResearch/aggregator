@@ -138,9 +138,8 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 	logrus.Infof("Aggregator created (provision): %s for ID %s (acting as %s)", instance.AggregatorID, id, webID)
 
 	response := model.RegistrationResponse{
-		AggregatorID: instance.AggregatorID,
-		Aggregator:   instance.BaseURL,
-		WebID:        webID,
+		Aggregator: instance.BaseURL,
+		WebID:      webID,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

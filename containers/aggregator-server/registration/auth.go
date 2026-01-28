@@ -79,7 +79,7 @@ func authenticateRequest(r *http.Request) (issuer string, id string, mode string
 		return "", "", "", err
 	}
 
-	if model.UMAServer != "" && model.UMAServer == issStr {
+	if model.AuthServer != "" && model.AuthServer == issStr {
 		// Standard OIDC Auth Server mode: extract subject as ID
 		if sub, ok := verifiedToken.Get("sub"); ok {
 			if subStr, ok := sub.(string); ok {

@@ -1,8 +1,11 @@
 host: aggregator.local
 auth:
   clientId: aggregator
+  server: https://pacsoi-idp.faqir.org/realms/kvasir
+  clientSecret: AtctW4sdbmjcfF9gQJIf5RoK6T6wetwG
   allowedRegistrationTypes:
     - none
+    - device_code
 
 ingressClassName: aggregator-traefik
 
@@ -36,8 +39,5 @@ transformations:
         resp:
           port: 8080
           path: /
-
-ingressUma:
-  disableAuth: true
 
 loglevel: debug

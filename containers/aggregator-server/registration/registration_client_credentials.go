@@ -171,7 +171,7 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 
 	// Return response
 	response := model.RegistrationResponse{
-		AggregatorID: inst.AggregatorID,
+		AggregatorId: inst.AggregatorID,
 		Aggregator:   inst.BaseURL,
 	}
 

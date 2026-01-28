@@ -8,7 +8,15 @@ metadata:
   annotations:
     {{- include "aggregator.annotations" $ | nindent 4 }}
 spec:
-  ingressClassName: {{ .Values.ingressClassName }}      
+  ingressClassName: {{ .Values.ingressClassName }}
+
+  {{- if .Values.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.host }}
+      secretName: {{ .Values.tls.secretName }}
+  {{- end }}
+        
   rules:
     - host: {{ .Values.host }}
       http:

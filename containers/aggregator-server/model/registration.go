@@ -4,6 +4,7 @@ package model
 type OIDCConfig struct {
 	Issuer                            string   `json:"issuer"`
 	AuthorizationEndpoint             string   `json:"authorization_endpoint"`
+	DeviceAuthorizationEndpoint       string   `json:"device_authorization_endpoint"`
 	TokenEndpoint                     string   `json:"token_endpoint"`
 	JWKSURI                           string   `json:"jwks_uri"`
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
@@ -37,7 +38,7 @@ type RegistrationRequest struct {
 
 // RegistrationResponse represents the response for successful aggregator creation/update
 type RegistrationResponse struct {
-	AggregatorID string `json:"aggregator_id"`
+	AggregatorId string `json:"id,omitempty"`
 	Aggregator   string `json:"aggregator,omitempty"`
 	WebID        string `json:"webid,omitempty"`
 }

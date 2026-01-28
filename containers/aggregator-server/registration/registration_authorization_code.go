@@ -265,7 +265,7 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 
 	// Return response
 	response := model.RegistrationResponse{
-		AggregatorID: inst.AggregatorID,
+		AggregatorId: inst.AggregatorID,
 		Aggregator:   inst.BaseURL,
 	}
 

@@ -7,6 +7,10 @@
       "type": "string",
       "minLength": 1
     },
+    "ingressClassName": {
+      "type": "string",
+      "minLength": 1
+    },
     "auth": {
       "type": "object",
       "required": ["clientId", "allowedRegistrationTypes"],
@@ -28,7 +32,7 @@
           "minItems": 1,
           "items": {
             "type": "string",
-            "enum": ["none", "provision", "authorization_code"]
+            "enum": ["none", "authorization_code", "device_code"]
           }
         }
       },
@@ -42,6 +46,29 @@
               { "required": ["server"] },
               { "required": ["clientSecret"] }
             ]
+          }
+        }
+      ]
+    },
+
+    "tls": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "secretName": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "enabled": { "const": true } }
+          },
+          "then": {
+            "required": ["secretName"]
           }
         }
       ]

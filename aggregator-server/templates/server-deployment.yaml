@@ -34,6 +34,12 @@ spec:
                 name: server-config
             - configMapRef:
                 name: spec-config
+          {{- if .Values.auth.clientSecret }}
+          volumeMounts:
+            - name: client-secret
+              mountPath: /etc/secrets
+              readOnly: true
+          {{- end }}
           readinessProbe:
             httpGet:
               path: /healthz
@@ -42,3 +48,9 @@ spec:
             periodSeconds: {{ .Values.server.readinessProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.server.readinessProbe.timeoutSeconds }}
             failureThreshold: {{ .Values.server.readinessProbe.failureThreshold }}
+      {{- if .Values.auth.clientSecret }}
+      volumes:
+        - name: client-secret
+          secret:
+            secretName: aggregator-server-secret
+      {{- end }}

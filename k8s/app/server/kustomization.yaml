@@ -1,6 +1,0 @@
-resources:
-  - rbac.yaml
-  - service-account.yaml
-  - deployment.yaml
-  - service.yaml
-  - ingress.yaml

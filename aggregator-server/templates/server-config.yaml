@@ -13,5 +13,7 @@ data:
   EXTERNAL_HOST: {{ .Values.host }}
   CLIENT_ID: {{ .Values.auth.clientId }}
   AUTH_SERVER: {{ .Values.auth.server }}
-  CLIENT_SECRET: {{ .Values.auth.clientSecret }}
   ALLOWED_REGISTRATION_TYPES: {{ join "," .Values.auth.allowedRegistrationTypes | quote }}
+  {{- if .Values.tls.enabled }}
+  TLS_SECRET: {{ .Values.tls.secretName }}
+  {{- end }}

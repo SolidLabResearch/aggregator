@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -50,9 +49,10 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if registrationType == "none" {
-		handleNoneFlow(w, req, uuid.NewString())
-	} else {
+	switch registrationType {
+	case "none":
+		handleNoneFlow(w, req)
+	default:
 		issuer, id, mode, err := authenticateRequest(r)
 		if err != nil {
 			logrus.WithError(err).Warn("Authentication failed")

@@ -14,6 +14,7 @@ import (
 
 func ensureDeployment(aggregatorId string, replicas int32, userId string, asURL string, configName string, ctx context.Context) error {
 	aggName := "aggregator-" + aggregatorId
+	saName := "sa-" + aggregatorId
 
 	// Aggregator Service
 	service := &corev1.Service{
@@ -93,6 +94,16 @@ func ensureDeployment(aggregatorId string, replicas int32, userId string, asURL 
 		},
 	}
 
+	// Add TLS section if HTTPS
+	if model.Protocol == "https" && model.TLSSecret != "" {
+		ingress.Spec.TLS = []networkingv1.IngressTLS{
+			{
+				Hosts:      []string{model.ExternalHost},
+				SecretName: model.TLSSecret,
+			},
+		}
+	}
+
 	_, err = model.Clientset.NetworkingV1().Ingresses(model.Namespace).Create(ctx, ingress, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create ingress: %w", err)
@@ -134,7 +145,7 @@ func ensureDeployment(aggregatorId string, replicas int32, userId string, asURL 
 					},
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: aggName,
+					ServiceAccountName: saName,
 					Containers: []corev1.Container{
 						{
 							Name:            aggName,

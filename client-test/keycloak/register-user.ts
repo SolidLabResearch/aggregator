@@ -1,44 +1,55 @@
-import { KeycloakOIDCAuth } from "../util.js";
+import readline from "readline";
 
-const REGISTER_ENDPOINT = "http://aggregator.local/registration";
-
-const USER_ID = "https://pacsoi-idp.faqir.org/users/056e2d71-21aa-4528-a9f8-735ad76f0baa";
-const USERNAME = "doctor@example.com";
-const PASSWORD = "7714";
-const CLIENT_ID = "moveup-backend";
-const CLIENT_SECRET = "GD7VyY29Eeim5BWfdTAFJ8FTDW7SeU2g";
+const DEVICE_START = "http://aggregator.local/device_code/start";
+const DEVICE_FINISH = "http://aggregator.local/device_code/finalize";
 const AS_URL = "http://wsl.local:4000/uma";
 
-const IDP = "https://pacsoi-idp.faqir.org";
-const REALM = "kvasir";
-
-//const auth = new KeycloakOIDCAuth()
-//await auth.init(IDP, REALM)
-//await auth.login(USERNAME, PASSWORD, CLIENT_ID, CLIENT_SECRET);
-
-async function registerRequest(): Promise<string> {
-    console.log(`=== Registering user at ${REGISTER_ENDPOINT} ===`);
-    //await auth.refreshAccessToken();
-    const registerRequest = {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            //"Authorization": `Bearer ${auth.accessToken}`
-        },
-        body: JSON.stringify({
-            registration_type: "none",
-        })
-    };
-    const response = await fetch(REGISTER_ENDPOINT, registerRequest);
-
-    if (!response.ok) {
-        return response.text();
-    }
-    return response.text()
+function waitForEnter() {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  return new Promise<void>((resolve) => {
+    rl.question("Press Enter once you completed the login at the verification URL...", () => {
+      rl.close();
+      resolve();
+    });
+  });
 }
 
 async function main() {
-    console.log(await registerRequest());
+  // 1️⃣ Start device code flow
+  const startResp = await fetch(DEVICE_START, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      //authorization_server: AS_URL,
+    }),
+  });
+
+  if (!startResp.ok) {
+    throw new Error(`Device code start failed: ${startResp.statusText}`);
+  }
+
+  const startData = await startResp.json();
+  console.log("====== DEVICE CODE ======");
+  console.log("User code:", startData.user_code);
+  console.log("Verification URI:", startData.verification_uri);
+  console.log("=========================");
+
+  // 2️⃣ Wait for user input
+  await waitForEnter();
+
+  // 3️⃣ Finalize device code flow
+  const finishResp = await fetch(`${DEVICE_FINISH}?device_code=${startData.device_code}`);
+  if (!finishResp.ok) {
+    throw new Error(`Device code finalize failed: ${finishResp.statusText}`);
+  }
+
+  const finishData = await finishResp.json();
+  console.log("=== DEVICE CODE FINALIZE ===");
+  console.log(finishData);
 }
 
 await main().catch(console.error);
+

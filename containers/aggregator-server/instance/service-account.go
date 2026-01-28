@@ -22,7 +22,7 @@ func ensurePermissions(aggregatorId string, ctx context.Context) error {
 }
 
 func ensureServiceAccount(aggregatorId string, ctx context.Context) error {
-	saName := "aggregator-" + aggregatorId + "-sa"
+	saName := "sa-" + aggregatorId
 	sa := &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      saName,
@@ -42,7 +42,7 @@ func ensureServiceAccount(aggregatorId string, ctx context.Context) error {
 }
 
 func ensureRoleBindings(aggregatorId string, ctx context.Context) error {
-	saName := "aggregator-" + aggregatorId + "-sa"
+	saName := "sa-" + aggregatorId
 	// Aggregator can manage fno services
 	managerBinding := &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
@@ -74,7 +74,7 @@ func ensureRoleBindings(aggregatorId string, ctx context.Context) error {
 	// Aggregator can read the server transformations
 	tfBinding := &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("aggregator-%s-tf-reader-binding", aggregatorId),
+			Name:      fmt.Sprintf("tf-reader-binding-%s", aggregatorId),
 			Namespace: model.Namespace,
 			Labels: map[string]string{
 				"agg.knows.idlab.ugent.be/managed-by": aggregatorId,

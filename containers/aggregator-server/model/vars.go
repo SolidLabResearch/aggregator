@@ -7,13 +7,14 @@ import (
 )
 
 var Protocol string
+var TLSSecret string
 var ExternalHost string
 
 var AllowedRegistrationTypes []string
 var ClientId string
 
 // Standard OIDC Authorization Server configuration
-var UMAServer string
+var AuthServer string
 var ClientSecret string
 
 // Provision flow configuration

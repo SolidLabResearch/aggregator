@@ -10,6 +10,7 @@ import (
 
 // Network configuration
 var Protocol string
+var TLSSecret string
 var ExternalHost string
 var ProxyClient *http.Client
 

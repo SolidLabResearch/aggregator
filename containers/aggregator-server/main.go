@@ -3,6 +3,7 @@ package main
 import (
 	"aggregator/config"
 	"aggregator/model"
+	"aggregator/registration"
 	reg "aggregator/registration"
 	"context"
 	"fmt"
@@ -35,7 +36,12 @@ func main() {
 	if model.ExternalHost == "" {
 		logrus.Fatal("Environment variables EXTERNAL_HOST must be set")
 	}
-	model.Protocol = "http"
+	model.TLSSecret = os.Getenv("TLS_SECRET")
+	if model.TLSSecret != "" {
+		model.Protocol = "https"
+	} else {
+		model.Protocol = "http"
+	}
 
 	// Read Authorization configuration from environment variables
 	model.ClientId = os.Getenv("CLIENT_ID")
@@ -44,14 +50,20 @@ func main() {
 	}
 
 	// Standard OIDC Authorization Server configuration
-	model.UMAServer = os.Getenv("AUTH_SERVER")
-	if model.UMAServer == "" {
+	model.AuthServer = os.Getenv("AUTH_SERVER")
+	if model.AuthServer == "" {
 		logrus.Info("Only Solid-OIDC with Web IDs is supported (no standard OIDC Authorization Server configured)")
 	} else {
-		model.ClientSecret = os.Getenv("CLIENT_SECRET")
-		if model.ClientSecret == "" {
-			logrus.Fatal("Environment variable CLIENT_SECRET must be set")
+		secretBytes, err := os.ReadFile("/etc/secrets/clientSecret")
+		if err != nil {
+			logrus.Fatalf("Failed to read CLIENT_SECRET from mounted secret: %v", err)
 		}
+
+		model.ClientSecret = strings.TrimSpace(string(secretBytes))
+		if model.ClientSecret == "" {
+			logrus.Fatal("Mounted CLIENT_SECRET is empty")
+		}
+
 	}
 
 	model.ProvisionClientID = os.Getenv("PROVISION_CLIENT_ID")
@@ -131,6 +143,9 @@ func main() {
 	config.InitServerDescription(serverMux)
 
 	// Registration endpoint
+	if hasRegistrationType(model.AllowedRegistrationTypes, "device_code") {
+		registration.InitDeviceCodeFlow(serverMux)
+	}
 	initRegistration(serverMux)
 
 	// While we wait for instance to start the aggregator server responds with 503 to config requests
