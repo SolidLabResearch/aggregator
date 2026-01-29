@@ -14,8 +14,10 @@
 deploy:
 	@echo "📄 Deploying aggregator application..."
 	@helm upgrade --install aggregator-platform ./aggregator-platform -f $(CONFIG) \
-		-n aggregator-platform --create-namespace
-	@kubectl rollout status deployment aggregator-platform -n aggregator-platform --timeout=120s
+		-n aggregator-platform --create-namespace \
+		--set-file tls.selfSigned.crt=aggregator.crt \
+  	--set-file tls.selfSigned.key=aggregator.key
+	@kubectl rollout status deployment aggregator-server -n aggregator-platform --timeout=120s
 	@echo "✅ Aggregator application successfully deployed!"
 
 kind-deploy: 
