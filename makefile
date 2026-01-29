@@ -13,12 +13,13 @@
 
 deploy:
 	@echo "📄 Deploying aggregator application..."
-	@helm upgrade --install aggregator-server ./aggregator-server -f $(CONFIG) \
-		-n aggregator-server --create-namespace
+	@helm upgrade --install aggregator-platform ./aggregator-platform -f $(CONFIG) \
+		-n aggregator-platform --create-namespace
 	@kubectl rollout status deployment aggregator-server -n aggregator-server --timeout=120s
 	@echo "✅ Aggregator application successfully deployed!"
 
-kind-deploy: $(MAKE) deploy CONFIG=kind/helm-config.yaml
+kind-deploy: 
+	$(MAKE) deploy CONFIG=kind/helm-config.yaml
 
 undeploy:
 	@echo "🧹 Stopping aggregator deployment..."
