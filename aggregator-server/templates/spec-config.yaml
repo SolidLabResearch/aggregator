@@ -10,3 +10,4 @@ metadata:
 data:
   TRANSFORMATION_CATALOG: {{ .Values.spec.transformation_catalog }}
   SERVICE_COLLECTION: {{ .Values.spec.service_collection }}
+  REGISTRATION: {{ .Values.spec.registration }}

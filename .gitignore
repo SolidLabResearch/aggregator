@@ -1,2 +1,4 @@
 *.pem
+*.crt
+*.key
 .idea

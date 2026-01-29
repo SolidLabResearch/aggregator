@@ -111,7 +111,6 @@ kind-generate-aggregator-key-pair:
 	fi
 	@echo "✅ Self-signed CA installed."
 
-
 kind-generate-egress-key-pair:
 	@echo "🔑 Generating key pair for uma-proxy..."
 	@kubectl config use-context kind-aggregator

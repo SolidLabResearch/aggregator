@@ -3,6 +3,7 @@ loglevel: info
 spec:
   service_collection: /services
   transformation_catalog: /transformations
+  registration: /registration
 
 transformations: []
 

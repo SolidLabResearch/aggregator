@@ -1,0 +1,39 @@
+{{- /*
+NOTES.txt for Aggregator Server Helm Chart
+This is displayed after helm install / upgrade
+*/ -}}
+
+##########################################################
+# Aggregator Server Installation Complete
+##########################################################
+
+Aggregation platform is available at:
+
+{{- if .Values.tls.enabled }}
+https://{{ .Values.host }}
+{{- else }}
+http://{{ .Values.host }}
+{{- end }}
+
+----------------------------------------------------------
+Manage transformations:
+
+{{- if .Values.tls.enabled }}
+- https://{{ .Values.host }}{{ .Values.spec.transformation_catalog }}
+{{- else }}
+- http://{{ .Values.host }}{{ .Values.spec.transformation_catalog }}
+{{- end }}
+
+----------------------------------------------------------
+Registration endpoints:
+
+Create aggregators at:
+{{- if .Values.tls.enabled }}
+- https://{{ .Values.host }}{{ .Values.spec.registration }}
+{{- else }}
+- http://{{ .Values.host }}{{ .Values.spec.registration }}
+{{- end }}
+
+##########################################################
+# End of NOTES
+##########################################################
