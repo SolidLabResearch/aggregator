@@ -25,8 +25,8 @@ undeploy:
 	@echo "🧹 Stopping aggregator deployment..."
 	@if kind get clusters 2>/dev/null | grep -q "aggregator"; then \
 		kubectl config use-context kind-aggregator || true; \
-		helm uninstall aggregator-server -n aggregator-server || true; \
-		kubectl delete namespace aggregator-server --ignore-not-found || true; \
+		helm uninstall aggregator-platform -n aggregator-platform || true; \
+		kubectl delete namespace aggregator-platform --ignore-not-found || true; \
 	else \
 		echo "ℹ️ Kind cluster 'aggregator' does not exist, skipping cleanup"; \
 	fi
@@ -133,7 +133,7 @@ kind-generate-ingress-key:
 		echo "ℹ️ private_key.pem already exists, skipping"; \
 	fi
 
-generate-keys: kind-generate-aggregator-key-pair kind-generate-egress-key-pair kind-generate-ingress-key
+kind-generate-keys: kind-generate-aggregator-key-pair kind-generate-egress-key-pair kind-generate-ingress-key
 
 # ------------------------
 # Ingress Controller
