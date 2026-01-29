@@ -1,7 +1,6 @@
 import readline from "readline";
 
-const DEVICE_START = "http://aggregator.local/device_code/start";
-const DEVICE_FINISH = "http://aggregator.local/device_code/finalize";
+const REGISTRATION = "http://aggregator.local/registration";
 const AS_URL = "http://wsl.local:4000/uma";
 
 function waitForEnter() {
@@ -19,10 +18,11 @@ function waitForEnter() {
 
 async function main() {
   // 1️⃣ Start device code flow
-  const startResp = await fetch(DEVICE_START, {
+  const startResp = await fetch(REGISTRATION, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      registration_type: "device_code"
       //authorization_server: AS_URL,
     }),
   });
@@ -41,7 +41,14 @@ async function main() {
   await waitForEnter();
 
   // 3️⃣ Finalize device code flow
-  const finishResp = await fetch(`${DEVICE_FINISH}?device_code=${startData.device_code}`);
+  const finishResp = await fetch(REGISTRATION, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      registration_type: "device_code",
+      device_code: startData.device_code
+    }),
+  });
   if (!finishResp.ok) {
     throw new Error(`Device code finalize failed: ${finishResp.statusText}`);
   }

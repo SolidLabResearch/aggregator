@@ -7,22 +7,42 @@ An aggregator using uma: https://github.com/SolidLabResearch/user-managed-access
 ## Requirements
 
 - Docker
-- Kind (Kubernetes in Docker)
-- kubectl
+- Kubernetes cluster
 - Helm
+
+### Local setup
+- Kind (Kubernetes in Docker)
 - Make
 
 ## Quick Start
+**Production Cluster**
+
+```bash
+make deploy CONFIG=<helm config file>
+```
+or use Helm directly:
+```bash
+helm upgrade --install aggregator-platform ./aggregator-platform \
+  -n aggregator-platform --create-namespace \
+  --set host=aggregator.example.com \
+  --set auth.server=https:exaple.auth.com \
+  --set auth.clientId=aggregator-id \
+  --set auth.clientSecret=aggregator-secret \
+  --set auth.allowedRegistrationTypes={device_code} \
+```
+For the full Helm configuration details see [documentation](/aggregator-platform/README.md)
+
+**Local development**
 
 ```bash
 # Full setup: Create cluster, build containers, deploy everything
-make init
-make deploy
-
-# Access at http://aggregator.local
+make kind-init
+make configure-etc-hosts HOSTS="aggregator.local"
+make configure-coredns
+make kind-deploy
 ```
 
-## Setup
+## Local Setup
 
 ### 1. Install Dependencies
 
@@ -45,37 +65,59 @@ sudo mv kubectl /usr/local/bin/
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 ```
 
-### 2. Deploy the Aggregator
+### 2. Local cluster setup
+
+#### 2.1 Create and Configure Kind Cluster
 
 ```bash
-# Create Kind cluster and load containers
-make init
-
-# Deploy aggregator with Traefik
-make deploy
+make kind-init
 ```
 
-The aggregator is now accessible at `http://aggregator.local`
+This will:
+- Create local kind cluster
+- Load containers into cluster
+- Generate certificates and keys
+- Start traefik ingress controller
 
-## Configuration
+#### 2.2 Configure hosts and DNS (localhost access)
 
-The Kubernetes ConfigMap at `k8s/app/config.yaml` controls aggregator behavior:
+Configure cluster DNS so it can reach your localhost. Add entries to [/kind/coredns/local-hosts.yaml](/kind/coredns/local-hosts.yaml) and apply:
+```bash
+make configure-coredns
+```
 
-- `log_level`: Logging verbosity (`debug`, `info`, `warn`, `error`).
-- `disable_auth`: Set to `true` to bypass auth checks (testing only).
-- `client_id`: OAuth2 client ID (dereferenceable URL in Solid-OIDC setups).
-- `client_secret`: OAuth2 client secret.
-- `allowed_registration_types`: Comma-separated list of allowed registration types (e.g., `authorization_code,client_credentials`).
-- `provision_client_id`: Client ID used by the provision flow.
-- `provision_client_secret`: Client secret used by the provision flow.
-- `provision_webid`: WebID to provision when using the provision flow.
-- `provision_authorization_server`: UMA authorization server for provisioned aggregators.
+To reach the aggregator-platform and work with cluster DNS entries update /etc/hosts:
+```bash
+make configure-etc-hosts HOSTS="aggregator.local test.local"
+```
 
-### 3. Stop/Clean-up the Deployment
+### 3. Deploy aggregator platform with local configuration
 
 ```bash
-make stop             # Stop services (cluster stays alive)
-make clean            # Delete everything including cluster
+make kind-deploy
+```
+
+This will deploy the aggregator platform inside the local kind cluster using the [local setup helm values](kind/helm-config.yaml)
+
+### 4. Stop/Clean-up
+
+**Remove aggregator platform**
+```bash
+make kind-undeploy
+```
+**Start/stop cluster for resource saving**
+```bash
+make kind-stop        # Pause the cluster
+make kind-start       # Start the paused cluster
+```
+**Remove cluster**
+```bash
+make kind-delete      # Delete cluster and host configuration
+```
+
+**Clean /etc/hosts**
+```bash
+make clean-etc-hosts
 ```
 
 ## Makefile Commands

@@ -13,12 +13,12 @@
 
 deploy:
 	@echo "📄 Deploying aggregator application..."
-	@helm upgrade --install aggregator-server ./aggregator-server -f config.yaml \
+	@helm upgrade --install aggregator-server ./aggregator-server -f $(CONFIG) \
 		-n aggregator-server --create-namespace
 	@kubectl rollout status deployment aggregator-server -n aggregator-server --timeout=120s
 	@echo "✅ Aggregator application successfully deployed!"
 
-kind-deploy: configure-etc-hosts deploy
+kind-deploy: $(MAKE) deploy CONFIG=kind/helm-config.yaml
 
 undeploy:
 	@echo "🧹 Stopping aggregator deployment..."
@@ -31,7 +31,7 @@ undeploy:
 	fi
 	@echo "✅ Aggregator deployment stopped!"
 
-kind-undeploy: clean-etc-hosts undeploy
+kind-undeploy: undeploy
 
 # ------------------------
 # Local cluster setup
@@ -69,7 +69,7 @@ kind-start:
 		kubectl config use-context kind-aggregator; \
 	else \
 		# Cluster does not exist, create new \
-		kind create cluster --name aggregator --config k8s/kind-config.yaml; \
+		kind create cluster --name aggregator --config kind/cluster-config.yaml; \
 		kubectl wait --for=condition=Ready nodes --all --timeout=120s; \
 		kubectl config use-context kind-aggregator; \
 	fi
@@ -194,22 +194,25 @@ containers-all: containers-build containers-load
 
 configure-etc-hosts:
 	@echo "📄 Adding localhost entries..."
-	@grep -qxF "127.0.0.1 aggregator.local" /etc/hosts || \
-		sudo -- sh -c "echo '127.0.0.1 aggregator.local' >> /etc/hosts"
-	@grep -qxF "127.0.0.1 wsl.local" /etc/hosts || \
-		sudo -- sh -c "echo '127.0.0.1 wsl.local' >> /etc/hosts"
+	@for host in $(HOSTS); do \
+		grep -qxF "127.0.0.1 $$host" /etc/hosts || \
+		sudo -- sh -c "echo '127.0.0.1 $$host' >> /etc/hosts"; \
+	done
+	@echo "✅ Hosts added: $(HOSTS)"
 
 clean-etc-hosts:
 	@echo "🧹 Cleaning localhost entries..."
-	@sudo sed -i.bak '/aggregator\.local/d' /etc/hosts || true
-	@sudo sed -i.bak '/wsl\.local/d' /etc/hosts || true
+	@for host in $(HOSTS); do \
+		sudo sed -i.bak "/$$host/d" /etc/hosts || true; \
+	done
+	@echo "✅ Hosts removed: $(HOSTS)"
 
 configure-coredns:
 	@echo "📄 Configuring CoreDNS for .local domains..."
 	@kubectl config use-context kind-aggregator
-	@kubectl apply -f k8s/cluster/coredns/local-hosts.yaml
+	@kubectl apply -f kind/cluster/coredns/local-hosts.yaml
 	@kubectl rollout restart deployment coredns -n kube-system
-	@kubectl wait --for=condition=ready pod -l k8s-app=kube-dns -n kube-system --timeout=60s
+	@kubectl wait --for=condition=ready pod -l kind-app=kube-dns -n kube-system --timeout=60s
 	@echo "✅ CoreDNS configured for .local domains"
 
 # ------------------------
@@ -247,7 +250,7 @@ kind-dashboard:
 	@helm repo update
 	@helm upgrade --install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard \
 		--namespace kubernetes-dashboard --create-namespace
-	@kubectl apply -f k8s/dashboard/admin.yaml
+	@kubectl apply -f kind/dashboard/admin.yaml
 	@kubectl wait --namespace kubernetes-dashboard \
 		--for=condition=ready pod \
 		--selector=app.kubernetes.io/instance=kubernetes-dashboard \

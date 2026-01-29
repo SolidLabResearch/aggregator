@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spec-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aggregator.labels" $ | nindent 4 }}
+  annotations:
+    {{- include "aggregator.annotations" $ | nindent 4 }}
+data:
+  TRANSFORMATION_CATALOG: {{ .Values.spec.transformation_catalog }}
+  SERVICE_COLLECTION: {{ .Values.spec.service_collection }}
+  REGISTRATION: {{ .Values.spec.registration }}
