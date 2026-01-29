@@ -3,7 +3,6 @@ package main
 import (
 	"aggregator/config"
 	"aggregator/model"
-	"aggregator/registration"
 	reg "aggregator/registration"
 	"context"
 	"fmt"
@@ -122,9 +121,14 @@ func main() {
 		model.TransformationCatalog = "/transformations"
 	}
 	model.ServiceCollection = os.Getenv("SERVICE_COLLECTION")
-	if model.TransformationCatalog == "" {
+	if model.ServiceCollection == "" {
 		logrus.Warn("Environment variable SERVICE_COLLECTION was not set. default=/services")
 		model.ServiceCollection = "/services"
+	}
+	model.RegistrationEndpoint = os.Getenv("REGISTRATION")
+	if model.RegistrationEndpoint == "" {
+		logrus.Warn("Environment variable REGISTRATION was not set. default=/registration")
+		model.ServiceCollection = "/registration"
 	}
 
 	// Configure HTTP server
@@ -143,9 +147,6 @@ func main() {
 	config.InitServerDescription(serverMux)
 
 	// Registration endpoint
-	if hasRegistrationType(model.AllowedRegistrationTypes, "device_code") {
-		registration.InitDeviceCodeFlow(serverMux)
-	}
 	initRegistration(serverMux)
 
 	// While we wait for instance to start the aggregator server responds with 503 to config requests
@@ -219,7 +220,7 @@ func main() {
 }
 
 func initRegistration(mux *http.ServeMux) {
-	mux.HandleFunc("/registration", reg.RegistrationHandler)
+	mux.HandleFunc(model.RegistrationEndpoint, reg.RegistrationHandler)
 }
 
 func parseAllowedRegistrationTypes(raw string) []string {

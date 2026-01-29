@@ -28,11 +28,6 @@ type DeviceSession struct {
 var deviceSessions map[string]*DeviceSession
 var sessionsLock sync.Mutex
 
-type DeviceCodeRequest struct {
-	AggregatorID        string `json:"aggregator_id,omitempty"`
-	AuthorizationServer string `json:"authorization_server,omitempty"`
-}
-
 type DeviceCodeResponse struct {
 	DeviceCode      string `json:"device_code"`
 	UserCode        string `json:"user_code"`
@@ -49,20 +44,15 @@ type TokenResponse struct {
 	Scope        string `json:"scope"`
 }
 
-func InitDeviceCodeFlow(mux *http.ServeMux) {
-	mux.HandleFunc("/device_code/start", handleDeviceCodeFlowStart)
-	mux.HandleFunc("/device_code/finalize", handleDeviceCodeFlowFinish)
-	deviceSessions = map[string]*DeviceSession{}
+func handleDeviceCodeFlow(w http.ResponseWriter, req model.RegistrationRequest) {
+	if req.DeviceCode == "" {
+		handleDeviceCodeFlowStart(w, req)
+	} else {
+		handleDeviceCodeFlowFinish(w, req)
+	}
 }
 
-func handleDeviceCodeFlowStart(w http.ResponseWriter, r *http.Request) {
-	// Parse request body
-	var req DeviceCodeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logrus.WithError(err).Warn("Failed to parse device code start request body")
-		http.Error(w, "Invalid request", http.StatusBadRequest)
-		return
-	}
+func handleDeviceCodeFlowStart(w http.ResponseWriter, req model.RegistrationRequest) {
 	logrus.Debugf("Received device code start request: AggregatorID=%s, AuthorizationServer=%s",
 		req.AggregatorID, req.AuthorizationServer)
 
@@ -137,13 +127,9 @@ func handleDeviceCodeFlowStart(w http.ResponseWriter, r *http.Request) {
 	logrus.Debugf("Sent device code start response for DeviceCode=%s", deviceResp.DeviceCode)
 }
 
-func handleDeviceCodeFlowFinish(w http.ResponseWriter, r *http.Request) {
-	// Get device_code from URL query
-	deviceCode := r.URL.Query().Get("device_code")
-	if deviceCode == "" {
-		http.Error(w, "Missing device_code", http.StatusBadRequest)
-		return
-	}
+func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationRequest) {
+	// Get device_code
+	deviceCode := req.DeviceCode
 
 	// Retrieve session metadata
 	sessionsLock.Lock()

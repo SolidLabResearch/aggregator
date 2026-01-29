@@ -32,5 +32,6 @@ var IngressClassName *string
 // Spec configuration
 var TransformationCatalog string
 var ServiceCollection string
+var RegistrationEndpoint string
 
 var LogLevel logrus.Level

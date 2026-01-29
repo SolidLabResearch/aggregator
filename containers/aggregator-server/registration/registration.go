@@ -50,6 +50,8 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch registrationType {
+	case "device_code":
+		handleDeviceCodeFlow(w, req)
 	case "none":
 		handleNoneFlow(w, req)
 	default:
