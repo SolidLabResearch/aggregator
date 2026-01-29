@@ -15,7 +15,7 @@ deploy:
 	@echo "📄 Deploying aggregator application..."
 	@helm upgrade --install aggregator-platform ./aggregator-platform -f $(CONFIG) \
 		-n aggregator-platform --create-namespace
-	@kubectl rollout status deployment aggregator-server -n aggregator-server --timeout=120s
+	@kubectl rollout status deployment aggregator-platform -n aggregator-platform --timeout=120s
 	@echo "✅ Aggregator application successfully deployed!"
 
 kind-deploy: 
