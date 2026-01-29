@@ -38,3 +38,4 @@ ingressUma:
 
 tls:
   enabled: false
+  secretName: aggregator-tls

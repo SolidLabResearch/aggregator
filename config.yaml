@@ -9,6 +9,13 @@ auth:
 
 ingressClassName: aggregator-traefik
 
+tls:
+  enabled: true
+  mode: selfsigned
+  selfSigned:
+    crt: aggregator.crt
+    key: aggregator.key
+
 transformations:
   - name: get
     spec:

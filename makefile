@@ -1,6 +1,6 @@
 .PHONY: kind-init kind-start kind-stop kind-delete \
         containers-build containers-load containers-all \
-        kind-generate-key-pair generate-ingress-key \
+        kind-generate-egress-key-pair kind-generate-ingress-key kind-generate-aggregator-key-pair kind-generate-keys \
         kind-start-traefik \
         kind-deploy deploy kind-undeploy undeploy \
 			  configure-etc-hosts clean-etc-hosts configure-coredns \
@@ -37,12 +37,26 @@ kind-undeploy: clean-etc-hosts undeploy
 # Local cluster setup
 # ------------------------
 
-kind-init: kind-start containers-all kind-generate-key-pair generate-ingress-key kind-start-traefik
+kind-init: kind-start containers-all kind-generate-keys kind-start-traefik
 	@echo "✅ Local Kind cluster and environment initialized!"
 
 kind-delete:
 	@echo "🧹 Deleting Kind cluster..."
 	@kind delete cluster --name aggregator
+	@echo "🧹 Deleting keys..."
+	@rm -f aggregator.crt aggregator.key private_key.pem
+
+	@echo "🔧 Removing self-signed CA from trusted store..."
+	@if [ "$$(uname)" = "Linux" ]; then \
+		sudo rm -f /usr/local/share/ca-certificates/aggregator.crt; \
+		sudo update-ca-certificates --fresh; \
+	elif [ "$$(uname)" = "Darwin" ]; then \
+		sudo security delete-certificate -c "aggregator.local" /Library/Keychains/System.keychain || true; \
+	else \
+		echo "⚠️ Unsupported OS: Please manually remove aggregator.crt from your trusted store"; \
+	fi
+
+	@echo "✅ Cleanup complete"
 
 kind-start:
 	@echo "🚀 Starting Kind cluster..."
@@ -77,7 +91,28 @@ kind-stop:
 # Key generation
 # ------------------------
 
-kind-generate-key-pair:
+kind-generate-aggregator-key-pair:
+	@echo "🔑 Generating tls key pair for aggregator..."
+	@openssl req -x509 -nodes -days 365 \
+  -newkey rsa:2048 \
+  -keyout aggregator.key \
+  -out aggregator.crt \
+  -subj "/CN=aggregator.local" \
+  -addext "subjectAltName=DNS:aggregator.local"
+	@echo "✅ TLS key pair generated"
+	@echo "🔧 Adding self-signed CA to local trusted store..."
+	@if [ "$$(uname)" = "Linux" ]; then \
+		sudo cp aggregator.crt /usr/local/share/ca-certificates/aggregator.crt; \
+		sudo update-ca-certificates; \
+	elif [ "$$(uname)" = "Darwin" ]; then \
+		sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain aggregator.crt; \
+	else \
+		echo "⚠️ Unsupported OS: Please manually add aggregator.crt to your trusted store"; \
+	fi
+	@echo "✅ Self-signed CA installed."
+
+
+kind-generate-egress-key-pair:
 	@echo "🔑 Generating key pair for uma-proxy..."
 	@kubectl config use-context kind-aggregator
 	@openssl genrsa -out uma-proxy.key 4096
@@ -89,7 +124,7 @@ kind-generate-key-pair:
 		--from-file=uma-proxy.key=uma-proxy.key -n default
 	@rm uma-proxy.crt uma-proxy.key
 
-generate-ingress-key:
+kind-generate-ingress-key:
 	@echo "🔑 Generating RSA private key for ingress-uma..."
 	@if [ ! -f private_key.pem ]; then \
 		openssl genrsa -out private_key.pem 2048; \
@@ -97,6 +132,8 @@ generate-ingress-key:
 	else \
 		echo "ℹ️ private_key.pem already exists, skipping"; \
 	fi
+
+generate-keys: kind-generate-aggregator-key-pair kind-generate-egress-key-pair kind-generate-ingress-key
 
 # ------------------------
 # Ingress Controller

@@ -53,22 +53,105 @@
 
     "tls": {
       "type": "object",
+      "required": ["enabled"],
+      "additionalProperties": false,
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "default": false
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["selfsigned", "cert-manager"]
         },
         "secretName": {
           "type": "string",
           "minLength": 1
+        },
+        "selfSigned": {
+          "type": "object",
+          "required": ["crt", "key"],
+          "additionalProperties": false,
+          "properties": {
+            "crt": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Base64 encoded TLS certificate"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Base64 encoded TLS private key"
+            }
+          }
+        },
+        "certManager": {
+          "type": "object",
+          "required": ["issuerName"],
+          "additionalProperties": false,
+          "properties": {
+            "issuerName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "issuerKind": {
+              "type": "string",
+              "enum": ["Issuer", "ClusterIssuer"],
+              "default": "ClusterIssuer"
+            },
+            "issuerGroup": {
+              "type": "string",
+              "default": "cert-manager.io"
+            },
+            "dnsNames": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "duration": {
+              "type": "string"
+            },
+            "renewBefore": {
+              "type": "string"
+            }
+          }
         }
       },
       "allOf": [
         {
           "if": {
-            "properties": { "enabled": { "const": true } }
+            "properties": {
+              "enabled": { "const": true }
+            }
           },
           "then": {
-            "required": ["secretName"]
+            "required": ["mode", "secretName"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "enabled": { "const": true },
+              "mode": { "const": "selfsigned" }
+            }
+          },
+          "then": {
+            "required": ["selfSigned"],
+            "not": { "required": ["certManager"] }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "enabled": { "const": true },
+              "mode": { "const": "cert-manager" }
+            }
+          },
+          "then": {
+            "required": ["certManager"],
+            "not": { "required": ["selfSigned"] }
           }
         }
       ]
