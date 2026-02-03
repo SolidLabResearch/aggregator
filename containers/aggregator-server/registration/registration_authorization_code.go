@@ -236,6 +236,7 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 
 		// Deploy aggregator instance
 		aggregatorId, err := instance.DeployAggregator(
+			tokenResp.IDToken,
 			storedData.TokenEndpoint,
 			tokenResp.AccessToken,
 			tokenResp.RefreshToken,
@@ -256,6 +257,7 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 			"authorization_code",
 			storedData.AuthorizationServer,
 			aggregatorId,
+			tokenResp.IDToken,
 			tokenResp.AccessToken,
 			tokenResp.RefreshToken,
 		)

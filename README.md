@@ -13,6 +13,7 @@ An aggregator using uma: https://github.com/SolidLabResearch/user-managed-access
 ### Local setup
 - Kind (Kubernetes in Docker)
 - Make
+- mkcert
 
 ## Quick Start
 **Production Cluster**
@@ -67,7 +68,16 @@ curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
 ### 2. Local cluster setup
 
-#### 2.1 Create and Configure Kind Cluster
+#### 2.1 Create platform certificates
+
+```bash
+mkcert -install
+mkcert aggregator.local
+# Nodejs fetch will trust the local CA root
+export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"
+```
+
+#### 2.2 Create and Configure Kind Cluster
 
 ```bash
 make kind-init

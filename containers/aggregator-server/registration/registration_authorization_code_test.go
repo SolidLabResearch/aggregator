@@ -86,6 +86,7 @@ func TestHandleAuthorizationCodeFinish_AllowsMissingOptionalTokenFields(t *testi
 		"authorization_code",
 		"https://as.example",
 		"ns-test",
+		"id",
 		"access",
 		"refresh",
 	)
@@ -163,6 +164,7 @@ func TestHandleAuthorizationCodeFinish_UsesStoredClientIDForRedirectValidation(t
 		"authorization_code",
 		"https://as.example",
 		"ns-test",
+		"id",
 		"access",
 		"refresh",
 	)

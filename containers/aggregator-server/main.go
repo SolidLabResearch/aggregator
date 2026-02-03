@@ -37,6 +37,7 @@ func main() {
 	}
 	model.TLSSecret = os.Getenv("TLS_SECRET")
 	if model.TLSSecret != "" {
+		logrus.Info("HTTPS enabled!")
 		model.Protocol = "https"
 	} else {
 		model.Protocol = "http"

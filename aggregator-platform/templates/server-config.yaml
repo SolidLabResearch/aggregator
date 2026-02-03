@@ -14,6 +14,7 @@ data:
   CLIENT_ID: {{ .Values.auth.clientId }}
   AUTH_SERVER: {{ .Values.auth.server }}
   ALLOWED_REGISTRATION_TYPES: {{ join "," .Values.auth.allowedRegistrationTypes | quote }}
+  INGRESS_CLASS_NAME: {{ .Values.ingressClassName }}
   {{- if .Values.tls.enabled }}
   TLS_SECRET: {{ .Values.tls.secretName }}
   {{- end }}

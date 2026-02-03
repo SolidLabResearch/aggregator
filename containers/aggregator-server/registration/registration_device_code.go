@@ -25,7 +25,7 @@ type DeviceSession struct {
 	Interval            time.Duration
 }
 
-var deviceSessions map[string]*DeviceSession
+var deviceSessions = make(map[string]*DeviceSession)
 var sessionsLock sync.Mutex
 
 type DeviceCodeResponse struct {
@@ -39,6 +39,7 @@ type DeviceCodeResponse struct {
 type TokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
+	IDToken      string `json:"id_token"`
 	ExpiresIn    int    `json:"expires_in"`
 	TokenType    string `json:"token_type"`
 	Scope        string `json:"scope"`
@@ -128,6 +129,9 @@ func handleDeviceCodeFlowStart(w http.ResponseWriter, req model.RegistrationRequ
 }
 
 func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationRequest) {
+	logrus.Debugf("Starting device code flow finish: DeviceCode=%s, AggregatorID=%s, AuthorizationServer=%s",
+		req.DeviceCode, req.AggregatorID, req.AuthorizationServer)
+
 	// Get device_code
 	deviceCode := req.DeviceCode
 
@@ -136,12 +140,14 @@ func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationReq
 	session, ok := deviceSessions[deviceCode]
 	sessionsLock.Unlock()
 	if !ok {
+		logrus.Warnf("Invalid or expired device_code: %s", deviceCode)
 		http.Error(w, "Invalid or expired device_code", http.StatusBadRequest)
 		return
 	}
 
 	// Check expiration
 	if time.Now().After(session.ExpiresAt) {
+		logrus.Infof("Device code expired for DeviceCode=%s", deviceCode)
 		http.Error(w, "Device code expired", http.StatusUnauthorized)
 		return
 	}
@@ -153,12 +159,12 @@ func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationReq
 		http.Error(w, "Authorization failed", http.StatusInternalServerError)
 		return
 	}
-
 	if oidcConfig.TokenEndpoint == "" {
 		logrus.Warn("Missing token endpoint in OIDC configuration")
 		http.Error(w, "Authorization failed", http.StatusInternalServerError)
 		return
 	}
+	logrus.Debugf("Using token endpoint: %s", oidcConfig.TokenEndpoint)
 
 	// Poll Authz server token endpoint until authorized
 	var tok TokenResponse
@@ -179,21 +185,26 @@ func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationReq
 
 		if resp.StatusCode == http.StatusOK {
 			if err := json.Unmarshal(body, &tok); err != nil {
-				logrus.WithError(err).Warn("Failed to parse token response")
+				logrus.WithError(err).Warnf("Failed to parse token response: %s", string(body))
 				http.Error(w, "Failed to parse token", http.StatusInternalServerError)
 				return
 			}
+			logrus.Infof("Successfully received access token for DeviceCode=%s", deviceCode)
 			break
 		} else {
 			var errResp map[string]interface{}
-			json.Unmarshal(body, &errResp)
-			if errResp["error"] == "authorization_pending" {
+			_ = json.Unmarshal(body, &errResp)
+			switch errResp["error"] {
+			case "authorization_pending":
+				logrus.Debugf("Authorization pending for DeviceCode=%s, retrying in %s", deviceCode, session.Interval)
 				time.Sleep(session.Interval)
 				continue
-			} else if errResp["error"] == "expired_token" {
+			case "expired_token":
+				logrus.Infof("Device code expired while polling: %s", deviceCode)
 				http.Error(w, "Device code expired", http.StatusUnauthorized)
 				return
-			} else {
+			default:
+				logrus.Warnf("Unexpected token error for DeviceCode=%s: %s", deviceCode, string(body))
 				http.Error(w, fmt.Sprintf("Token request failed: %s", string(body)), http.StatusInternalServerError)
 				return
 			}
@@ -203,10 +214,11 @@ func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationReq
 	// Validate access token
 	userID, err := validateDeviceToken(tok.AccessToken)
 	if err != nil {
-		logrus.WithError(err).Warn("Invalid access token")
+		logrus.WithError(err).Warnf("Invalid access token for DeviceCode=%s", deviceCode)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+	logrus.Debugf("Token validated successfully for user: %s", userID)
 
 	// Deploy aggregator instance
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -214,6 +226,7 @@ func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationReq
 	tokenExpiry := time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
 
 	aggregatorID, err := instance.DeployAggregator(
+		tok.IDToken,
 		oidcConfig.TokenEndpoint,
 		tok.AccessToken,
 		tok.RefreshToken,
@@ -223,10 +236,11 @@ func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationReq
 		ctx,
 	)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to deploy aggregator")
+		logrus.WithError(err).Error("Failed to deploy aggregator instance")
 		http.Error(w, "Failed to deploy aggregator", http.StatusInternalServerError)
 		return
 	}
+	logrus.Infof("Aggregator deployed successfully: AggregatorID=%s", aggregatorID)
 
 	// Create aggregator record
 	inst := createAggregatorInstanceRecord(
@@ -234,6 +248,7 @@ func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationReq
 		"device_code",
 		session.AuthorizationServer,
 		aggregatorID,
+		tok.IDToken,
 		tok.AccessToken,
 		tok.RefreshToken,
 	)
@@ -242,18 +257,25 @@ func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationReq
 	sessionsLock.Lock()
 	delete(deviceSessions, deviceCode)
 	sessionsLock.Unlock()
+	logrus.Debugf("Removed device session for DeviceCode=%s", deviceCode)
 
-	// Respond with aggregator url
+	// Respond with aggregator URL
 	response := model.RegistrationResponse{
 		AggregatorId: inst.AggregatorID,
 		Aggregator:   inst.BaseURL,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		logrus.WithError(err).Error("Failed to write response")
+	} else {
+		logrus.Infof("Device code flow finished successfully for DeviceCode=%s, AggregatorID=%s", deviceCode, inst.AggregatorID)
+	}
 }
 
 func validateDeviceToken(tokenString string) (string, error) {
+	logrus.Debug("Starting token validation")
+
 	// Parse token
 	unverifiedToken, err := jwt.Parse([]byte(tokenString), jwt.WithValidate(false))
 	if err != nil {
@@ -264,19 +286,23 @@ func validateDeviceToken(tokenString string) (string, error) {
 	// Extract issuer
 	iss, ok := unverifiedToken.Get("iss")
 	if !ok {
+		logrus.Warn("Token missing issuer claim")
 		return "", errors.New("token missing issuer claim")
 	}
 	issStr, ok := iss.(string)
 	if !ok {
+		logrus.Warn("Invalid issuer claim format")
 		return "", errors.New("invalid issuer claim")
 	}
+	logrus.Debugf("Token issuer: %s", issStr)
 
-	// Discover JWKS URL dynamically
+	// Discover JWKS URL
 	jwksURL, err := discoverJWKSURL(issStr)
 	if err != nil {
 		logrus.WithError(err).Warnf("Failed to discover JWKS URL for issuer %s", issStr)
 		return "", errors.New("failed to discover JWKS endpoint")
 	}
+	logrus.Debugf("Discovered JWKS URL: %s", jwksURL)
 
 	// Verify token signature
 	verifiedToken, err := verifyTokenWithJWKS(tokenString, jwksURL)
@@ -284,48 +310,48 @@ func validateDeviceToken(tokenString string) (string, error) {
 		logrus.WithError(err).Warn("Token signature verification failed")
 		return "", errors.New("invalid token signature")
 	}
+	logrus.Debug("Token signature verified")
 
 	// Validate standard claims
-	if exp := verifiedToken.Expiration(); !exp.IsZero() {
-		if time.Now().After(exp) {
-			return "", errors.New("token has expired")
-		}
+	if exp := verifiedToken.Expiration(); !exp.IsZero() && time.Now().After(exp) {
+		logrus.Info("Token has expired")
+		return "", errors.New("token has expired")
 	}
-	// Check not-before time
-	if nbf := verifiedToken.NotBefore(); !nbf.IsZero() {
-		if time.Now().Before(nbf) {
-			return "", errors.New("token not yet valid")
-		}
+	if nbf := verifiedToken.NotBefore(); !nbf.IsZero() && time.Now().Before(nbf) {
+		logrus.Info("Token not yet valid")
+		return "", errors.New("token not yet valid")
 	}
 
-	// Verify issuer matches expected realm
+	// Verify issuer
 	if issStr != model.AuthServer {
+		logrus.Warnf("Token issuer mismatch: expected %s, got %s", model.AuthServer, issStr)
 		return "", errors.New("token issuer mismatch")
 	}
 
-	// Verify audience / azp
+	// Verify azp claim
 	azp, ok := verifiedToken.Get("azp")
 	if !ok {
+		logrus.Warn("Token missing azp claim")
 		return "", errors.New("token missing azp claim")
 	}
 	azpStr, ok := azp.(string)
-	if !ok {
-		return "", errors.New("token invalid azp claim")
-	}
-	if azpStr != model.ClientId {
+	if !ok || azpStr != model.ClientId {
+		logrus.Warnf("Token azp mismatch: expected %s, got %v", model.ClientId, azp)
 		return "", errors.New("token not issued for this client")
 	}
 
 	// Verify sub claim exists
 	sub, ok := verifiedToken.Get("sub")
 	if !ok {
+		logrus.Warn("Token missing sub claim")
 		return "", errors.New("token missing sub claim")
 	}
 	subStr, ok := sub.(string)
 	if !ok || subStr == "" {
+		logrus.Warn("Invalid sub claim")
 		return "", errors.New("invalid sub claim")
 	}
 
-	// All checks passed — return the user ID
+	logrus.Debugf("Token validation passed, user ID: %s", subStr)
 	return subStr, nil
 }

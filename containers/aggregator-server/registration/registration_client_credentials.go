@@ -92,6 +92,7 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 
 	// Parse token response
 	var tokenResp struct {
+		IDToken      string `json:"id_token"`
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		TokenType    string `json:"token_type"`
@@ -142,6 +143,7 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 
 		// Deploy aggregator resources
 		aggregatorId, err := instance.DeployAggregator(
+			tokenResp.IDToken,
 			oidcConfig.TokenEndpoint,
 			tokenResp.AccessToken,
 			tokenResp.RefreshToken,
@@ -162,6 +164,7 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 			"client_credentials",
 			req.AuthorizationServer,
 			aggregatorId,
+			tokenResp.IDToken,
 			tokenResp.AccessToken,
 			tokenResp.RefreshToken,
 		)

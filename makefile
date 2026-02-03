@@ -15,13 +15,13 @@ deploy:
 	@echo "📄 Deploying aggregator application..."
 	@helm upgrade --install aggregator-platform ./aggregator-platform -f $(CONFIG) \
 		-n aggregator-platform --create-namespace \
-		--set-file tls.selfSigned.crt=aggregator.crt \
-  	--set-file tls.selfSigned.key=aggregator.key
+		--set-file tls.selfSigned.crt=aggregator.local.pem \
+  	--set-file tls.selfSigned.key=aggregator.local-key.pem
 	@kubectl rollout status deployment aggregator-server -n aggregator-platform --timeout=120s
 	@echo "✅ Aggregator application successfully deployed!"
 
 kind-deploy: 
-	$(MAKE) deploy CONFIG=kind/helm-config.yaml
+	$(MAKE) configure-etc-hosts HOST="aggregator.local wsl.local" deploy CONFIG=kind/helm-config.yaml
 
 undeploy:
 	@echo "🧹 Stopping aggregator deployment..."
@@ -34,7 +34,8 @@ undeploy:
 	fi
 	@echo "✅ Aggregator deployment stopped!"
 
-kind-undeploy: undeploy
+kind-undeploy: 
+	$(MAKE) clean-etc-hosts HOSTS="aggregator.local wsl.local" undeploy
 
 # ------------------------
 # Local cluster setup
@@ -48,17 +49,6 @@ kind-delete:
 	@kind delete cluster --name aggregator
 	@echo "🧹 Deleting keys..."
 	@rm -f aggregator.crt aggregator.key private_key.pem
-
-	@echo "🔧 Removing self-signed CA from trusted store..."
-	@if [ "$$(uname)" = "Linux" ]; then \
-		sudo rm -f /usr/local/share/ca-certificates/aggregator.crt; \
-		sudo update-ca-certificates --fresh; \
-	elif [ "$$(uname)" = "Darwin" ]; then \
-		sudo security delete-certificate -c "aggregator.local" /Library/Keychains/System.keychain || true; \
-	else \
-		echo "⚠️ Unsupported OS: Please manually remove aggregator.crt from your trusted store"; \
-	fi
-
 	@echo "✅ Cleanup complete"
 
 kind-start:
@@ -95,24 +85,10 @@ kind-stop:
 # ------------------------
 
 kind-generate-aggregator-key-pair:
-	@echo "🔑 Generating tls key pair for aggregator..."
-	@openssl req -x509 -nodes -days 365 \
-  -newkey rsa:2048 \
-  -keyout aggregator.key \
-  -out aggregator.crt \
-  -subj "/CN=aggregator.local" \
-  -addext "subjectAltName=DNS:aggregator.local"
-	@echo "✅ TLS key pair generated"
-	@echo "🔧 Adding self-signed CA to local trusted store..."
-	@if [ "$$(uname)" = "Linux" ]; then \
-		sudo cp aggregator.crt /usr/local/share/ca-certificates/aggregator.crt; \
-		sudo update-ca-certificates; \
-	elif [ "$$(uname)" = "Darwin" ]; then \
-		sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain aggregator.crt; \
-	else \
-		echo "⚠️ Unsupported OS: Please manually add aggregator.crt to your trusted store"; \
-	fi
-	@echo "✅ Self-signed CA installed."
+	@mkcert aggregator.local
+
+nodejs-allow-local-CA:
+ 
 
 kind-generate-egress-key-pair:
 	@echo "🔑 Generating key pair for uma-proxy..."
@@ -152,10 +128,17 @@ kind-start-traefik:
 		--set ingressClass.name=aggregator-traefik \
 		--set ports.web.hostPort=80 \
 		--set ports.websecure.hostPort=443 \
-		--set service.type=ClusterIP \
-		--set providers.kubernetesCRD.allowCrossNamespace=true
+		--set service.type=ClusterIP
 	@kubectl rollout status deployment aggregator-traefik -n aggregator-traefik --timeout=180s
 	@echo "✅ Traefik deployment is ready!"
+
+kind-stop-traefik:
+	@echo "🛑 Removing Traefik Ingress Controller..."
+	@kubectl config use-context kind-aggregator
+	@helm uninstall aggregator-traefik -n aggregator-traefik || true
+	@kubectl delete namespace aggregator-traefik --ignore-not-found
+	@echo "✅ Traefik has been removed!"
+
 
 # ------------------------
 # Container targets
@@ -213,7 +196,7 @@ clean-etc-hosts:
 configure-coredns:
 	@echo "📄 Configuring CoreDNS for .local domains..."
 	@kubectl config use-context kind-aggregator
-	@kubectl apply -f kind/cluster/coredns/local-hosts.yaml
+	@kubectl apply -f kind/localhosts.yaml
 	@kubectl rollout restart deployment coredns -n kube-system
 	@kubectl wait --for=condition=ready pod -l kind-app=kube-dns -n kube-system --timeout=60s
 	@echo "✅ CoreDNS configured for .local domains"
@@ -253,7 +236,7 @@ kind-dashboard:
 	@helm repo update
 	@helm upgrade --install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard \
 		--namespace kubernetes-dashboard --create-namespace
-	@kubectl apply -f kind/dashboard/admin.yaml
+	@kubectl apply -f kind/dashboard-admin.yaml
 	@kubectl wait --namespace kubernetes-dashboard \
 		--for=condition=ready pod \
 		--selector=app.kubernetes.io/instance=kubernetes-dashboard \

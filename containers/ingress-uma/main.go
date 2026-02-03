@@ -15,6 +15,7 @@ import (
 
 var ExternalHost = os.Getenv("EXTERNAL_HOST")
 var DisableAuth = strings.ToLower(os.Getenv("DISABLE_AUTH")) == "true"
+var ClientId = os.Getenv("CLIENT_ID")
 
 func init() {
 	// Set up logging
@@ -29,7 +30,7 @@ func init() {
 func main() {
 	mux := http.NewServeMux()
 	// signing.InitSigning(mux, "/keys/private_key.pem", ExternalHost)
-	auth.InitAuth(ExternalHost, DisableAuth)
+	auth.InitAuth(ExternalHost, DisableAuth, ClientId)
 
 	// Synchronize resources (NOT SUPPORTED YET)
 	// err := auth.SynchronizeResources(ASURL)
@@ -38,6 +39,7 @@ func main() {
 	//}
 
 	// UMA endpoints
+	mux.HandleFunc("/register", auth.HandleRegistrationRequest)
 	mux.HandleFunc("/authorize", auth.HandleAuthorizationRequest)
 	mux.HandleFunc("/resources", auth.HandleResourceRequest)
 	mux.HandleFunc("/policies", auth.HandlePolicyRequest)

@@ -12,7 +12,15 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-func ensureDeployment(aggregatorId string, replicas int32, userId string, asURL string, configName string, ctx context.Context) error {
+func ensureDeployment(
+	aggregatorId string,
+	replicas int32,
+	userId string,
+	idToken string,
+	asURL string,
+	configName string,
+	ctx context.Context,
+) error {
 	aggName := "aggregator-" + aggregatorId
 	saName := "sa-" + aggregatorId
 
@@ -162,6 +170,7 @@ func ensureDeployment(aggregatorId string, replicas int32, userId string, asURL 
 								{Name: "ID", Value: aggregatorId},
 								{Name: "NAMESPACE", Value: model.Namespace},
 								{Name: "USER_ID", Value: userId},
+								{Name: "ID_TOKEN", Value: idToken},
 								{Name: "AS_URL", Value: asURL},
 								{Name: "TRANSFORMATION_CATALOG", Value: model.TransformationCatalog},
 								{Name: "SERVICE_COLLECTION", Value: model.ServiceCollection},

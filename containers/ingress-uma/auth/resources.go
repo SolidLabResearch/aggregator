@@ -102,6 +102,11 @@ func createResource(issuer string, resourceId string, scopes []Scope) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	pat, err := getPAT(issuer)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
 
 	action := "Creating"
 	if UmaId != "" {
@@ -109,7 +114,7 @@ func createResource(issuer string, resourceId string, scopes []Scope) error {
 	}
 	logrus.WithFields(logrus.Fields{"action": action, "resource_id": resourceId, "endpoint": endpoint}).Info("Processing UMA resource registration")
 
-	res, err := DoAuthorizedRequest(req, issuer)
+	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err, "resource_id": resourceId, "endpoint": endpoint}).Error("Error while making UMA request")
 		return err
@@ -205,8 +210,13 @@ func deleteResource(issuer string, resourceId string) error {
 
 	// Set headers
 	req.Header.Set("Accept", "application/json")
+	pat, err := getPAT(issuer)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
 
-	res, err := DoAuthorizedRequest(req, issuer)
+	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send signed DELETE request for resource %s: %w", resourceId, err)
 	}
@@ -295,13 +305,18 @@ func SynchronizeResources(issuer string) error {
 		return fmt.Errorf("failed to create UMA resource list request: %w", err)
 	}
 	listReq.Header.Set("Accept", "application/json")
+	pat, err := getPAT(issuer)
+	if err != nil {
+		return err
+	}
+	listReq.Header.Set("Authorization", "Bearer "+pat)
 
 	logrus.WithFields(logrus.Fields{
 		"issuer":   issuer,
 		"endpoint": config.ResourceRegistrationEndpoint,
 	}).Debug("Fetching UMA resource list")
 
-	listRes, err := DoAuthorizedRequest(listReq, issuer)
+	listRes, err := http.DefaultClient.Do(listReq)
 	if err != nil {
 		return fmt.Errorf("failed to send signed UMA resource list request: %w", err)
 	}
@@ -333,8 +348,13 @@ func SynchronizeResources(issuer string) error {
 			continue
 		}
 		detailReq.Header.Set("Accept", "application/json")
+		pat, err := getPAT(issuer)
+		if err != nil {
+			return err
+		}
+		detailReq.Header.Set("Authorization", "Bearer "+pat)
 
-		detailRes, err := DoAuthorizedRequest(detailReq, issuer)
+		detailRes, err := http.DefaultClient.Do(detailReq)
 		if err != nil {
 			logrus.WithError(err).WithField("resource_id", resourceID).Debug("Failed to send UMA resource detail request")
 			continue

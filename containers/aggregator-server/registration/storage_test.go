@@ -25,6 +25,7 @@ func TestCreateAggregatorInstanceRecord_BaseURLUsesNamespace(t *testing.T) {
 		namespace,
 		"",
 		"",
+		"",
 	)
 	t.Cleanup(func() {
 		_ = deleteAggregatorInstance(instance.AggregatorID)

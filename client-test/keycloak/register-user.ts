@@ -1,6 +1,6 @@
 import readline from "readline";
 
-const REGISTRATION = "http://aggregator.local/registration";
+const REGISTRATION = "https://aggregator.local/registration";
 const AS_URL = "http://wsl.local:4000/uma";
 
 function waitForEnter() {
@@ -22,8 +22,8 @@ async function main() {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      registration_type: "device_code"
-      //authorization_server: AS_URL,
+      registration_type: "device_code",
+      authorization_server: AS_URL,
     }),
   });
 

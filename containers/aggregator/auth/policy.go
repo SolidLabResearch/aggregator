@@ -19,6 +19,7 @@ func DefinePolicy(resourceId string, userId string, issuer string, scopes []mode
 
 	body := map[string]interface{}{
 		"issuer":      issuer,
+		"id_token":    model.Owner.IDToken,
 		"resource_id": resourceId,
 		"scopes":      scopes,
 	}

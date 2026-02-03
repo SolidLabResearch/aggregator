@@ -25,10 +25,12 @@ type UmaClaims struct {
 
 var ExternalHost string
 var DisableAuth bool
+var AggClientId string
 
-func InitAuth(extHost string, disbaleAuth bool) {
+func InitAuth(extHost string, disbaleAuth bool, clientId string) {
 	ExternalHost = extHost
 	DisableAuth = disbaleAuth
+	AggClientId = clientId
 }
 
 func HandleAuthorizationRequest(w http.ResponseWriter, r *http.Request) {
@@ -182,8 +184,13 @@ func fetchTicket(asUrl string, permissions map[string][]Scope) (string, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	pat, err := getPAT(asUrl)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
 
-	resp, err := DoAuthorizedRequest(req, asUrl)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("error while authorizing ticket request: %w", err)
 	}

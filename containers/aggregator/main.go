@@ -61,12 +61,17 @@ func main() {
 	if id == "" {
 		logrus.Fatal("Environment variable USER_ID must be set")
 	}
+	token := os.Getenv("ID_TOKEN")
+	if token == "" {
+		logrus.Fatal("Environment variable ID_TOKEN must be set")
+	}
 	asUrl := os.Getenv("AS_URL")
 	if asUrl == "" {
 		logrus.Warn("Environment variable AS_URL is empty; UMA registration is disabled")
 	}
 	model.Owner = model.User{
 		UserId:         id,
+		IDToken:        token,
 		AuthzServerURL: asUrl,
 	}
 

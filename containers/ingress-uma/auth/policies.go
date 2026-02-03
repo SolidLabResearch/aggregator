@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/google/uuid"
@@ -17,9 +18,6 @@ var ExPrefix = "http://example.org/"
 var OdrlPrefix = "http://www.w3.org/ns/odrl/2/"
 var idPrefix = "http://example.com/id/"
 var RdfType = rdfgo.NewNamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
-
-// TODO: Create web id for aggregator
-var DummyWebID = "https://aggregator.local/profile/card#me"
 
 // Temp public solution
 var PublicId = "urn:solidlab:uma:id:anonymous"
@@ -36,6 +34,7 @@ func HandlePolicyRequest(w http.ResponseWriter, r *http.Request) {
 		ResourceID string   `json:"resource_id"`
 		Scopes     []string `json:"scopes"`
 		UserID     string   `json:"user_id"`
+		IDToken    string   `json:"id_token"`
 		ClientIDs  []string `json:"client_ids"`
 	}
 
@@ -67,7 +66,7 @@ func HandlePolicyRequest(w http.ResponseWriter, r *http.Request) {
 		clients = []string{}
 	}
 
-	if err := createPolicy(reqData.Issuer, reqData.ResourceID, scopes, userID, clients); err != nil {
+	if err := createPolicy(reqData.Issuer, reqData.ResourceID, scopes, userID, reqData.IDToken, clients); err != nil {
 		logrus.WithError(err).Error("Failed to create UMA policy")
 		http.Error(w, "Failed to create policy", http.StatusInternalServerError)
 		return
@@ -76,7 +75,7 @@ func HandlePolicyRequest(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-func createPolicy(issuer string, resourceId string, scopes []Scope, userId string, clients []string) error {
+func createPolicy(issuer string, resourceId string, scopes []Scope, userId string, idToken string, clients []string) error {
 	// Policy URI
 	policyUri := issuer + "/policies"
 
@@ -116,13 +115,13 @@ func createPolicy(issuer string, resourceId string, scopes []Scope, userId strin
 	}
 
 	req.Header.Set("Content-Type", "application/n-quads")
-	req.Header.Set("Authorization", DummyWebID)
+	req.Header.Set("Authorization", "Bearer "+idToken)
 	logrus.WithFields(logrus.Fields{
 		"policy_uri": policyUri,
 		"policy":     buf.String(),
 	}).Infof(`Requesting policy for %s`, resourceId)
 
-	resp, err := DoAuthorizedRequest(req, issuer)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("policy request failed: %w", err)
 	}
@@ -156,7 +155,7 @@ func defineClientConstraint(store rdfgo.Store, client string, permissionUri rdfg
 	store.AddQuadFromTerms(
 		constraintUri,
 		rdfgo.NewNamedNode(OdrlPrefix+"rightOperand"),
-		rdfgo.NewNamedNode(idPrefix+client),
+		toValidId(client),
 		nil,
 	)
 
@@ -204,7 +203,7 @@ func definePermission(store rdfgo.Store, umaId string, scopes []Scope, userId st
 	store.AddQuadFromTerms(
 		permissionUri,
 		rdfgo.NewNamedNode(OdrlPrefix+"assignee"),
-		rdfgo.NewNamedNode(idPrefix+userId),
+		toValidId(userId),
 		nil,
 	)
 
@@ -212,7 +211,7 @@ func definePermission(store rdfgo.Store, umaId string, scopes []Scope, userId st
 	store.AddQuadFromTerms(
 		permissionUri,
 		rdfgo.NewNamedNode(OdrlPrefix+"assigner"),
-		rdfgo.NewNamedNode(DummyWebID), // Assigner is the aggregator
+		toValidId(userId),
 		nil,
 	)
 
@@ -242,4 +241,27 @@ func definePolicy(store rdfgo.Store, permissionUri rdfgo.INamedNode) {
 		permissionUri,
 		nil,
 	)
+}
+
+func toValidId(id string) rdfgo.INamedNode {
+	parsed, err := url.Parse(id)
+
+	// A valid absolute URI must:
+	// - parse without error
+	// - have a scheme (http, https, urn, etc.)
+	// - have a host (for http/https)
+	if err == nil && parsed.Scheme != "" {
+		// For HTTP-style URIs, also require host
+		if parsed.Scheme == "http" || parsed.Scheme == "https" {
+			if parsed.Host != "" {
+				return rdfgo.NewNamedNode(id)
+			}
+		} else {
+			// For non-http schemes (urn, did, etc.)
+			return rdfgo.NewNamedNode(id)
+		}
+	}
+
+	// Otherwise treat as local ID and prefix it
+	return rdfgo.NewNamedNode(idPrefix + strings.TrimSpace(id))
 }

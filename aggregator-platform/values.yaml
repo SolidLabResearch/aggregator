@@ -40,3 +40,9 @@ ingressUma:
 tls:
   enabled: false
   secretName: aggregator-tls
+  mode: ""
+  selfSigned:
+    crt: ""
+    key: ""
+
+ingressClassName: ""

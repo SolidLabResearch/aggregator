@@ -2,8 +2,11 @@ package instance
 
 import (
 	"aggregator/model"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 )
 
 func DeployAggregator(
+	idToken string,
 	tokenEndpoint string,
 	accessToken string,
 	refreshToken string,
@@ -27,6 +31,8 @@ func DeployAggregator(
 	resolvedOwner := resolveOwnerID(ownerID, aggregatorId)
 
 	if authzServerURL != "" {
+		registerAsResourceServer(idToken, authzServerURL)
+		// Deploy egress for the aggregator
 		if err := ensureEgress(aggregatorId, tokenEndpoint, accessToken, refreshToken, accessTokenExpiry, ctx); err != nil {
 			return "", fmt.Errorf("failed to deploy uma egress for %s: %w", aggregatorId, err)
 		}
@@ -47,7 +53,7 @@ func DeployAggregator(
 	}
 	logrus.Infof("Ensured configuration for %s", aggregatorId)
 
-	if err := ensureDeployment(aggregatorId, 1, resolvedOwner, authzServerURL, cmName, ctx); err != nil {
+	if err := ensureDeployment(aggregatorId, 1, resolvedOwner, idToken, authzServerURL, cmName, ctx); err != nil {
 		return "", fmt.Errorf("failed to deploy aggregator %s: %w", aggregatorId, err)
 	}
 	logrus.Infof("Deployed aggregator %s", aggregatorId)
@@ -271,4 +277,41 @@ func ensureConfigMap(aggregatorId string, name string, data map[string]string, c
 		lastErr = err
 	}
 	return cmName, lastErr
+}
+
+// Register the aggregator server as resource server
+func registerAsResourceServer(idToken string, authzServerURL string) error {
+	// Register the aggregator as RS at the AS
+	payload := map[string]string{
+		"id_token": idToken,
+		"as_url":   authzServerURL,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		logrus.Errorf("Failed to marshal registration payload: %v", err)
+		return err
+	}
+
+	registrationURL := fmt.Sprintf("http://ingress-uma.%s.svc.cluster.local:8080/register", model.Namespace)
+	req, err := http.NewRequest("POST", registrationURL, bytes.NewBuffer(body))
+	if err != nil {
+		logrus.Errorf("Failed to create registration request: %v", err)
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		logrus.Errorf("Failed to send registration request: %v", err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		logrus.Errorf("Registration failed with status %d", resp.StatusCode)
+		return fmt.Errorf("registration failed: status %d", resp.StatusCode)
+	}
+
+	logrus.Info("Aggregator registered successfully as RS")
+	return nil
 }

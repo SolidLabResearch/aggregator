@@ -42,3 +42,5 @@ spec:
               value: "{{ .Values.host }}"
             - name: DISABLE_AUTH
               value: "{{ .Values.ingressUma.disableAuth }}"
+            - name: CLIENT_ID
+              value: "{{ .Values.auth.clientId }}"

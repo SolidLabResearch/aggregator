@@ -111,6 +111,7 @@ func createAggregatorInstanceRecord(
 	registrationType string,
 	authorizationServer string,
 	aggregatorId string,
+	idToken string,
 	accessToken string,
 	refreshToken string,
 ) *model.AggregatorInstance {
@@ -124,6 +125,7 @@ func createAggregatorInstanceRecord(
 		AuthorizationServer: authorizationServer,
 		Namespace:           aggregatorId,
 		BaseURL:             fmt.Sprintf("%s://%s/%s", model.Protocol, model.ExternalHost, aggregatorId),
+		IDToken:             idToken,
 		AccessToken:         accessToken,
 		RefreshToken:        refreshToken,
 		CreatedAt:           now,

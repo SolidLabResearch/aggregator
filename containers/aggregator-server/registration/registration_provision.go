@@ -85,6 +85,7 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 	}
 
 	var tokenResp struct {
+		IDToken      string `json:"id_token"`
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		TokenType    string `json:"token_type"`
@@ -112,6 +113,7 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 	}
 
 	aggregatorId, err := instance.DeployAggregator(
+		tokenResp.IDToken,
 		oidcConfig.TokenEndpoint,
 		tokenResp.AccessToken,
 		tokenResp.RefreshToken,
@@ -131,6 +133,7 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 		"provision",
 		authorizationServer,
 		aggregatorId,
+		"",
 		tokenResp.AccessToken,
 		tokenResp.RefreshToken,
 	)
