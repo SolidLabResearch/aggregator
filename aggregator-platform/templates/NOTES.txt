@@ -25,9 +25,8 @@ Manage transformations:
 {{- end }}
 
 ----------------------------------------------------------
-Registration endpoints:
-
 Create aggregators at:
+
 {{- if .Values.tls.enabled }}
 - https://{{ .Values.host }}{{ .Values.spec.registration }}
 {{- else }}
