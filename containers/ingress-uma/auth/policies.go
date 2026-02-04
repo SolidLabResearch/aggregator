@@ -30,11 +30,9 @@ func HandlePolicyRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var reqData struct {
-		Issuer     string   `json:"issuer"`
+		ASUrl      string   `json:"as_url"`
 		ResourceID string   `json:"resource_id"`
 		Scopes     []string `json:"scopes"`
-		UserID     string   `json:"user_id"`
-		IDToken    string   `json:"id_token"`
 		ClientIDs  []string `json:"client_ids"`
 	}
 
@@ -48,25 +46,18 @@ func HandlePolicyRequest(w http.ResponseWriter, r *http.Request) {
 	scopes := stringsToScopes(reqData.Scopes)
 
 	logrus.WithFields(logrus.Fields{
-		"issuer":      reqData.Issuer,
+		"issuer":      reqData.ASUrl,
 		"resource_id": reqData.ResourceID,
 		"scopes":      reqData.Scopes,
-		"user_id":     reqData.UserID,
 		"client_ids":  reqData.ClientIDs,
 	}).Info("Received policy request")
-
-	// Decide user and clients for the policy
-	userID := reqData.UserID
-	if strings.TrimSpace(userID) == "" {
-		userID = PublicId
-	}
 
 	clients := reqData.ClientIDs
 	if clients == nil {
 		clients = []string{}
 	}
 
-	if err := createPolicy(reqData.Issuer, reqData.ResourceID, scopes, userID, reqData.IDToken, clients); err != nil {
+	if err := createPolicy(reqData.ASUrl, reqData.ResourceID, scopes, clients); err != nil {
 		logrus.WithError(err).Error("Failed to create UMA policy")
 		http.Error(w, "Failed to create policy", http.StatusInternalServerError)
 		return
@@ -75,24 +66,24 @@ func HandlePolicyRequest(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-func createPolicy(issuer string, resourceId string, scopes []Scope, userId string, idToken string, clients []string) error {
+func createPolicy(asUrl string, resourceId string, scopes []Scope, clients []string) error {
 	// Policy URI
-	policyUri := issuer + "/policies"
+	policyUri := asUrl + "/policies"
 
 	// Get UMA ID
-	UmaId := idIndex[resourceId]
-	if UmaId == "" {
+	data, ok := idIndex[resourceId]
+	if !ok {
 		return fmt.Errorf("resource ID %s not registered, cannot create policy", resourceId)
 	}
 
 	// Define policies
 	policyStore := rdfgo.NewStore()
 	if len(clients) == 0 {
-		permissionUri := definePermission(policyStore, UmaId, scopes, userId)
+		permissionUri := definePermission(policyStore, data.UmaID, scopes, data.UserID)
 		definePolicy(policyStore, permissionUri)
 	} else {
 		for _, clientId := range clients {
-			permissionUri := definePermission(policyStore, UmaId, scopes, userId)
+			permissionUri := definePermission(policyStore, data.UmaID, scopes, data.UserID)
 			defineClientConstraint(policyStore, clientId, permissionUri)
 			definePolicy(policyStore, permissionUri)
 		}
@@ -114,6 +105,7 @@ func createPolicy(issuer string, resourceId string, scopes []Scope, userId strin
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
+	idToken := userCredentials[data.UserID]
 	req.Header.Set("Content-Type", "application/n-quads")
 	req.Header.Set("Authorization", "Bearer "+idToken)
 	logrus.WithFields(logrus.Fields{

@@ -29,10 +29,10 @@ func InitTransformationCatalog(mux *http.ServeMux) error {
 
 	// Register catalog resource and policy
 	fullURL := model.BaseUrl + model.TransformationCatalog
-	if err := auth.RegisterResource(fullURL, model.Owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
+	if err := auth.RegisterResource(fullURL, []model.Scope{model.Read}); err != nil {
 		return fmt.Errorf("failed to register resource %s: %w", fullURL, err)
 	}
-	if err := auth.DefinePolicy(fullURL, model.Owner.UserId, model.Owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
+	if err := auth.DefinePolicy(fullURL, []model.Scope{model.Read}); err != nil {
 		return fmt.Errorf("failed to define policy for resource %s: %w", fullURL, err)
 	}
 

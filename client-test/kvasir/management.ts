@@ -35,7 +35,7 @@ export class KvasirManagement {
         method: "POST",
         headers: {
           "Content-Type": "text/turtle",
-          "Authorization": assigner,
+          "Authorization": `Bearer ${await this.auth.getIdToken()}`,
         },
         body: turtle,
       });

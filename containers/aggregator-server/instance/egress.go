@@ -57,7 +57,7 @@ func buildTokensPayload(accessToken string, refreshToken string, accessTokenExpi
 }
 
 func ensureEgressDeployment(aggregatorId string, replicas int32, tokenEndpoint string, configName string, ctx context.Context) error {
-	egressName := "egress-uma" + aggregatorId
+	egressName := "egress-uma-" + aggregatorId
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      egressName,
@@ -144,7 +144,7 @@ func ensureEgressDeployment(aggregatorId string, replicas int32, tokenEndpoint s
 }
 
 func ensureEgressService(aggregatorId string, ctx context.Context) error {
-	egressName := "egress-uma" + aggregatorId
+	egressName := "egress-uma-" + aggregatorId
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      egressName,

@@ -23,7 +23,7 @@ async function main() {
       method: "DELETE",
       headers: {
         "Content-Type": "application/ld+json",
-        "Authorization": `Bearer ${await auth.createClaimToken("")}`
+        "Authorization": `Bearer ${await auth.getAccessToken()}`
       },
     });
 

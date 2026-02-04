@@ -18,7 +18,7 @@
   "include": [
     "*.ts", 
     "solid/*.ts", 
-    "keycloak/*.ts",
+    "pacsoi/*.ts",
     "kvasir/*.ts"
   ],
   "exclude": [

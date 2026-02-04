@@ -22,10 +22,10 @@ type AggregatorDescription struct {
 }
 
 func InitAggregatorDescription(mux *http.ServeMux) error {
-	if err := auth.RegisterResource(model.BaseUrl, model.Owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
+	if err := auth.RegisterResource(model.BaseUrl, []model.Scope{model.Read}); err != nil {
 		return fmt.Errorf("failed to register resource %s: %w", model.BaseUrl, err)
 	}
-	if err := auth.DefinePolicy(model.BaseUrl, model.Owner.UserId, model.Owner.AuthzServerURL, []model.Scope{model.Read}); err != nil {
+	if err := auth.DefinePolicy(model.BaseUrl, []model.Scope{model.Read}); err != nil {
 		return fmt.Errorf("failed to define policy for resource %s: %w", model.BaseUrl, err)
 	}
 

@@ -10,8 +10,13 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-var idIndex = make(map[string]string)
-var issuerIndex = make(map[string]string)
+type ResourceData struct {
+	UmaID  string
+	UserID string
+}
+
+var idIndex = make(map[string]ResourceData)
+var asIndex = make(map[string]string)
 
 func HandleResourceRequest(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -26,7 +31,8 @@ func HandleResourceRequest(w http.ResponseWriter, r *http.Request) {
 
 func handlePostResource(w http.ResponseWriter, r *http.Request) {
 	var reqData struct {
-		Issuer     string   `json:"issuer"`
+		UserID     string   `json:"user_id"`
+		ASUrl      string   `json:"as_url"`
 		ResourceID string   `json:"resource_id"`
 		Scopes     []string `json:"scopes"`
 	}
@@ -39,20 +45,25 @@ func handlePostResource(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	// Basic validation
-	if reqData.Issuer == "" || reqData.ResourceID == "" || len(reqData.Scopes) == 0 {
-		http.Error(w, "Missing required fields: issuer, resource_id, scopes", http.StatusBadRequest)
+	if reqData.UserID == "" || reqData.ASUrl == "" || reqData.ResourceID == "" || len(reqData.Scopes) == 0 {
+		http.Error(w, "Missing required fields: user_id, as_url, resource_id, scopes", http.StatusBadRequest)
 		return
 	}
 
 	scopes := stringsToScopes(reqData.Scopes)
 
 	logrus.WithFields(logrus.Fields{
-		"issuer":      reqData.Issuer,
+		"user_id":     reqData.UserID,
+		"as_url":      reqData.ASUrl,
 		"resource_id": reqData.ResourceID,
 		"scopes":      reqData.Scopes,
 	}).Info("Received resource registration request")
 
-	if err := createResource(reqData.Issuer, reqData.ResourceID, scopes); err != nil {
+	reg := Registration{
+		UserID:      reqData.UserID,
+		AuthzServer: reqData.ASUrl,
+	}
+	if err := createResource(reg, reqData.ResourceID, scopes); err != nil {
 		logrus.WithError(err).Error("Failed to create UMA resource")
 		http.Error(w, "Failed to register resource", http.StatusInternalServerError)
 		return
@@ -61,20 +72,20 @@ func handlePostResource(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-func createResource(issuer string, resourceId string, scopes []Scope) error {
+func createResource(reg Registration, resourceId string, scopes []Scope) error {
 	// Fetch UMA configuration
-	config, err := fetchUmaConfig(issuer)
+	config, err := fetchUmaConfig(reg.AuthzServer)
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("Error while retrieving UMA configuration")
 		return err
 	}
 
 	// Check if resource already registered
-	UmaId := idIndex[resourceId]
+	data, update := idIndex[resourceId]
 	endpoint := config.ResourceRegistrationEndpoint
 	method := "POST"
-	if UmaId != "" {
-		endpoint = endpoint + "/" + UmaId
+	if update {
+		endpoint = endpoint + "/" + data.UmaID
 		method = "PUT"
 	}
 
@@ -102,14 +113,14 @@ func createResource(issuer string, resourceId string, scopes []Scope) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	pat, err := getPAT(issuer)
+	pat, err := getPAT(reg)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+pat)
 
 	action := "Creating"
-	if UmaId != "" {
+	if update {
 		action = "Updating"
 	}
 	logrus.WithFields(logrus.Fields{"action": action, "resource_id": resourceId, "endpoint": endpoint}).Info("Processing UMA resource registration")
@@ -126,7 +137,7 @@ func createResource(issuer string, resourceId string, scopes []Scope) error {
 		return err
 	}
 
-	if UmaId != "" {
+	if update {
 		if res.StatusCode != http.StatusOK {
 			logrus.WithFields(logrus.Fields{"status": res.Status, "body": string(body), "resource_id": resourceId}).Error("Resource update request failed")
 			return nil
@@ -147,8 +158,8 @@ func createResource(issuer string, resourceId string, scopes []Scope) error {
 			logrus.WithFields(logrus.Fields{"resource_id": resourceId}).Warn("Unexpected UMA response; no UMA id received")
 			return nil
 		}
-		idIndex[resourceId] = responseData.ID
-		issuerIndex[resourceId] = issuer
+		idIndex[resourceId] = ResourceData{UmaID: responseData.ID, UserID: reg.UserID}
+		asIndex[resourceId] = reg.AuthzServer
 		logrus.WithFields(logrus.Fields{"resource_id": resourceId, "uma_id": responseData.ID}).Info("Registered resource with UMA")
 	}
 	return nil
@@ -159,7 +170,6 @@ func handleDeleteResource(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	var reqData struct {
-		Issuer     string `json:"issuer"`
 		ResourceID string `json:"resource_id"`
 	}
 
@@ -169,17 +179,16 @@ func handleDeleteResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if reqData.Issuer == "" || reqData.ResourceID == "" {
-		http.Error(w, "Missing required fields: issuer, resource_id", http.StatusBadRequest)
+	if reqData.ResourceID == "" {
+		http.Error(w, "Missing required fields: user_id, as_url, resource_id", http.StatusBadRequest)
 		return
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"issuer":      reqData.Issuer,
 		"resource_id": reqData.ResourceID,
 	}).Info("Received resource deletion request")
 
-	if err := deleteResource(reqData.Issuer, reqData.ResourceID); err != nil {
+	if err := deleteResource(reqData.ResourceID); err != nil {
 		logrus.WithError(err).Debug("Failed to delete UMA resource")
 		http.Error(w, fmt.Sprintf("Failed to delete resource: %v", err), http.StatusInternalServerError)
 		return
@@ -189,19 +198,24 @@ func handleDeleteResource(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteResource deletes a single resource from the authorization server and updates local state
-func deleteResource(issuer string, resourceId string) error {
-	umaID, ok := idIndex[resourceId]
+func deleteResource(resourceId string) error {
+	data, ok := idIndex[resourceId]
 	if !ok {
 		// Resource not registered / already deleted
 		return fmt.Errorf("resource %s not found locally", resourceId)
 	}
+	asUrl, ok := asIndex[resourceId]
+	if !ok {
+		// Resource not registered at authz server
+		return fmt.Errorf("resource %s not registered at authz server", resourceId)
+	}
 
-	config, err := fetchUmaConfig(issuer)
+	config, err := fetchUmaConfig(asUrl)
 	if err != nil {
 		return fmt.Errorf("failed to fetch UMA config: %w", err)
 	}
 
-	deleteURL := fmt.Sprintf("%s%s", config.ResourceRegistrationEndpoint, umaID)
+	deleteURL := fmt.Sprintf("%s%s", config.ResourceRegistrationEndpoint, data.UmaID)
 
 	req, err := http.NewRequest("DELETE", deleteURL, nil)
 	if err != nil {
@@ -209,8 +223,12 @@ func deleteResource(issuer string, resourceId string) error {
 	}
 
 	// Set headers
+	reg := Registration{
+		UserID:      data.UserID,
+		AuthzServer: asUrl,
+	}
 	req.Header.Set("Accept", "application/json")
-	pat, err := getPAT(issuer)
+	pat, err := getPAT(reg)
 	if err != nil {
 		return err
 	}
@@ -226,10 +244,10 @@ func deleteResource(issuer string, resourceId string) error {
 	if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusNoContent || res.StatusCode == http.StatusResetContent {
 		// Remove local references
 		delete(idIndex, resourceId)
-		delete(issuerIndex, resourceId)
+		delete(asIndex, resourceId)
 		logrus.WithFields(logrus.Fields{
 			"resource": resourceId,
-			"uma_id":   umaID,
+			"uma_id":   data.UmaID,
 		}).Info("Deleted UMA resource successfully")
 		return nil
 	}
@@ -239,7 +257,7 @@ func deleteResource(issuer string, resourceId string) error {
 		body, _ := io.ReadAll(res.Body)
 		logrus.WithFields(logrus.Fields{
 			"resource": resourceId,
-			"uma_id":   umaID,
+			"uma_id":   data.UmaID,
 			"status":   res.Status,
 			"body":     string(body),
 		}).Debug("Failed to delete UMA resource: non-empty collections")
@@ -263,18 +281,18 @@ func DeleteResources() error {
 	sem := make(chan struct{}, concurrency)
 
 	// Launch deletion goroutines
-	for resourceID, issuer := range issuerIndex {
+	for resourceID, asUrl := range asIndex {
 		sem <- struct{}{} // acquire semaphore
-		go func(res, iss string) {
+		go func(res, asUrl string) {
 			defer func() { <-sem }() // release semaphore
-			err := deleteResource(iss, res)
+			err := deleteResource(resourceID)
 			results <- deletionResult{resourceID: res, err: err}
-		}(resourceID, issuer)
+		}(resourceID, asUrl)
 	}
 
 	// Collect results
 	var errs []error
-	for i := 0; i < len(issuerIndex); i++ {
+	for i := 0; i < len(asIndex); i++ {
 		r := <-results
 		if r.err != nil {
 			logrus.WithFields(logrus.Fields{
@@ -287,117 +305,5 @@ func DeleteResources() error {
 	if len(errs) > 0 {
 		return fmt.Errorf("failed to delete %d resources; see debug logs for details", len(errs))
 	}
-	return nil
-}
-
-func SynchronizeResources(issuer string) error {
-	logrus.Infof("Synchronizing resources with %s", issuer)
-
-	// Fetch UMA configuration (to find the ResourceRegistrationEndpoint)
-	config, err := fetchUmaConfig(issuer)
-	if err != nil {
-		return fmt.Errorf("failed to retrieve UMA configuration: %w", err)
-	}
-
-	// GET /resources — list of registered resource IDs
-	listReq, err := http.NewRequest("GET", config.ResourceRegistrationEndpoint, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create UMA resource list request: %w", err)
-	}
-	listReq.Header.Set("Accept", "application/json")
-	pat, err := getPAT(issuer)
-	if err != nil {
-		return err
-	}
-	listReq.Header.Set("Authorization", "Bearer "+pat)
-
-	logrus.WithFields(logrus.Fields{
-		"issuer":   issuer,
-		"endpoint": config.ResourceRegistrationEndpoint,
-	}).Debug("Fetching UMA resource list")
-
-	listRes, err := http.DefaultClient.Do(listReq)
-	if err != nil {
-		return fmt.Errorf("failed to send signed UMA resource list request: %w", err)
-	}
-	defer listRes.Body.Close()
-
-	if listRes.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(listRes.Body)
-		return fmt.Errorf("UMA resource list request failed with status %s: %s", listRes.Status, string(body))
-	}
-
-	// Parse list of UMA resource IDs
-	var resourceIDs []string
-	if err := json.NewDecoder(listRes.Body).Decode(&resourceIDs); err != nil {
-		return fmt.Errorf("failed to parse UMA resource list: %w", err)
-	}
-
-	logrus.WithFields(logrus.Fields{
-		"issuer":       issuer,
-		"numResources": len(resourceIDs),
-	}).Info("Received UMA resource list")
-
-	// Loop through each UMA resource ID and fetch details
-	for _, resourceID := range resourceIDs {
-		detailURL := config.ResourceRegistrationEndpoint + "/" + resourceID
-
-		detailReq, err := http.NewRequest("GET", detailURL, nil)
-		if err != nil {
-			logrus.WithError(err).WithField("resource_id", resourceID).Debug("Failed to create UMA resource detail request")
-			continue
-		}
-		detailReq.Header.Set("Accept", "application/json")
-		pat, err := getPAT(issuer)
-		if err != nil {
-			return err
-		}
-		detailReq.Header.Set("Authorization", "Bearer "+pat)
-
-		detailRes, err := http.DefaultClient.Do(detailReq)
-		if err != nil {
-			logrus.WithError(err).WithField("resource_id", resourceID).Debug("Failed to send UMA resource detail request")
-			continue
-		}
-		defer detailRes.Body.Close()
-
-		if detailRes.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(detailRes.Body)
-			logrus.WithFields(logrus.Fields{
-				"resource_id": resourceID,
-				"status":      detailRes.Status,
-				"body":        string(body),
-			}).Debug("UMA resource detail request failed")
-			continue
-		}
-
-		// Parse resource description + _id
-		var resourceDetail struct {
-			ID             string                 `json:"_id"`
-			Name           string                 `json:"name"`
-			ResourceScopes []string               `json:"resource_scopes"`
-			OtherFields    map[string]interface{} `json:"-"` // ignore unknown fields
-		}
-		if err := json.NewDecoder(detailRes.Body).Decode(&resourceDetail); err != nil {
-			logrus.WithError(err).WithField("resource_id", resourceID).Debug("Failed to parse UMA resource detail")
-			continue
-		}
-
-		if resourceDetail.ID == "" || resourceDetail.Name == "" {
-			logrus.WithField("resource_id", resourceID).Debug("UMA resource missing _id or name; skipping")
-			continue
-		}
-
-		// Record UMA resource ID locally
-		idIndex[resourceDetail.Name] = resourceDetail.ID
-		issuerIndex[resourceDetail.Name] = issuer
-
-		logrus.WithFields(logrus.Fields{
-			"resource": resourceDetail.Name,
-			"uma_id":   resourceDetail.ID,
-			"scopes":   resourceDetail.ResourceScopes,
-		}).Info("Synchronized UMA resource")
-	}
-
 	return nil
 }

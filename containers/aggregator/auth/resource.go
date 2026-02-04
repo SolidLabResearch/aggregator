@@ -11,15 +11,16 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func RegisterResource(resourceId string, issuer string, scopes []model.Scope) error {
-	if issuer == "" {
+func RegisterResource(resourceId string, scopes []model.Scope) error {
+	if model.Owner.AuthzServerURL == "" {
 		logrus.Debugf("Skipping resource registration for %s (no issuer)", resourceId)
 		return nil
 	}
 
 	logrus.Infof("Registering resource %s with scopes %v", resourceId, scopes)
 	body := map[string]interface{}{
-		"issuer":      issuer,
+		"user_id":     model.Owner.UserId,
+		"as_url":      model.Owner.AuthzServerURL,
 		"resource_id": resourceId,
 		"scopes":      scopes,
 	}

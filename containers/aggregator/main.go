@@ -35,11 +35,9 @@ func main() {
 	if model.ExternalHost == "" {
 		logrus.Fatal("Environment variables AGGREGATOR_EXTERNAL_HOST must be set")
 	}
-	model.TLSSecret = os.Getenv("TLS_SECRET")
-	if model.TLSSecret != "" {
-		model.Protocol = "https"
-	} else {
-		model.Protocol = "http"
+	model.Protocol = strings.ToLower(os.Getenv("PROTOCOL"))
+	if model.Protocol != "http" && model.Protocol != "https" {
+		logrus.Fatal("Environment variables PROTOCOL must be either http or https")
 	}
 
 	// Read Authorization configuration from environment variables

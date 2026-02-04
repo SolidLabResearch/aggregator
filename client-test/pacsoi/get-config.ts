@@ -1,15 +1,13 @@
 import { KeycloakOIDCAuth } from "../util.js";
 
-const USER_ID = "https://pacsoi-idp.faqir.org/users/056e2d71-21aa-4528-a9f8-735ad76f0baa";
 const IDP = "https://pacsoi-idp.faqir.org";
 const REALM = "kvasir";
-const USERNAME = "doctor@example.com";
-const PASSWORD = "doctor";
-const CLIENT_ID = "moveup-app";
-const CLIENT_SECRET = "Yg8rGkQNQ4OqDh3AUR81EoSJtjPDXH4n";
-
-const CONFIG_ENDPOINT = "http://aggregator.local/config";
-
+const USERNAME = "patient0@example.com";
+const PASSWORD = "1234";
+const CLIENT_ID = "moveup-backend";
+const CLIENT_SECRET = "GD7VyY29Eeim5BWfdTAFJ8FTDW7SeU2g";
+const AGGREGATOR = "https://aggregator.local/18739d56-85ab-4837-a60c-e07df93d6fff";
+const PATH = "/services"; // "", "/services", "/transformations"
 
 async function main() {
   console.log("=== Initializing Keycloak Authentication ===");
@@ -22,11 +20,12 @@ async function main() {
   console.log("🔐 Auth initialized successfully.");
   const umaFetch = auth.createUMAFetch();
 
-  console.log("\n=== Fetching available transformations ===");
-  console.log(`➡️  Endpoint: ${CONFIG_ENDPOINT}\n`);
+  console.log("\n=== Fetching configuration ===");
+  const endpoint = AGGREGATOR + PATH;
+  console.log(`➡️  Endpoint: ${endpoint}\n`);
 
   try {
-    const response = await umaFetch(CONFIG_ENDPOINT, { method: "GET" });
+    const response = await umaFetch(endpoint, { method: "GET" });
 
     console.log(`📡 Response status: ${response.status}`);
     console.log("📄 Response body:\n");

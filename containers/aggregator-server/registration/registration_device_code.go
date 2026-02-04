@@ -274,7 +274,7 @@ func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationReq
 }
 
 func validateDeviceToken(tokenString string) (string, error) {
-	logrus.Debug("Starting token validation")
+	logrus.WithField("token", tokenString).Debug("Starting token validation")
 
 	// Parse token
 	unverifiedToken, err := jwt.Parse([]byte(tokenString), jwt.WithValidate(false))

@@ -113,7 +113,7 @@ func ParseRequestBody(fno string) (model.Execution, error) {
 func LoadTransformationCR(uri string) (*model.Transformation, error) {
 	id, err := StripPrefix(uri, fmt.Sprintf("%s://%s%s#", model.Protocol, model.ExternalHost, model.TransformationCatalog))
 	if err != nil {
-		return nil, fmt.Errorf("invalid transformation URI %q", uri)
+		return nil, fmt.Errorf("invalid transformation URI %q: %w", uri, err)
 	}
 
 	// Define GVR

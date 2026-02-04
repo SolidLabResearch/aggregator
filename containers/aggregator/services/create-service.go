@@ -89,8 +89,8 @@ func createDeployment(
 
 	if useUMA {
 		container.Env = append([]corev1.EnvVar{
-			{Name: "HTTP_PROXY", Value: fmt.Sprintf("http://%s-egress-uma.%s.svc.cluster.local:8080", model.ID, model.Namespace)},
-			{Name: "http_proxy", Value: fmt.Sprintf("http://%s-egress-uma.%s.svc.cluster.local:8080", model.ID, model.Namespace)},
+			{Name: "HTTP_PROXY", Value: fmt.Sprintf("http://egress-uma-%s.%s.svc.cluster.local:8080", model.ID, model.Namespace)},
+			{Name: "http_proxy", Value: fmt.Sprintf("http://egress-uma-%s.%s.svc.cluster.local:8080", model.ID, model.Namespace)},
 		}, container.Env...)
 	}
 

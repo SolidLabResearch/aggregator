@@ -34,13 +34,9 @@ func UMAAuthMiddleware() Middleware {
 			}
 
 			// Build resource ID for UMA lookup
-			scheme := "http"
-			if r.TLS != nil {
-				scheme = "https"
-			}
 			host := r.Host
 			path := r.URL.Path
-			resourceID := fmt.Sprintf("%s://%s%s", scheme, host, path)
+			resourceID := fmt.Sprintf("%s://%s%s", model.Protocol, host, path)
 
 			// Create UMA request
 			payload := map[string]string{

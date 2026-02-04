@@ -45,25 +45,26 @@ func HandleAuthorizationRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	umaId := idIndex[payload.ResourceID]
-	if umaId == "" {
-		logrus.WithFields(logrus.Fields{"resource": payload.ResourceID}).Warn("No UMA id found for resource")
-		http.Error(w, "No UMA id found for resource", http.StatusUnauthorized)
+	data, ok := idIndex[payload.ResourceID]
+	if !ok {
+		logrus.WithFields(logrus.Fields{"resource": payload.ResourceID}).Warn("No resource found")
+		http.Error(w, "No resource found", http.StatusUnauthorized)
 		return
 	}
 
-	issuer := issuerIndex[payload.ResourceID]
-	if issuer == "" {
-		logrus.WithFields(logrus.Fields{"resource": payload.ResourceID}).Warn("No issuer found for resource")
-		http.Error(w, "No Authentication Server URL found", http.StatusUnauthorized)
+	asUrl := asIndex[payload.ResourceID]
+	if asUrl == "" {
+		logrus.WithFields(logrus.Fields{"resource": payload.ResourceID}).Warn("No as url found for resource")
+		http.Error(w, "No Authz Server URL found", http.StatusUnauthorized)
 		return
 	}
 
 	logrus.WithFields(logrus.Fields{
 		"resource": payload.ResourceID,
-		"uma_id":   umaId,
+		"uma_id":   data.UmaID,
+		"user_id":  data.UserID,
 		"method":   payload.Method,
-		"as_url":   issuer,
+		"as_url":   asUrl,
 	}).Info("Authorize request")
 
 	// Always authorize if disabled
@@ -73,16 +74,21 @@ func HandleAuthorizationRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	reg := Registration{
+		UserID:      data.UserID,
+		AuthzServer: asUrl,
+	}
+
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		ticketlessAuthorization(w, umaId, payload.Method, issuer)
+		ticketlessAuthorization(w, reg, data.UmaID, payload.Method)
 		return
 	}
 
-	ticketedAuthorization(w, r, umaId, payload.Method, issuer)
+	ticketedAuthorization(w, r, data.UmaID, payload.Method, asUrl)
 }
 
-func ticketlessAuthorization(w http.ResponseWriter, umaId string, method string, issuer string) {
+func ticketlessAuthorization(w http.ResponseWriter, reg Registration, umaId string, method string) {
 	permissions := make(map[string][]Scope)
 	scopes, err := determineScopes(method)
 	if err != nil {
@@ -92,7 +98,7 @@ func ticketlessAuthorization(w http.ResponseWriter, umaId string, method string,
 	}
 	permissions[umaId] = scopes
 
-	ticket, err := fetchTicket(issuer, permissions)
+	ticket, err := fetchTicket(reg, permissions)
 	if err != nil {
 		logrus.WithError(err).Error("Error while fetching ticket")
 		http.Error(w, "Error while fetching ticket", http.StatusUnauthorized)
@@ -110,14 +116,14 @@ func ticketlessAuthorization(w http.ResponseWriter, umaId string, method string,
 	logrus.Info("🎫 Ticket created successfully, sending WWW-Authenticate header")
 	w.Header().Set(
 		"WWW-Authenticate",
-		fmt.Sprintf(`UMA as_uri="%s", ticket="%s"`, issuer, ticket),
+		fmt.Sprintf(`UMA as_uri="%s", ticket="%s"`, reg.AuthzServer, ticket),
 	)
 	w.WriteHeader(http.StatusUnauthorized)
 }
 
-func ticketedAuthorization(w http.ResponseWriter, r *http.Request, umaId string, method string, issuer string) {
+func ticketedAuthorization(w http.ResponseWriter, r *http.Request, umaId string, method string, asUrl string) {
 	logrus.WithFields(logrus.Fields{"method": method, "path": r.URL.Path}).Info("🔍 Verifying authorization token")
-	permission, err := verifyTicket(r.Header.Get("Authorization"), []string{issuer})
+	permission, err := verifyTicket(r.Header.Get("Authorization"), []string{asUrl})
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Error while verifying ticket")
 		w.WriteHeader(http.StatusBadRequest)
@@ -157,8 +163,8 @@ func ticketedAuthorization(w http.ResponseWriter, r *http.Request, umaId string,
 	w.WriteHeader(http.StatusBadRequest)
 }
 
-func fetchTicket(asUrl string, permissions map[string][]Scope) (string, error) {
-	config, err := fetchUmaConfig(asUrl)
+func fetchTicket(reg Registration, permissions map[string][]Scope) (string, error) {
+	config, err := fetchUmaConfig(reg.AuthzServer)
 	if err != nil {
 		return "", fmt.Errorf("error while retrieving config: %w", err)
 	}
@@ -184,7 +190,7 @@ func fetchTicket(asUrl string, permissions map[string][]Scope) (string, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	pat, err := getPAT(asUrl)
+	pat, err := getPAT(reg)
 	if err != nil {
 		return "", err
 	}

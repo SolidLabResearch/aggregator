@@ -21,7 +21,7 @@ deploy:
 	@echo "✅ Aggregator application successfully deployed!"
 
 kind-deploy: 
-	$(MAKE) configure-etc-hosts HOST="aggregator.local wsl.local" deploy CONFIG=kind/helm-config.yaml
+	$(MAKE) configure-etc-hosts HOSTS="aggregator.local wsl.local" deploy CONFIG=kind/helm-config.yaml
 
 undeploy:
 	@echo "🧹 Stopping aggregator deployment..."

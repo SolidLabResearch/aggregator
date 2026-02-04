@@ -11,20 +11,16 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func DefinePolicy(resourceId string, userId string, issuer string, scopes []model.Scope) error {
-	if issuer == "" {
+func DefinePolicy(resourceId string, scopes []model.Scope) error {
+	if model.Owner.AuthzServerURL == "" {
 		logrus.Debugf("Skipping policy creation for %s (no issuer)", resourceId)
 		return nil
 	}
 
 	body := map[string]interface{}{
-		"issuer":      issuer,
-		"id_token":    model.Owner.IDToken,
+		"as_url":      model.Owner.AuthzServerURL,
 		"resource_id": resourceId,
 		"scopes":      scopes,
-	}
-	if userId != "" {
-		body["user_id"] = userId
 	}
 
 	jsonBody, err := json.Marshal(body)

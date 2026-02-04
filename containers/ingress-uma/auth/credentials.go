@@ -14,8 +14,14 @@ import (
 )
 
 type RegistrationRequest struct {
+	UserID      string `json:"user_id"`
 	IDToken     string `json:"id_token"`
 	AuthzServer string `json:"as_url"`
+}
+
+type Registration struct {
+	UserID      string
+	AuthzServer string
 }
 
 type Credentials struct {
@@ -31,9 +37,10 @@ type PAT struct {
 }
 
 var (
-	credentialsMap = make(map[string]Credentials)
-	mu             sync.Mutex
-	patMap         = make(map[string]PAT)
+	userCredentials   = make(map[string]string)
+	serverCredentials = make(map[Registration]Credentials)
+	mu                sync.Mutex
+	patMap            = make(map[Registration]PAT)
 )
 
 // HandleRegistrationRequest registers the aggregator as RS at the AS
@@ -53,14 +60,21 @@ func HandleRegistrationRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.IDToken == "" || req.AuthzServer == "" {
-		logrus.Warn("Missing id_token or as_url in registration request")
-		http.Error(w, "id_token and as_url are required", http.StatusBadRequest)
+	if req.UserID == "" || req.IDToken == "" || req.AuthzServer == "" {
+		logrus.Warn("Missing user_id, id_token or as_url in registration request")
+		http.Error(w, "user_id, id_token and as_url are required", http.StatusBadRequest)
 		return
 	}
-
 	mu.Lock()
-	creds, exists := credentialsMap[req.AuthzServer]
+	userCredentials[req.UserID] = req.IDToken
+	mu.Unlock()
+
+	reg := Registration{
+		req.UserID,
+		req.AuthzServer,
+	}
+	mu.Lock()
+	serverCreds, exists := serverCredentials[reg]
 	mu.Unlock()
 	if exists {
 		logrus.Infof("Aggregator already registered at %s", req.AuthzServer)
@@ -71,7 +85,7 @@ func HandleRegistrationRequest(w http.ResponseWriter, r *http.Request) {
 	logrus.Debugf("Processing registration for AS: %s", req.AuthzServer)
 
 	// Request client credentials from the AS
-	creds, err := requestCredentials(req.AuthzServer, req.IDToken)
+	serverCreds, err := requestCredentials(reg)
 	if err != nil {
 		logrus.Errorf("Failed to request credentials from AS %s: %v", req.AuthzServer, err)
 		http.Error(w, fmt.Sprintf("Failed to register client: %v", err), http.StatusInternalServerError)
@@ -80,7 +94,7 @@ func HandleRegistrationRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Store credentials
 	mu.Lock()
-	credentialsMap[req.AuthzServer] = creds
+	serverCredentials[reg] = serverCreds
 	mu.Unlock()
 	logrus.Infof("Stored credentials for AS: %s", req.AuthzServer)
 
@@ -89,24 +103,24 @@ func HandleRegistrationRequest(w http.ResponseWriter, r *http.Request) {
 	logrus.Info("Registration request handled successfully")
 }
 
-func GetCredentials(as_url string) (string, string, error) {
+func GetCredentials(reg Registration) (string, string, error) {
 	mu.Lock()
-	creds, exists := credentialsMap[as_url]
+	creds, exists := serverCredentials[reg]
 	mu.Unlock()
 
 	if !exists {
-		return "", "", fmt.Errorf("No credentials stored for %s", as_url)
+		return "", "", fmt.Errorf("No credentials stored for user %s at %s", reg.UserID, reg.AuthzServer)
 	}
 
 	// If not present or expired → renew
 	if isExpired(creds) {
-		newCreds, err := requestCredentials(as_url, creds.IDToken)
+		newCreds, err := requestCredentials(reg)
 		if err != nil {
 			return "", "", err
 		}
 
 		mu.Lock()
-		credentialsMap[as_url] = newCreds
+		serverCredentials[reg] = newCreds
 		mu.Unlock()
 
 		return newCreds.ClientID, newCreds.ClientSecret, nil
@@ -123,8 +137,8 @@ func isExpired(creds Credentials) bool {
 	return time.Now().After(creds.ExpiresAt)
 }
 
-func requestCredentials(issuer string, IDToken string) (Credentials, error) {
-	config, err := fetchUmaConfig(issuer)
+func requestCredentials(reg Registration) (Credentials, error) {
+	config, err := fetchUmaConfig(reg.AuthzServer)
 	if err != nil {
 		return Credentials{}, err
 	}
@@ -142,8 +156,10 @@ func requestCredentials(issuer string, IDToken string) (Credentials, error) {
 	if err != nil {
 		return Credentials{}, err
 	}
+
+	idToken := userCredentials[reg.UserID]
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+IDToken)
+	req.Header.Set("Authorization", "Bearer "+idToken)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -171,28 +187,27 @@ func requestCredentials(issuer string, IDToken string) (Credentials, error) {
 	}
 
 	return Credentials{
-		IDToken:      IDToken,
 		ClientID:     response.ClientID,
 		ClientSecret: response.ClientSecret,
 		ExpiresAt:    expiresAt,
 	}, nil
 }
 
-func getPAT(issuer string) (string, error) {
+func getPAT(reg Registration) (string, error) {
 	mu.Lock()
-	pat, exists := patMap[issuer]
+	pat, exists := patMap[reg]
 	mu.Unlock()
 
 	if exists && time.Now().Before(pat.ExpiresAt) {
 		return pat.AccessToken, nil
 	}
 
-	clientID, clientSecret, err := GetCredentials(issuer)
+	clientID, clientSecret, err := GetCredentials(reg)
 	if err != nil {
 		return "", err
 	}
 
-	config, err := fetchUmaConfig(issuer)
+	config, err := fetchUmaConfig(reg.AuthzServer)
 	if err != nil {
 		return "", err
 	}
@@ -234,7 +249,7 @@ func getPAT(issuer string) (string, error) {
 	}
 
 	mu.Lock()
-	patMap[issuer] = pat
+	patMap[reg] = pat
 	mu.Unlock()
 
 	return pat.AccessToken, nil

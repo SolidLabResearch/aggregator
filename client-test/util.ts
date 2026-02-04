@@ -320,7 +320,7 @@ export class KeycloakOIDCAuth {
             password: this.password,
             client_id: this.clientId,
             client_secret: this.clientSecret,
-            scope: "offline_access",
+            scope: "openid offline_access",
         });
 
         const response = await fetch(this.tokenEndpoint, {
@@ -351,7 +351,7 @@ export class KeycloakOIDCAuth {
     /**
      * Make sure access token is still valid, otherwise refresh it.
      */
-    private async ensureValidToken() {
+    private async ensureValidTokens() {
         if (!this.accessToken || !this.expiresAt || Date.now() >= this.expiresAt - 500) {
             await this.refreshAccessToken();
         }
@@ -361,12 +361,20 @@ export class KeycloakOIDCAuth {
      * Create the claim token used for UMA
      * (For Keycloak this is simply the OIDC access token)
      */
-    public async createClaimToken(issuer: string): Promise<string> {
-        await this.ensureValidToken();
+    public async getAccessToken(): Promise<string> {
+        await this.ensureValidTokens();
 
         if (!this.accessToken || !this.idToken) throw new Error("Not initialized");
 
         return this.accessToken;
+    }
+
+    public async getIdToken() {
+        await this.ensureValidTokens();
+
+        if (!this.accessToken || !this.idToken) throw new Error("Not initialized");
+
+        return this.idToken;
     }
 
     /**
@@ -392,9 +400,8 @@ export class KeycloakOIDCAuth {
             const { issuer, tokenEndpoint, ticket } = await parseAuthenticateHeader(wwwAuthenticateHeader);
 
             // Create Keycloak OIDC access token as claim
-            const claimToken = await this.createClaimToken(issuer);
+            const claimToken = await this.getIdToken();
             
-
             // UMA token exchange request
             const umaRequestBody = {
                 grant_type: "urn:ietf:params:oauth:grant-type:uma-ticket",

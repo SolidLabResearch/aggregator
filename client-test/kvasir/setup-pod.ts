@@ -7,12 +7,12 @@ const IDP = "https://pacsoi-idp.faqir.org";
 const REALM = "kvasir";
 const CLIENT_ID = "moveup-backend";
 const CLIENT_SECRET = "GD7VyY29Eeim5BWfdTAFJ8FTDW7SeU2g";
-const CLIENT_WEBID = "http://example.com/moveup-backend/webid"
+const CLIENT_WEBID = "http://example.com/id/moveup-backend"
 
-const POD_NAME = "patient0";
+const POD_NAME = "97fc4346-f2d6-49a4-ac09-6117233c1e05";
 const USER_ID = "d4c5e084-48ac-4c32-80e8-ec9276434bae";
 const USERNAME = "patient0@example.com";
-const PASSWORD = "patient0";
+const PASSWORD = "1234";
 const DOCTOR_ID = "056e2d71-21aa-4528-a9f8-735ad76f0baa";
 
 const CONTEXT = {

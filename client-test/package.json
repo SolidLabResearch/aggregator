@@ -6,13 +6,10 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "s-create-service": "tsc && node dist/solid/create-service.js",
-    "s-get-service": "tsc && node dist/solid/get-service.js",
-    "s-get-trans": "tsc && node dist/solid/get-trans.js",
-    "kc-register-user": "tsc && node dist/keycloak/register-user.js",
-    "kc-create-service": "tsc && node dist/keycloak/create-service.js",
-    "kc-get-service": "tsc && node dist/keycloak/get-service.js",
-    "kc-get-trans": "tsc && node dist/keycloak/get-trans.js",
+    "register-user": "tsc && node dist/pacsoi/register-user.js",
+    "create-service": "tsc && node dist/pacsoi/create-service.js",
+    "get-service": "tsc && node dist/pacsoi/get-service.js",
+    "get-config": "tsc && node dist/pacsoi/get-config.js",
     "stream-service-demo": "tsc && node dist/stream-service-demo.js",
     "kv-create-pod": "tsc && node dist/kvasir/create-pod.js",
     "kv-delete-pod": "tsc && node dist/kvasir/delete-pod.js",
@@ -22,7 +19,8 @@
     "@inrupt/solid-client-authn-core": "^3.1.0",
     "cross-fetch": "^4.0.0",
     "eventsource-parser": "^3.0.6",
-    "n3": "^1.26.0"
+    "n3": "^1.26.0",
+    "rdf-data-factory": "^2.0.2"
   },
   "devDependencies": {
     "@types/n3": "^1.26.1",

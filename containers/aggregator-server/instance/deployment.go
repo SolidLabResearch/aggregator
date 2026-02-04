@@ -174,6 +174,7 @@ func ensureDeployment(
 								{Name: "AS_URL", Value: asURL},
 								{Name: "TRANSFORMATION_CATALOG", Value: model.TransformationCatalog},
 								{Name: "SERVICE_COLLECTION", Value: model.ServiceCollection},
+								{Name: "PROTOCOL", Value: model.Protocol},
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{

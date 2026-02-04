@@ -7,17 +7,17 @@ const REALM = "kvasir";
 const CLIENT_ID = "moveup-backend";
 const CLIENT_SECRET = "GD7VyY29Eeim5BWfdTAFJ8FTDW7SeU2g";
 
-const POD_NAME = "patient0";
-const USER_ID = "d4c5e084-48ac-4c32-80e8-ec9276434bae";
+const POD_NAME = "97fc4346-f2d6-49a4-ac09-6117233c1e05";
+const USER_ID = "080645fd-f3a7-47a3-a841-77b035f59842";
 const USERNAME = "patient0@example.com";
-const PASSWORD = "patient0";
+const PASSWORD = "1234";
 
 async function main() {
   const auth = new KeycloakOIDCAuth();
   await auth.init(IDP, REALM);
   await auth.login(USERNAME, PASSWORD, CLIENT_ID, CLIENT_SECRET);
 
-  // await createPod(auth);
+  //await createPod(auth);
   await getPodConfig(auth);
 }
 
@@ -30,8 +30,13 @@ async function createPod(auth: KeycloakOIDCAuth) {
       "kss:name": POD_NAME,
       "kss:ownerUserId": USER_ID,
       "kss:configuration": {
-        "kss:defaultContext": { so: "http://schema.org/" },
-        "kss:autoIngestRDF": "true"
+        "defaultContext": { so: "http://schema.org/" },
+        "autoIngestRDF": "true",
+        "auth": {
+          "uma": {
+            "server-url": "https://pacsoi-uma.faqir.org/"
+          }
+        }
       }
     };
 
@@ -39,7 +44,7 @@ async function createPod(auth: KeycloakOIDCAuth) {
       method: "POST",
       headers: {
         "Content-Type": "application/ld+json",
-        "Authorization": `Bearer ${await auth.createClaimToken("")}`
+        "Authorization": `Bearer ${await auth.getAccessToken()}`
       },
       body: JSON.stringify(body)
     });
@@ -59,7 +64,7 @@ async function createPod(auth: KeycloakOIDCAuth) {
 async function getPodConfig(auth: KeycloakOIDCAuth) {
   try {
     const umaFetch = auth.createUMAFetch();
-    const podUrl = `${POD_PROVIDER}/${POD_NAME}`;
+    const podUrl = new URL(POD_NAME, POD_PROVIDER).toString();
     const resp = await umaFetch(podUrl, {
       method: "GET",
       headers: {
