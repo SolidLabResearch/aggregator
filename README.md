@@ -6,48 +6,109 @@ An aggregator using uma: https://github.com/SolidLabResearch/user-managed-access
 
 ## Requirements
 
-- Docker
-- Kubernetes cluster
-- Helm
+- helm
 
 ### Local setup
-- Kind (Kubernetes in Docker)
-- Make
+
+- kubectl
+- kind (Kubernetes in Docker)
+- make
 - mkcert
 
 ## Quick Start
-**Production Cluster**
 
-```bash
-make deploy CONFIG=<helm config file>
-```
-or use Helm directly:
+If you already have a cluster you can use the helm chart to deploy the aggregator-platform. For the full Helm configuration details see the [documentation](/aggregator-platform/README.md).
+
 ```bash
 helm upgrade --install aggregator-platform ./aggregator-platform \
   -n aggregator-platform --create-namespace \
   --set host=aggregator.example.com \
-  --set auth.server=https:exaple.auth.com \
-  --set auth.clientId=aggregator-id \
-  --set auth.clientSecret=aggregator-secret \
-  --set auth.allowedRegistrationTypes={device_code} \
+  --set auth.allowedRegistrationTypes={none} \
+  --set ingressClassName=<ingress-class-name> #traefik, nginx, ..
 ```
-For the full Helm configuration details see [documentation](/aggregator-platform/README.md)
 
-**Local development**
+## API
 
-```bash
-# Full setup: Create cluster, build containers, deploy everything
-make kind-init
-make configure-etc-hosts HOSTS="aggregator.local"
-make configure-coredns
-make kind-deploy
+The [demo](/docs/demo.md) walks through the API step by step.
+All endpoints are relative to the aggregator base IRI:
+```
+http(s)://<host>
+```
+You can `GET` the base endpoint to retrieve the server’s specification and configuration.
+
+---
+### Registration Endpoint
+
+Create an aggregator for a user.
+Supported registration flows depend on the configured `allowedRegistrationTypes`.
+
+Default endpoint:
+```
+POST http(s)://<host>/registration
+```
+
+---
+### Transformation Catalog
+
+Retrieve the list of available **FnO transformations** supported by the platform.
+
+Default endpoint:
+```
+GET http(s)://<host>/transformations
+```
+
+---
+### Aggregator Description
+
+Retrieve the specification and configuration of a specific aggregator instance.
+
+```
+GET http(s)://<host>/<aggregator-id>
+```
+
+---
+### Aggregator Service Collection
+
+List services within an aggregator instance.
+
+Default endpoint:
+```
+GET http(s)://<host>/<aggregator-id>/services
+```
+
+Create services within an aggregator instance.
+
+Default endpoint:
+```
+POST http(s)://<host>/<aggregator-id>/services
+```
+
+---
+### Aggregator Service
+
+Retrieve the description of a specific service:
+
+```
+GET http(s)://<host>/<aggregator-id>/<service-id>
+```
+
+Retrieve the service outputs with corresponding output predicate:
+
+```
+GET http(s)://<host>/<aggregator-id>/<service-id>/<out-pred>
 ```
 
 ## Local Setup
 
 ### 1. Install Dependencies
 
-**Kind:**
+**make**
+```bash
+sudo apt update
+sudo apt install make
+```
+
+**kind:**
 ```bash
 curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
 chmod +x ./kind
@@ -61,24 +122,36 @@ chmod +x kubectl
 sudo mv kubectl /usr/local/bin/
 ```
 
-**Helm:**
+**helm:**
 ```bash
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+```
+
+**mkcert**
+```bash
+sudo apt update
+sudo apt install mkcert libnss3-tools
 ```
 
 ### 2. Local cluster setup
 
 #### 2.1 Create platform certificates
 
+Run:
 ```bash
 mkcert -install
 mkcert aggregator.local
-# Nodejs fetch will trust the local CA root
+```
+
+Node.js does not automatically trust the local Certificate Authority created by mkcert.
+Set the `NODE_EXTRA_CA_CERTS` environment variable so Node (and fetch) trusts certificates signed by your mkcert CA.
+```bash
 export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"
 ```
 
 #### 2.2 Create and Configure Kind Cluster
 
+Run:
 ```bash
 make kind-init
 ```
@@ -89,25 +162,44 @@ This will:
 - Generate certificates and keys
 - Start traefik ingress controller
 
-#### 2.2 Configure hosts and DNS (localhost access)
+#### 2.2 Configure Cluster DNS
 
-Configure cluster DNS so it can reach your localhost. Add entries to [/kind/coredns/local-hosts.yaml](/kind/coredns/local-hosts.yaml) and apply:
+Run:
+```bash
+make configure-coredns
+```
+This updates the cluster’s CoreDNS configuration.
+
+When the aggregator runs inside the Kubernetes cluster, `localhost` refers to the container itself, not your machine. If the aggregator needs to call services running on your local machine (e.g. a UMA server), you must expose your host via custom DNS entries.
+
+Example mappings:
+```bash
+<docker bridge ip> aggregator.host.local
+<wsl ip> aggregator.wsl.local # If you are using WSL
+```
+
+#### Add or Modify DNS Entries
+Edit [/kind/localhosts.yaml](/kind/localhosts.yaml) and apply:
 ```bash
 make configure-coredns
 ```
 
-To reach the aggregator-platform and work with cluster DNS entries update /etc/hosts:
-```bash
-make configure-etc-hosts HOSTS="aggregator.local test.local"
-```
+#### Update Your Local Machine
+For your local environment to resolve the same hostnames, you must also update `/etc/hosts`.
 
-### 3. Deploy aggregator platform with local configuration
+You can do this manually, or run:
+```bash
+make configure-etc-hosts HOSTS="aggregator.local aggregator.host.local aggregator.wsl.local"
+```
+If you use `make kind-deploy` / `make kind-undeploy`, update the `HOSTS` variable in the [makefile](/makefile) so this step runs automatically during deployment.
+
+### 3. Deploy Aggregator Platform with Local Configuration
 
 ```bash
 make kind-deploy
 ```
 
-This will deploy the aggregator platform inside the local kind cluster using the [local setup helm values](kind/helm-config.yaml)
+This will deploy the aggregator platform inside the local kind cluster using the [local setup helm values](kind/helm-config.yaml).
 
 ### 4. Stop/Clean-up
 
@@ -125,10 +217,9 @@ make kind-start       # Start the paused cluster
 make kind-delete      # Delete cluster and host configuration
 ```
 
-**Clean /etc/hosts**
-```bash
-make clean-etc-hosts
-```
+### 5. Interacting with the aggregator-platform
+
+See [guide](/docs/demo.md) tailored to your local setup.
 
 ## Makefile Commands
 
@@ -136,7 +227,8 @@ make clean-etc-hosts
 ```bash
 make init          # Create cluster, build & load containers, start cleaner
 make kind-start         # Create/start Kind cluster only
-make kind-stop          # Delete Kind cluster
+make kind-stop          # Pause Kind cluster
+make kind-delete        # Delete Kind Cluster
 make kind-dashboard     # Deploy Kubernetes dashboard
 ```
 
@@ -152,30 +244,20 @@ make containers-all CONTAINER=X    # Build and load specific image
 
 ### Deployment
 ```bash
-make deploy            # Deploy Traefik + aggregator
-make kind-deploy       # Deploy aggregator only
-make kind-undeploy     # Remove aggregator (keep Traefik & cleaner)
-make stop              # Stop aggregator + Traefik (keep cluster & cleaner)
+make deploy            # Deploy aggregator
+make undeploy          # Remove aggregator
+make kind-deploy       # Deploy aggregator + configure /etc/hosts
+make kind-undeploy     # Remove aggregator + clean /etc/hosts
 ```
 
-### Cleanup
+### Docker Cleanup
 ```bash
-make stop              # Stop services (cluster stays alive)
-make kind-clean        # Remove all deployments (cluster stays alive)
-make clean             # Delete everything including cluster
 make docker-clean      # Clean up Docker images
 ```
 
 ### Testing
 ```bash
 make integration-test  # Run full integration test suite
-```
-
-### Utilities
-```bash
-make hosts-add         # Add aggregator.local to /etc/hosts
-make hosts-remove      # Remove aggregator.local from /etc/hosts
-make enable-wsl        # Configure CoreDNS for WSL2
 ```
 
 ## Development Workflow
@@ -188,21 +270,8 @@ make containers-build CONTAINER=aggregator-server
 make containers-load CONTAINER=aggregator-server
 
 # Restart deployment
-kubectl rollout restart deployment aggregator-server -n aggregator-app
-
-# Or rebuild everything
-make stop
-make containers-all
-make deploy
-```
-
-### Quick Iteration
-
-```bash
-# After code changes
-make stop              # Stop current deployment
-make containers-all    # Rebuild & reload
-make deploy            # Redeploy
+make (kind-)undeploy
+make (kind-)deploy
 ```
 
 ## Architecture

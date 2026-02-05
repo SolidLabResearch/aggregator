@@ -85,10 +85,7 @@ kind-stop:
 # ------------------------
 
 kind-generate-aggregator-key-pair:
-	@mkcert aggregator.local
-
-nodejs-allow-local-CA:
- 
+	@mkcert aggregator.local 
 
 kind-generate-egress-key-pair:
 	@echo "🔑 Generating key pair for uma-proxy..."
@@ -102,16 +99,7 @@ kind-generate-egress-key-pair:
 		--from-file=uma-proxy.key=uma-proxy.key -n default
 	@rm uma-proxy.crt uma-proxy.key
 
-kind-generate-ingress-key:
-	@echo "🔑 Generating RSA private key for ingress-uma..."
-	@if [ ! -f private_key.pem ]; then \
-		openssl genrsa -out private_key.pem 2048; \
-		echo "✅ Generated private_key.pem"; \
-	else \
-		echo "ℹ️ private_key.pem already exists, skipping"; \
-	fi
-
-kind-generate-keys: kind-generate-aggregator-key-pair kind-generate-egress-key-pair kind-generate-ingress-key
+kind-generate-keys: kind-generate-aggregator-key-pair kind-generate-egress-key-pair
 
 # ------------------------
 # Ingress Controller

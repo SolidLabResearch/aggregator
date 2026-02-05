@@ -1,0 +1,37 @@
+{
+  "name": "aggregator-client-test",
+  "version": "1.0.0",
+  "description": "Client test scripts for the aggregator",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "register-user": "tsc && node dist/pacsoi/register-user.js",
+    "create-service": "tsc && node dist/pacsoi/create-service.js",
+    "get-service": "tsc && node dist/pacsoi/get-service.js",
+    "get-config": "tsc && node dist/pacsoi/get-config.js",
+    "stream-service-demo": "tsc && node dist/stream-service-demo.js",
+    "kv-create-pod": "tsc && node dist/kvasir/create-pod.js",
+    "kv-delete-pod": "tsc && node dist/kvasir/delete-pod.js",
+    "kv-setup-pod": "tsc && node dist/kvasir/setup-pod.js"
+  },
+  "dependencies": {
+    "@inrupt/solid-client-authn-core": "^3.1.0",
+    "cross-fetch": "^4.0.0",
+    "eventsource-parser": "^3.0.6",
+    "n3": "^1.26.0",
+    "rdf-data-factory": "^2.0.2"
+  },
+  "devDependencies": {
+    "@types/n3": "^1.26.1",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "aggregator",
+    "client",
+    "test"
+  ],
+  "author": "",
+  "license": "ISC"
+}
