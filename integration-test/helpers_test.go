@@ -534,7 +534,7 @@ func requestRPT(t *testing.T, asURI, ticket, claimToken string) string {
 		form.Set("claim_token_format", "urn:ietf:params:oauth:token-type:id_token")
 	}
 
-	resp, err := http.PostForm(tokenEndpoint, form)
+	resp, err := model.HttpClient.PostForm(tokenEndpoint, form)
 	if err != nil {
 		t.Fatalf("Failed to request RPT: %v", err)
 	}
@@ -590,7 +590,7 @@ func fetchUMAChallenge(t *testing.T, url string) (string, string) {
 func fetchUMATokenEndpoint(t *testing.T, asURI string) string {
 	t.Helper()
 
-	resp, err := http.Get(strings.TrimRight(asURI, "/") + "/.well-known/uma2-configuration")
+	resp, err := model.HttpClient.GettpClient.Get(strings.TrimRight(asURI, "/") + "/.well-known/uma2-configuration")
 	if err != nil {
 		t.Fatalf("Failed to fetch UMA configuration: %v", err)
 	}
@@ -895,7 +895,7 @@ func assertWebIDDereferenceable(t *testing.T, webID string) {
 		base = webID[:idx]
 	}
 
-	resp, err := http.Get(base)
+	resp, err := model.HttpClient.Get(base)
 	if err != nil {
 		t.Fatalf("Failed to dereference webid %s: %v", base, err)
 	}
@@ -1026,7 +1026,7 @@ func createAggregatorViaProvision(t *testing.T, oidcProvider *mocks.OIDCProvider
 func fetchAggregatorServerDescription(t *testing.T) map[string]interface{} {
 	t.Helper()
 
-	resp, err := http.Get(testEnv.AggregatorURL)
+	resp, err := model.HttpClient.Get(testEnv.AggregatorURL)
 	if err != nil {
 		t.Fatalf("Failed to fetch aggregator server description: %v", err)
 	}

@@ -322,7 +322,7 @@ func (collec *ServiceCollection) HandleServiceOutput(w http.ResponseWriter, r *h
 	}
 
 	// Send request using proxy client
-	resp, err := model.ProxyClient.Do(req)
+	resp, err := model.HttpClient.Do(req)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to forward request: %v", err), http.StatusBadGateway)
 		return

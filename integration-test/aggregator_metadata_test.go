@@ -133,7 +133,7 @@ func TestAggregatorDescription_Unauthenticated(t *testing.T) {
 	instance := setupAggregatorInstance(t)
 	defer instance.cleanup()
 
-	resp, err := http.Get(strings.TrimRight(instance.baseURL, "/"))
+	resp, err := model.HttpClient.GettpClient.Get(strings.TrimRight(instance.baseURL, "/"))
 	if err != nil {
 		t.Fatalf("Failed to fetch aggregator description: %v", err)
 	}

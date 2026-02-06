@@ -210,7 +210,7 @@ func parseAuthenticateHeader(wwwAuthHeader string) (tokenEndpoint string, ticket
 // getUMAConfig fetches UMA server config (token endpoint) from its .well-known endpoint
 func getUMAConfig(asURI string) (UMAConfig, error) {
 	// Usually the UMA config is at /.well-known/uma2-configuration
-	resp, err := http.Get(asURI + "/.well-known/uma2-configuration")
+	resp, err := model.HttpClient.Get(asURI + "/.well-known/uma2-configuration")
 	if err != nil {
 		return UMAConfig{}, err
 	}

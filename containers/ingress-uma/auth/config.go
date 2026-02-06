@@ -3,8 +3,8 @@ package auth
 import (
 	"encoding/json"
 	"fmt"
+	"ingress-uma/model"
 	"io"
-	"net/http"
 )
 
 type UmaConfig struct {
@@ -30,7 +30,7 @@ var requiredFields = map[string]func(UmaConfig) string{
 func fetchUmaConfig(issuer string) (UmaConfig, error) {
 	url := fmt.Sprintf("%s/.well-known/uma2-configuration", issuer)
 
-	resp, err := http.Get(url)
+	resp, err := model.HttpClient.Get(url)
 	if err != nil {
 		return UmaConfig{}, fmt.Errorf("failed GET on UMA config: %w", err)
 	}

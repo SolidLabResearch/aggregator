@@ -1,7 +1,7 @@
 import readline from "readline";
 
 const REGISTRATION = "https://aggregator.local/registration";
-const AS_URL = "http://wsl.local:4000/uma";
+const AS_URL = "http://localhost:4000/uma";
 
 function waitForEnter() {
   const rl = readline.createInterface({
@@ -32,9 +32,10 @@ async function main() {
   }
 
   const startData = await startResp.json();
+  const verification_uri = startData.verification_uri.replace("host.docker.internal", "localhost")
   console.log("====== DEVICE CODE ======");
   console.log("User code:", startData.user_code);
-  console.log("Verification URI:", startData.verification_uri);
+  console.log("Verification URI:", verification_uri);
   console.log("=========================");
 
   // 2️⃣ Wait for user input

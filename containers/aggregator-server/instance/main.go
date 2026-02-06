@@ -301,7 +301,7 @@ func registerAsResourceServer(ownerID, idToken string, authzServerURL string) er
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := model.HttpClient.Do(req)
 	if err != nil {
 		logrus.Errorf("Failed to send registration request: %v", err)
 		return err

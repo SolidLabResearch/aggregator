@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"ingress-uma/model"
 	"io"
 	"net/http"
 	"net/url"
@@ -113,7 +114,7 @@ func createPolicy(asUrl string, resourceId string, scopes []Scope, clients []str
 		"policy":     buf.String(),
 	}).Infof(`Requesting policy for %s`, resourceId)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := model.HttpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("policy request failed: %w", err)
 	}

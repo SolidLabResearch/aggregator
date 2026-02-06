@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"ingress-uma/model"
 	"net/http"
 	"sync"
 	"time"
@@ -45,77 +46,101 @@ var (
 
 // HandleRegistrationRequest registers the aggregator as RS at the AS
 func HandleRegistrationRequest(w http.ResponseWriter, r *http.Request) {
-	logrus.Info("Received registration request")
+	log := logrus.WithField("component", "registration")
+
+	log.Info("Received registration request")
 
 	if r.Method != http.MethodPost {
-		logrus.Warnf("Invalid method: %s, only POST allowed", r.Method)
+		log.WithField("method", r.Method).
+			Warn("Invalid HTTP method")
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	var req RegistrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logrus.Errorf("Failed to decode registration request: %v", err)
+		log.WithError(err).Error("Failed to decode registration request body")
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	if req.UserID == "" || req.IDToken == "" || req.AuthzServer == "" {
-		logrus.Warn("Missing user_id, id_token or as_url in registration request")
+		log.Warn("Missing required fields: user_id, id_token or as_url")
 		http.Error(w, "user_id, id_token and as_url are required", http.StatusBadRequest)
 		return
 	}
+
+	log = log.WithFields(logrus.Fields{
+		"user_id": req.UserID,
+		"as_url":  req.AuthzServer,
+	})
+
+	log.Debug("Storing user ID token")
+
 	mu.Lock()
 	userCredentials[req.UserID] = req.IDToken
 	mu.Unlock()
 
 	reg := Registration{
-		req.UserID,
-		req.AuthzServer,
+		UserID:      req.UserID,
+		AuthzServer: req.AuthzServer,
 	}
+
 	mu.Lock()
-	serverCreds, exists := serverCredentials[reg]
+	_, exists := serverCredentials[reg]
 	mu.Unlock()
+
 	if exists {
-		logrus.Infof("Aggregator already registered at %s", req.AuthzServer)
+		log.Info("Aggregator already registered at AS")
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	logrus.Debugf("Processing registration for AS: %s", req.AuthzServer)
+	log.Info("Requesting client credentials from Authorization Server")
 
-	// Request client credentials from the AS
 	serverCreds, err := requestCredentials(reg)
 	if err != nil {
-		logrus.Errorf("Failed to request credentials from AS %s: %v", req.AuthzServer, err)
+		log.WithError(err).Error("Failed to register client at AS")
 		http.Error(w, fmt.Sprintf("Failed to register client: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Store credentials
 	mu.Lock()
 	serverCredentials[reg] = serverCreds
 	mu.Unlock()
-	logrus.Infof("Stored credentials for AS: %s", req.AuthzServer)
 
-	// Respond with status OK
+	log.WithFields(logrus.Fields{
+		"client_id": serverCreds.ClientID,
+		"expires":   serverCreds.ExpiresAt,
+	}).Info("Successfully stored client credentials")
+
 	w.WriteHeader(http.StatusOK)
-	logrus.Info("Registration request handled successfully")
+	log.Info("Registration completed successfully")
 }
 
 func GetCredentials(reg Registration) (string, string, error) {
+	log := logrus.WithFields(logrus.Fields{
+		"user_id":   reg.UserID,
+		"as_url":    reg.AuthzServer,
+		"component": "credentials",
+	})
+
 	mu.Lock()
 	creds, exists := serverCredentials[reg]
 	mu.Unlock()
 
 	if !exists {
-		return "", "", fmt.Errorf("No credentials stored for user %s at %s", reg.UserID, reg.AuthzServer)
+		err := fmt.Errorf("no credentials stored")
+		log.Error(err)
+		return "", "", err
 	}
 
-	// If not present or expired → renew
 	if isExpired(creds) {
+		log.Info("Client credentials expired, requesting renewal")
+
 		newCreds, err := requestCredentials(reg)
 		if err != nil {
+			log.WithError(err).Error("Failed to renew client credentials")
 			return "", "", err
 		}
 
@@ -123,8 +148,13 @@ func GetCredentials(reg Registration) (string, string, error) {
 		serverCredentials[reg] = newCreds
 		mu.Unlock()
 
+		log.WithField("expires", newCreds.ExpiresAt).
+			Info("Successfully renewed client credentials")
+
 		return newCreds.ClientID, newCreds.ClientSecret, nil
 	}
+
+	log.Debug("Using cached client credentials")
 
 	return creds.ClientID, creds.ClientSecret, nil
 }
@@ -138,8 +168,17 @@ func isExpired(creds Credentials) bool {
 }
 
 func requestCredentials(reg Registration) (Credentials, error) {
+	log := logrus.WithFields(logrus.Fields{
+		"user_id":   reg.UserID,
+		"as_url":    reg.AuthzServer,
+		"component": "client_registration",
+	})
+
+	log.Debug("Fetching UMA configuration")
+
 	config, err := fetchUmaConfig(reg.AuthzServer)
 	if err != nil {
+		log.WithError(err).Error("Failed to fetch UMA configuration")
 		return Credentials{}, err
 	}
 
@@ -149,11 +188,13 @@ func requestCredentials(reg Registration) (Credentials, error) {
 
 	body, err := json.Marshal(payload)
 	if err != nil {
+		log.WithError(err).Error("Failed to marshal client registration payload")
 		return Credentials{}, err
 	}
 
 	req, err := http.NewRequest("POST", config.RegistrationEndpoint, bytes.NewBuffer(body))
 	if err != nil {
+		log.WithError(err).Error("Failed to create registration request")
 		return Credentials{}, err
 	}
 
@@ -161,14 +202,24 @@ func requestCredentials(reg Registration) (Credentials, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+idToken)
 
-	resp, err := http.DefaultClient.Do(req)
+	log.WithField("endpoint", config.RegistrationEndpoint).
+		Debug("Sending client registration request")
+
+	resp, err := model.HttpClient.Do(req)
 	if err != nil {
+		log.WithError(err).Error("HTTP request to AS failed")
 		return Credentials{}, err
 	}
 	defer resp.Body.Close()
 
+	log.WithField("status_code", resp.StatusCode).
+		Debug("Received response from AS")
+
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return Credentials{}, errors.New("failed to register client with AS")
+		err := errors.New("failed to register client with AS")
+		log.WithField("status_code", resp.StatusCode).
+			Error("AS returned error during client registration")
+		return Credentials{}, err
 	}
 
 	var response struct {
@@ -178,6 +229,7 @@ func requestCredentials(reg Registration) (Credentials, error) {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		log.WithError(err).Error("Failed to decode client registration response")
 		return Credentials{}, err
 	}
 
@@ -185,6 +237,11 @@ func requestCredentials(reg Registration) (Credentials, error) {
 	if response.ClientSecretExpiresAt > 0 {
 		expiresAt = time.Unix(response.ClientSecretExpiresAt, 0)
 	}
+
+	log.WithFields(logrus.Fields{
+		"client_id": response.ClientID,
+		"expires":   expiresAt,
+	}).Info("Client successfully registered at AS")
 
 	return Credentials{
 		ClientID:     response.ClientID,
@@ -194,21 +251,32 @@ func requestCredentials(reg Registration) (Credentials, error) {
 }
 
 func getPAT(reg Registration) (string, error) {
+	log := logrus.WithFields(logrus.Fields{
+		"user_id":   reg.UserID,
+		"as_url":    reg.AuthzServer,
+		"component": "pat",
+	})
+
 	mu.Lock()
 	pat, exists := patMap[reg]
 	mu.Unlock()
 
 	if exists && time.Now().Before(pat.ExpiresAt) {
+		log.Debug("Using cached PAT")
 		return pat.AccessToken, nil
 	}
 
+	log.Info("Requesting new PAT")
+
 	clientID, clientSecret, err := GetCredentials(reg)
 	if err != nil {
+		log.WithError(err).Error("Failed to obtain client credentials for PAT")
 		return "", err
 	}
 
 	config, err := fetchUmaConfig(reg.AuthzServer)
 	if err != nil {
+		log.WithError(err).Error("Failed to fetch UMA configuration for PAT")
 		return "", err
 	}
 
@@ -216,21 +284,24 @@ func getPAT(reg Registration) (string, error) {
 
 	req, err := http.NewRequest("POST", config.TokenEndpoint, bytes.NewBufferString(form))
 	if err != nil {
+		log.WithError(err).Error("Failed to create PAT request")
 		return "", err
 	}
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
 	auth := clientID + ":" + clientSecret
 	req.Header.Set("Authorization", "Basic "+basicAuth(auth))
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := model.HttpClient.Do(req)
 	if err != nil {
+		log.WithError(err).Error("PAT request failed")
 		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.WithField("status_code", resp.StatusCode).
+			Error("AS returned error during PAT request")
 		return "", errors.New("failed to obtain PAT")
 	}
 
@@ -240,6 +311,7 @@ func getPAT(reg Registration) (string, error) {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		log.WithError(err).Error("Failed to decode PAT response")
 		return "", err
 	}
 
@@ -251,6 +323,9 @@ func getPAT(reg Registration) (string, error) {
 	mu.Lock()
 	patMap[reg] = pat
 	mu.Unlock()
+
+	log.WithField("expires", pat.ExpiresAt).
+		Info("Successfully obtained new PAT")
 
 	return pat.AccessToken, nil
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"ingress-uma/model"
 	"io"
 	"net/http"
 
@@ -125,7 +126,7 @@ func createResource(reg Registration, resourceId string, scopes []Scope) error {
 	}
 	logrus.WithFields(logrus.Fields{"action": action, "resource_id": resourceId, "endpoint": endpoint}).Info("Processing UMA resource registration")
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := model.HttpClient.Do(req)
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err, "resource_id": resourceId, "endpoint": endpoint}).Error("Error while making UMA request")
 		return err
@@ -234,7 +235,7 @@ func deleteResource(resourceId string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+pat)
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := model.HttpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send signed DELETE request for resource %s: %w", resourceId, err)
 	}

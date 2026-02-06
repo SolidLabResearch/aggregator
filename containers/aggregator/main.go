@@ -98,15 +98,6 @@ func main() {
 		logrus.Fatalf("Failed to create dynamic Kubernetes client: %v", err)
 	}
 
-	// Init HTTP proxy client
-	model.ProxyClient = &http.Client{
-		Transport: &http.Transport{
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 10,
-			IdleConnTimeout:     90,
-		},
-	}
-
 	// Configure HTTP server
 	serverMux := http.NewServeMux()
 

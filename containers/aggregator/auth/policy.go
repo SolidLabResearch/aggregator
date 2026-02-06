@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 
 	"github.com/sirupsen/logrus"
 )
@@ -29,7 +28,7 @@ func DefinePolicy(resourceId string, scopes []model.Scope) error {
 	}
 
 	logrus.Debugf("Creating policy for resource %s with body: %s", resourceId, string(jsonBody))
-	resp, err := http.Post(
+	resp, err := model.HttpClient.Post(
 		fmt.Sprintf("http://ingress-uma.%s.svc.cluster.local:8080/policies", model.Namespace),
 		"application/json",
 		bytes.NewReader(jsonBody),

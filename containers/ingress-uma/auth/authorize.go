@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"ingress-uma/model"
 	"io"
 	"net/http"
 	"strings"
@@ -196,7 +197,7 @@ func fetchTicket(reg Registration, permissions map[string][]Scope) (string, erro
 	}
 	req.Header.Set("Authorization", "Bearer "+pat)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := model.HttpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("error while authorizing ticket request: %w", err)
 	}

@@ -173,7 +173,7 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 		"code_verifier": {storedData.CodeVerifier},
 	}
 
-	resp, err := http.PostForm(storedData.TokenEndpoint, data)
+	resp, err := model.HttpClient.PostForm(storedData.TokenEndpoint, data)
 	if err != nil {
 		logrus.WithError(err).Error("Token exchange failed")
 		http.Error(w, "Token exchange failed", http.StatusInternalServerError)

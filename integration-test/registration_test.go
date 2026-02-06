@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"aggregator-integration-test/mocks"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -44,7 +45,7 @@ func TestRegistration_None_Create(t *testing.T) {
 		case <-checkCtx.Done():
 			t.Fatalf("Timed out waiting for none aggregator description: %v", checkCtx.Err())
 		default:
-			resp, err := http.Get(baseURL)
+			resp, err := model.HttpClient.Get(baseURL)
 			if err == nil {
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
@@ -89,7 +90,7 @@ func TestRegistration_None_DisablesUMAIngressAndEgress(t *testing.T) {
 	// Build FnO Turtle description
 	source := "http://example.org/source"
 	query := "SELECT * WHERE { ?s ?p ?o }"
-	
+
 	// Get transformation catalog from server description
 	serverResp, err := http.Get(testEnv.AggregatorURL)
 	if err != nil {
@@ -99,7 +100,7 @@ func TestRegistration_None_DisablesUMAIngressAndEgress(t *testing.T) {
 	var serverDesc map[string]interface{}
 	json.NewDecoder(serverResp.Body).Decode(&serverDesc)
 	transformationsCatalog := serverDesc["transformation_catalog"].(string)
-	
+
 	turtleBody := fmt.Sprintf(`@prefix config: <%s> .
 @prefix fno: <https://w3id.org/function/ontology#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
@@ -139,7 +140,7 @@ _:execution a fno:Execution ;
 	// Extract short ID from full URL
 	parts := strings.Split(serviceID, "/")
 	shortID := parts[len(parts)-1]
-	
+
 	serviceCtx, serviceCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer serviceCancel()
 	deployment := waitForDeploymentExists(t, serviceCtx, namespace, shortID)

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 
 	"github.com/sirupsen/logrus"
 )
@@ -30,7 +29,7 @@ func RegisterResource(resourceId string, scopes []model.Scope) error {
 		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
-	resp, err := http.Post(
+	resp, err := model.HttpClient.Post(
 		fmt.Sprintf("http://ingress-uma.%s.svc.cluster.local:8080/resources", model.Namespace),
 		"application/json",
 		bytes.NewReader(jsonBody),

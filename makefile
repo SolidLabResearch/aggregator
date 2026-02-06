@@ -108,23 +108,23 @@ kind-generate-keys: kind-generate-aggregator-key-pair kind-generate-egress-key-p
 kind-start-traefik:
 	@echo "📄 Deploying Traefik Ingress Controller..."
 	@kubectl config use-context kind-aggregator
-	@helm repo add traefik https://traefik.github.io/charts || true
+	@helm repo add aggregator-traefik https://traefik.github.io/charts || true
 	@helm repo update
-	@helm upgrade --install traefik traefik/traefik \
-		--namespace traefik --create-namespace \
+	@helm upgrade --install aggregator-traefik traefik/traefik \
+		--namespace aggregator-traefik --create-namespace \
 		--set ingressClass.enabled=true \
-		--set ingressClass.name=traefik \
+		--set ingressClass.name=aggregator-traefik \
 		--set ports.web.hostPort=80 \
 		--set ports.websecure.hostPort=443 \
 		--set service.type=ClusterIP
-	@kubectl rollout status deployment traefik -n traefik --timeout=180s
+	@kubectl rollout status deployment aggregator-traefik -n aggregator-traefik --timeout=180s
 	@echo "✅ Traefik deployment is ready!"
 
 kind-stop-traefik:
 	@echo "🛑 Removing Traefik Ingress Controller..."
 	@kubectl config use-context kind-aggregator
-	@helm uninstall traefik -n traefik || true
-	@kubectl delete namespace traefik --ignore-not-found
+	@helm uninstall aggregator-traefik -n traefik || true
+	@kubectl delete namespace aggregator-traefik --ignore-not-found
 	@echo "✅ Traefik has been removed!"
 
 
@@ -186,7 +186,7 @@ configure-coredns:
 	@kubectl config use-context kind-aggregator
 	@kubectl apply -f kind/localhosts.yaml
 	@kubectl rollout restart deployment coredns -n kube-system
-	@kubectl wait --for=condition=ready pod -l kind-app=kube-dns -n kube-system --timeout=60s
+	@kubectl wait --for=condition=ready pod -l k8s-app=kube-dns -n kube-system --timeout=60s
 	@echo "✅ CoreDNS configured for .local domains"
 
 # ------------------------
@@ -220,15 +220,20 @@ unit-test:
 kind-dashboard:
 	@echo "🚀 Deploying Kubernetes Dashboard..."
 	@kubectl config use-context kind-aggregator
-	@helm repo add kubernetes-dashboard https://kubernetes.github.io/dashboard/ || true
+	# Add and update Helm repo
+	@helm repo add kubernetes-dashboard https://kubernetes-retired.github.io/dashboard/ || true
 	@helm repo update
+	# Install or upgrade the dashboard
 	@helm upgrade --install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard \
 		--namespace kubernetes-dashboard --create-namespace
+	# Apply admin ServiceAccount and ClusterRoleBinding
 	@kubectl apply -f kind/dashboard-admin.yaml
+	# Wait for the dashboard pod to be ready
 	@kubectl wait --namespace kubernetes-dashboard \
 		--for=condition=ready pod \
 		--selector=app.kubernetes.io/instance=kubernetes-dashboard \
 		--timeout=120s
+	# Show the dashboard token
 	@echo "🔑 Dashboard token:"
-	@kubectl get secret admin-user -n kubernetes-dashboard -o jsonpath="{.data.token}" | base64 -d && echo ""
-	@kubectl -n kubernetes-dashboard port-forward svc/kubernetes-dashboard-kong-proxy 8443:443
+	@kubectl get secret admin-user -n kubernetes-dashboard -o go-template="{{.data.token | base64decode}}"
+	@kubectl -n kubernetes-dashboard port-forward svc/kubernetes-dashboard-kong-proxy 8443:443 --address=0.0.0.0

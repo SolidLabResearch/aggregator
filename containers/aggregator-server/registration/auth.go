@@ -112,7 +112,7 @@ func discoverJWKSURL(issuer string) (string, error) {
 	// Try OIDC discovery
 	discoveryURL := strings.TrimSuffix(issuer, "/") + "/.well-known/openid-configuration"
 
-	resp, err := http.Get(discoveryURL)
+	resp, err := model.HttpClient.Get(discoveryURL)
 	if err != nil {
 		return "", err
 	}
@@ -166,7 +166,7 @@ func validateTokenClaims(token jwt.Token, expectedIssuer string) error {
 
 // verifyTokenWithJWKS verifies a JWT token using the issuer's JWKS endpoint
 func verifyTokenWithJWKS(tokenString string, jwksURL string) (jwt.Token, error) {
-	keySet, err := jwk.Fetch(context.Background(), jwksURL)
+	keySet, err := jwk.Fetch(context.Background(), jwksURL, jwk.WithHTTPClient(model.HttpClient))
 	if err != nil {
 		return nil, err
 	}

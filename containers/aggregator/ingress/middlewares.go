@@ -68,7 +68,7 @@ func UMAAuthMiddleware() Middleware {
 			}
 
 			// Call UMA service
-			resp, err := model.ProxyClient.Do(req)
+			resp, err := model.HttpClient.Do(req)
 			if err != nil {
 				log.Printf("Error calling UMA service: %v", err)
 				http.Error(w, "Authorization service error", http.StatusInternalServerError)

@@ -73,7 +73,7 @@ func handleDeviceCodeFlowStart(w http.ResponseWriter, req model.RegistrationRequ
 
 	// Request device code
 	data := fmt.Sprintf("client_id=%s&client_secret=%s&scope=openid offline_access", model.ClientId, model.ClientSecret)
-	resp, err := http.Post(
+	resp, err := model.HttpClient.Post(
 		oidcConfig.DeviceAuthorizationEndpoint,
 		"application/x-www-form-urlencoded",
 		bytes.NewBufferString(data),
@@ -173,7 +173,7 @@ func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationReq
 			"grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=%s&client_id=%s&client_secret=%s",
 			session.DeviceCode, model.ClientId, model.ClientSecret,
 		)
-		resp, err := http.Post(oidcConfig.TokenEndpoint, "application/x-www-form-urlencoded", bytes.NewBufferString(data))
+		resp, err := model.HttpClient.Post(oidcConfig.TokenEndpoint, "application/x-www-form-urlencoded", bytes.NewBufferString(data))
 		if err != nil {
 			logrus.WithError(err).Warn("Failed to poll token endpoint")
 			http.Error(w, "Token request failed", http.StatusInternalServerError)

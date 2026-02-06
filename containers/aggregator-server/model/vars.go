@@ -1,6 +1,9 @@
 package model
 
 import (
+	"net/http"
+	"time"
+
 	"github.com/sirupsen/logrus"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -33,5 +36,13 @@ var IngressClassName *string
 var TransformationCatalog string
 var ServiceCollection string
 var RegistrationEndpoint string
+
+// Http client that handles localhost
+var HttpClient = &http.Client{
+	Transport: &localRedirectTransport{
+		rt: http.DefaultTransport,
+	},
+	Timeout: 5 * time.Second,
+}
 
 var LogLevel logrus.Level

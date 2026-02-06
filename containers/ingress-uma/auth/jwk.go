@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"ingress-uma/model"
 	"io"
 	"math/big"
 	"net/http"
@@ -30,9 +31,9 @@ type JWKS struct {
 	Keys []JWK `json:"keys"`
 }
 
-func fetchAndSelectKey(jwksUri, kid string) (interface{}, error) {
+func fetchAndSelectKey(jwksUri, _ string) (interface{}, error) {
 	// 1) Fetch the JWKS JSON
-	resp, err := http.Get(jwksUri)
+	resp, err := model.HttpClient.Get(jwksUri)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch JWKS from %s: %w", jwksUri, err)
 	}

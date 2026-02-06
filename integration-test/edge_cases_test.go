@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"aggregator-integration-test/mocks"
+
 	"github.com/google/uuid"
 )
 
@@ -175,7 +176,7 @@ func TestRegistration_Delete_NonexistentAggregator(t *testing.T) {
 func assertNotFoundOrUnauthorized(t *testing.T, url string) {
 	t.Helper()
 
-	resp, err := http.Get(url)
+	resp, err := model.HttpClient.Get(url)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}

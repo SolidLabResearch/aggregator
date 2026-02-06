@@ -61,7 +61,7 @@ func generateRandomState() (string, error) {
 func fetchOIDCConfig(idpURL string) (*model.OIDCConfig, error) {
 	discoveryURL := fmt.Sprintf("%s/.well-known/openid-configuration", idpURL)
 
-	res, err := http.Get(discoveryURL)
+	res, err := model.HttpClient.Get(discoveryURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch OIDC discovery document: %w", err)
 	}
