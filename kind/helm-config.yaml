@@ -7,7 +7,7 @@ auth:
     - none
     - device_code
 
-ingressClassName: aggregator-traefik
+ingressClassName: traefik
 
 tls:
   enabled: true

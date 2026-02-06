@@ -110,21 +110,21 @@ kind-start-traefik:
 	@kubectl config use-context kind-aggregator
 	@helm repo add traefik https://traefik.github.io/charts || true
 	@helm repo update
-	@helm upgrade --install aggregator-traefik traefik/traefik \
-		--namespace aggregator-traefik --create-namespace \
+	@helm upgrade --install traefik traefik/traefik \
+		--namespace traefik --create-namespace \
 		--set ingressClass.enabled=true \
-		--set ingressClass.name=aggregator-traefik \
+		--set ingressClass.name=traefik \
 		--set ports.web.hostPort=80 \
 		--set ports.websecure.hostPort=443 \
 		--set service.type=ClusterIP
-	@kubectl rollout status deployment aggregator-traefik -n aggregator-traefik --timeout=180s
+	@kubectl rollout status deployment traefik -n traefik --timeout=180s
 	@echo "✅ Traefik deployment is ready!"
 
 kind-stop-traefik:
 	@echo "🛑 Removing Traefik Ingress Controller..."
 	@kubectl config use-context kind-aggregator
-	@helm uninstall aggregator-traefik -n aggregator-traefik || true
-	@kubectl delete namespace aggregator-traefik --ignore-not-found
+	@helm uninstall traefik -n traefik || true
+	@kubectl delete namespace traefik --ignore-not-found
 	@echo "✅ Traefik has been removed!"
 
 
