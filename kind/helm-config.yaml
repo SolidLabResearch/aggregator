@@ -16,34 +16,27 @@ tls:
     key: aggregator.key
 
 transformations:
-  - name: get
+  - name: pacsoi
     spec:
-      id: Get
-      image: fetch
+      id: Pacsoi
+      image: pacsoi-mock-service
       fno: |
         @prefix fno: <https://w3id.org/function/ontology#> .
         @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
         @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 
-        <Get>
+        <Pacsoi>
           a fno:Function ;
-          fno:expects ( <URL> ) ;
-          fno:returns ( <Response> ) .
+          fno:expects ( ) ;
+          fno:returns ( <WeightDistribution> ) .
 
-        <URL>
-          a fno:Parameter ;
-          fno:predicate <url> ;
-          fno:type xsd:string ;
-          fno:required "true"^^xsd:boolean .
-
-        <Response>
+        <WeightDistribution>
           a fno:Output ;
-          fno:predicate <resp> .
-      inputMapping:
-        url: GET_URL
+          fno:predicate <w-distribution> .
+      inputMapping: {}
       outputMapping:
-        resp:
-          port: 8080
-          path: /
+        w-distribution:
+          port: 8000
+          path: /report
 
 loglevel: debug

@@ -24,8 +24,6 @@ spec:
               required:
                 - id
                 - image
-                - inputMapping
-                - outputMapping
                 - fno
               properties:
                 id:

@@ -5,25 +5,23 @@ import { Writer } from "n3";
 const df = new DataFactory();
 
 // Aggregator configuration
-const AGGREGATOR_SERVER = "https://aggregator.local"
-const AGGREGATOR = "https://aggregator.local/15359d0a-df50-4083-8c88-b457ec7d2399";
-const TF = "/transformations"
-const SVC = "/services"
+const AGGREGATOR_SERVER = "https://aggregator.local";
+const AGGREGATOR = "https://aggregator.local/2a2b61ed-8976-4036-af9b-99b5925452a0";
+const TF = "/transformations";
+const SVC = "/services";
 
 // Transformation configuration
-const SVC_NAME = "get-example-svc"
-const TF_ID = "Get"
-const PARAMS = {
-  "url": "http://example.com"
-}
+const SVC_NAME = "pacsoi-svc";
+const TF_ID = "Pacsoi";
+const PARAMS = {};
 
 // Authz configuration
-const USERNAME = "patient0@example.com";
-const PASSWORD = "1234";
-const CLIENT_ID = "moveup-backend";
-const CLIENT_SECRET = "GD7VyY29Eeim5BWfdTAFJ8FTDW7SeU2g";
-const IDP = "https://pacsoi-idp.faqir.org";
-const REALM = "kvasir";
+const USERNAME = "alice@example.com";
+const PASSWORD = "alice";
+const CLIENT_ID = "moveup-app";
+const CLIENT_SECRET = "k9KYqrHeEt0GKdL4YbjeXylf39Yi5aPA";
+const IDP = "http://localhost:8280";
+const REALM = "quarkus";
 
 const auth = new KeycloakOIDCAuth()
 await auth.init(IDP, REALM)
