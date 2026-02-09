@@ -24,7 +24,9 @@ type RegistrationRequest struct {
 	// authorization_code flow - finish phase
 	Code        string `json:"code,omitempty"`
 	RedirectURI string `json:"redirect_uri,omitempty"`
-	State       string `json:"state,omitempty"`
+
+	// authorization_code & device_code flow - finish phase
+	State string `json:"state,omitempty"`
 
 	// client_credentials flow
 	WebID        string `json:"webid,omitempty"`
@@ -34,9 +36,6 @@ type RegistrationRequest struct {
 	// Internal fields (not from JSON)
 	OIDCConfig   OIDCConfig `json:"-"`
 	CodeVerifier string     `json:"-"`
-
-	// REQUIRED for device_code flow
-	DeviceCode string `json:"device_code,omitempty"`
 }
 
 // RegistrationResponse represents the response for successful aggregator creation/update

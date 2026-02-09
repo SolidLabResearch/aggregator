@@ -124,9 +124,10 @@ Content-Type: application/json
 You will recieve:
 ```json
 {
-  device_code: <device_code>,
+  state: <state>,
   user_code: <user_code>,
-  verification_uri: <verification_uri>
+  verification_uri: <verification_uri>,
+  verification_uri_complete: <verification_uri_complete>
 }
 ```
 
@@ -140,17 +141,20 @@ You will recieve:
 ---
 ### Finalizing Registration
 
-After the user grants consent, complete the flow:
+While the user is authorizing, you can poll the registration endpoint with the received state:
 ```pqsql
 POST https://aggregator.local/registration
 Content-Type: application/json
 
 {
   "registration_type": "device_code",
-  "device_code": "<device_code>"
+  "state": "<state>"
 }
 
 ```
+If registration is still pending or the aggregator is being deployed, you will receive:
+```HTTP 202 Accepted```
+
 If successful, you will receive:
 ```json
 {
@@ -158,6 +162,10 @@ If successful, you will receive:
   aggregator: <aggregator-base-iri>
 }
 ```
+
+If an error occured, you will recieve:
+```HTTP 400 Bad Request```
+
 ---
 ### Demo script
 This flow is implemented in [demo/pacsoi/register-user](/demo/pacsoi/register-user.ts). Ensure the following constants are set correctly:

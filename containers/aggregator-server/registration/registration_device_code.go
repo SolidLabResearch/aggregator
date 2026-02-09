@@ -17,17 +17,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type DeviceSession struct {
-	AggregatorID        string
-	AuthorizationServer string
-	DeviceCode          string
-	ExpiresAt           time.Time
-	Interval            time.Duration
-}
-
-var deviceSessions = make(map[string]*DeviceSession)
-var sessionsLock sync.Mutex
-
+// Device code flow response structs
 type DeviceCodeResponse struct {
 	DeviceCode      string `json:"device_code"`
 	UserCode        string `json:"user_code"`
@@ -36,6 +26,7 @@ type DeviceCodeResponse struct {
 	Interval        int    `json:"interval"`
 }
 
+// Device code flow token response struct
 type TokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -45,17 +36,53 @@ type TokenResponse struct {
 	Scope        string `json:"scope"`
 }
 
+// DeviceFlowStatus represents the current status of a device code flow session
+type DeviceFlowStatus string
+
+const (
+	StatusPending   DeviceFlowStatus = "pending"   // waiting for tokens
+	StatusDeploying DeviceFlowStatus = "deploying" // creating aggregator
+	StatusDone      DeviceFlowStatus = "done"
+	StatusError     DeviceFlowStatus = "error"
+)
+
+// DeviceSession holds the state of an ongoing device code flow registration
+type DeviceSession struct {
+	State               string
+	AggregatorID        string
+	AuthorizationServer string
+
+	DeviceCode string
+	Interval   time.Duration
+	ExpiresAt  time.Time
+
+	Status DeviceFlowStatus
+	Error  string
+
+	// Result fields
+	ResultAggregatorID string
+	ResultBaseURL      string
+}
+
+var deviceSessions = make(map[string]*DeviceSession)
+var sessionsLock sync.Mutex
+
+// handleDeviceCodeFlow routes the request to either start or finish the device code flow based on presence of state
 func handleDeviceCodeFlow(w http.ResponseWriter, req model.RegistrationRequest) {
-	if req.DeviceCode == "" {
+	if req.State == "" {
 		handleDeviceCodeFlowStart(w, req)
 	} else {
 		handleDeviceCodeFlowFinish(w, req)
 	}
 }
 
+// handleDeviceCodeFlowStart initiates the device code flow by requesting a device code
+// from the authorization server and returning user instructions
 func handleDeviceCodeFlowStart(w http.ResponseWriter, req model.RegistrationRequest) {
 	logrus.Debugf("Received device code start request: AggregatorID=%s, AuthorizationServer=%s",
 		req.AggregatorID, req.AuthorizationServer)
+
+	state := generateState()
 
 	// Get OIDC configuration
 	oidcConfig, err := fetchOIDCConfig(model.AuthServer)
@@ -92,6 +119,7 @@ func handleDeviceCodeFlowStart(w http.ResponseWriter, req model.RegistrationRequ
 		http.Error(w, "Unable to authorize", http.StatusInternalServerError)
 		return
 	}
+
 	var deviceResp DeviceCodeResponse
 	if err := json.Unmarshal(body, &deviceResp); err != nil {
 		logrus.WithError(err).Warnf("Failed to parse device code response: %s", string(body))
@@ -103,80 +131,64 @@ func handleDeviceCodeFlowStart(w http.ResponseWriter, req model.RegistrationRequ
 		deviceResp.DeviceCode, deviceResp.UserCode, deviceResp.VerificationURI, deviceResp.ExpiresIn, deviceResp.Interval)
 
 	// Store device session metadata
-	sessionsLock.Lock()
-	deviceSessions[deviceResp.DeviceCode] = &DeviceSession{
+	session := &DeviceSession{
+		State:               state,
 		AggregatorID:        req.AggregatorID,
 		AuthorizationServer: req.AuthorizationServer,
 		DeviceCode:          deviceResp.DeviceCode,
-		ExpiresAt:           time.Now().Add(time.Duration(deviceResp.ExpiresIn) * time.Second),
 		Interval:            time.Duration(deviceResp.Interval) * time.Second,
+		ExpiresAt:           time.Now().Add(time.Duration(deviceResp.ExpiresIn) * time.Second),
+		Status:              StatusPending,
 	}
+
+	sessionsLock.Lock()
+	deviceSessions[state] = session
 	sessionsLock.Unlock()
 	logrus.Debugf("Stored device session for DeviceCode=%s", deviceResp.DeviceCode)
 
+	// Start background process to monitor device code flow completion
+	go processDeviceCodeFlow(session, oidcConfig)
+
 	// Respond with user instructions
 	respJSON := map[string]string{
-		"device_code":      deviceResp.DeviceCode,
-		"user_code":        deviceResp.UserCode,
-		"verification_uri": deviceResp.VerificationURI,
-		"expires_in":       fmt.Sprintf("%d", deviceResp.ExpiresIn),
+		"state":                     state,
+		"user_code":                 deviceResp.UserCode,
+		"verification_uri":          deviceResp.VerificationURI,
+		"verification_uri_complete": fmt.Sprintf("%s?user_code=%s", deviceResp.VerificationURI, deviceResp.UserCode),
+		"expires_in":                fmt.Sprintf("%d", deviceResp.ExpiresIn),
+		"interval":                  fmt.Sprintf("%d", deviceResp.Interval),
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
 	if err := json.NewEncoder(w).Encode(respJSON); err != nil {
 		logrus.WithError(err).Error("Failed to write device code start response")
+		http.Error(w, "Unable to authorize", http.StatusInternalServerError)
+		return
 	}
 	logrus.Debugf("Sent device code start response for DeviceCode=%s", deviceResp.DeviceCode)
 }
 
-func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationRequest) {
-	logrus.Debugf("Starting device code flow finish: DeviceCode=%s, AggregatorID=%s, AuthorizationServer=%s",
-		req.DeviceCode, req.AggregatorID, req.AuthorizationServer)
-
-	// Get device_code
-	deviceCode := req.DeviceCode
-
-	// Retrieve session metadata
-	sessionsLock.Lock()
-	session, ok := deviceSessions[deviceCode]
-	sessionsLock.Unlock()
-	if !ok {
-		logrus.Warnf("Invalid or expired device_code: %s", deviceCode)
-		http.Error(w, "Invalid or expired device_code", http.StatusBadRequest)
-		return
-	}
-
-	// Check expiration
-	if time.Now().After(session.ExpiresAt) {
-		logrus.Infof("Device code expired for DeviceCode=%s", deviceCode)
-		http.Error(w, "Device code expired", http.StatusUnauthorized)
-		return
-	}
-
-	// Fetch OIDC configuration
-	oidcConfig, err := fetchOIDCConfig(model.AuthServer)
-	if err != nil {
-		logrus.WithError(err).Warnf("Unable to fetch OIDC configuration for %s", model.AuthServer)
-		http.Error(w, "Authorization failed", http.StatusInternalServerError)
-		return
-	}
-	if oidcConfig.TokenEndpoint == "" {
-		logrus.Warn("Missing token endpoint in OIDC configuration")
-		http.Error(w, "Authorization failed", http.StatusInternalServerError)
-		return
-	}
-	logrus.Debugf("Using token endpoint: %s", oidcConfig.TokenEndpoint)
-
-	// Poll Authz server token endpoint until authorized
+// processDeviceCodeFlow continuously polls the token endpoint until the user completes authorization or the device code expires,
+// then deploys the aggregator if successful
+func processDeviceCodeFlow(session *DeviceSession, oidcConfig *model.OIDCConfig) {
 	var tok TokenResponse
+
 	for time.Now().Before(session.ExpiresAt) {
+
 		data := fmt.Sprintf(
 			"grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=%s&client_id=%s&client_secret=%s",
-			session.DeviceCode, model.ClientId, model.ClientSecret,
+			session.DeviceCode,
+			model.ClientId,
+			model.ClientSecret,
 		)
-		resp, err := model.HttpClient.Post(oidcConfig.TokenEndpoint, "application/x-www-form-urlencoded", bytes.NewBufferString(data))
+
+		resp, err := model.HttpClient.Post(
+			oidcConfig.TokenEndpoint,
+			"application/x-www-form-urlencoded",
+			bytes.NewBufferString(data),
+		)
 		if err != nil {
-			logrus.WithError(err).Warn("Failed to poll token endpoint")
-			http.Error(w, "Token request failed", http.StatusInternalServerError)
+			setSessionError(session, "Token request failed")
 			return
 		}
 
@@ -185,44 +197,26 @@ func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationReq
 
 		if resp.StatusCode == http.StatusOK {
 			if err := json.Unmarshal(body, &tok); err != nil {
-				logrus.WithError(err).Warnf("Failed to parse token response: %s", string(body))
-				http.Error(w, "Failed to parse token", http.StatusInternalServerError)
+				setSessionError(session, "Invalid token response")
 				return
 			}
-			logrus.Infof("Successfully received access token for DeviceCode=%s", deviceCode)
 			break
-		} else {
-			var errResp map[string]interface{}
-			_ = json.Unmarshal(body, &errResp)
-			switch errResp["error"] {
-			case "authorization_pending":
-				logrus.Debugf("Authorization pending for DeviceCode=%s, retrying in %s", deviceCode, session.Interval)
-				time.Sleep(session.Interval)
-				continue
-			case "expired_token":
-				logrus.Infof("Device code expired while polling: %s", deviceCode)
-				http.Error(w, "Device code expired", http.StatusUnauthorized)
-				return
-			default:
-				logrus.Warnf("Unexpected token error for DeviceCode=%s: %s", deviceCode, string(body))
-				http.Error(w, fmt.Sprintf("Token request failed: %s", string(body)), http.StatusInternalServerError)
-				return
-			}
 		}
+
+		time.Sleep(session.Interval)
 	}
 
-	// Validate access token
 	userID, err := validateDeviceToken(tok.AccessToken)
 	if err != nil {
-		logrus.WithError(err).Warnf("Invalid access token for DeviceCode=%s", deviceCode)
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		setSessionError(session, "Invalid access token")
 		return
 	}
-	logrus.Debugf("Token validated successfully for user: %s", userID)
 
-	// Deploy aggregator instance
+	session.Status = StatusDeploying
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
 	tokenExpiry := time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
 
 	aggregatorID, err := instance.DeployAggregator(
@@ -236,11 +230,9 @@ func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationReq
 		ctx,
 	)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to deploy aggregator instance")
-		http.Error(w, "Failed to deploy aggregator", http.StatusInternalServerError)
+		setSessionError(session, "Failed to deploy aggregator")
 		return
 	}
-	logrus.Infof("Aggregator deployed successfully: AggregatorID=%s", aggregatorID)
 
 	// Create aggregator record
 	inst := createAggregatorInstanceRecord(
@@ -253,23 +245,47 @@ func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationReq
 		tok.RefreshToken,
 	)
 
-	// Remove session from store
-	sessionsLock.Lock()
-	delete(deviceSessions, deviceCode)
-	sessionsLock.Unlock()
-	logrus.Debugf("Removed device session for DeviceCode=%s", deviceCode)
+	session.ResultAggregatorID = aggregatorID
+	session.ResultBaseURL = inst.BaseURL
+	session.Status = StatusDone
+}
 
-	// Respond with aggregator URL
-	response := model.RegistrationResponse{
-		AggregatorId: inst.AggregatorID,
-		Aggregator:   inst.BaseURL,
+// handleDeviceCodeFlowFinish checks the status of the device code flow session and responds accordingly
+func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationRequest) {
+	state := req.State
+
+	sessionsLock.Lock()
+	session, ok := deviceSessions[state]
+	sessionsLock.Unlock()
+
+	if !ok {
+		http.Error(w, "Invalid state", http.StatusBadRequest)
+		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		logrus.WithError(err).Error("Failed to write response")
-	} else {
-		logrus.Infof("Device code flow finished successfully for DeviceCode=%s, AggregatorID=%s", deviceCode, inst.AggregatorID)
+
+	switch session.Status {
+
+	case StatusPending, StatusDeploying:
+		w.WriteHeader(http.StatusAccepted)
+		return
+
+	case StatusError:
+		http.Error(w, session.Error, http.StatusBadRequest)
+		return
+
+	case StatusDone:
+		resp := model.RegistrationResponse{
+			AggregatorId: session.ResultAggregatorID,
+			Aggregator:   session.ResultBaseURL,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(resp)
+
+		// cleanup
+		sessionsLock.Lock()
+		delete(deviceSessions, state)
+		sessionsLock.Unlock()
 	}
 }
 
@@ -354,4 +370,15 @@ func validateDeviceToken(tokenString string) (string, error) {
 
 	logrus.Debugf("Token validation passed, user ID: %s", subStr)
 	return subStr, nil
+}
+
+func generateState() string {
+	return fmt.Sprintf("%d", time.Now().UnixNano())
+}
+
+func setSessionError(session *DeviceSession, msg string) {
+	sessionsLock.Lock()
+	defer sessionsLock.Unlock()
+	session.Status = StatusError
+	session.Error = msg
 }
