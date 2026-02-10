@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: token-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aggregator.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: token-service
+  annotations:
+    {{- include "aggregator.annotations" $ | nindent 4 }}
+spec:
+  replicas: {{ .Values.tokenService.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "aggregator.labels" $ | nindent 6 }}
+      app.kubernetes.io/component: token-service
+  template:
+    metadata:
+      labels:
+        {{- include "aggregator.labels" $ | nindent 8 }}
+        app.kubernetes.io/component: token-service
+      annotations:
+        {{- include "aggregator.annotations" $ | nindent 8 }}
+    spec:
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: token-service
+          image: "{{ .Values.tokenService.image.repository }}:{{ .Values.tokenService.image.tag }}"
+          imagePullPolicy: {{ .Values.tokenService.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: {{ .Values.tokenService.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.tokenService.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.tokenService.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.tokenService.readinessProbe.failureThreshold }}
+          env:
+            - name: CLIENT_ID
+              value: "{{ .Values.auth.clientId }}"
+            - name: CLIENT_SECRET
+              value: "{{ .Values.auth.clientSecret }}"
+            - name: AUTHZ_SERVER
+              value: "{{ .Values.auth.server }}"
+            - name: LOG_LEVEL
+              value: "{{ .Values.loglevel }}"

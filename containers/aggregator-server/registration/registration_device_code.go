@@ -206,12 +206,24 @@ func processDeviceCodeFlow(session *DeviceSession, oidcConfig *model.OIDCConfig)
 		time.Sleep(session.Interval)
 	}
 
+	// Validate access token and extract user ID
 	userID, err := validateDeviceToken(tok.AccessToken)
 	if err != nil {
 		setSessionError(session, "Invalid access token")
 		return
 	}
 
+	// Store tokens in central token service
+	if err := storeTokens(
+		userID,
+		tok,
+		model.Namespace,
+	); err != nil {
+		setSessionError(session, "Failed to store tokens in token service")
+		return
+	}
+
+	// Deploy aggregator instance
 	session.Status = StatusDeploying
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

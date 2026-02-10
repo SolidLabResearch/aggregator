@@ -27,7 +27,7 @@ export class KvasirManagement {
     this.umaFetch = this.auth.createUMAFetch();
   }
 
-  public async registerPolicies(turtle: string, assigner: string) {
+  public async registerPolicies(assigner: string, turtle: string) {
     const policyUri = `${this.umaUrl}/policies`;
 
     try {
@@ -35,10 +35,11 @@ export class KvasirManagement {
         method: "POST",
         headers: {
           "Content-Type": "text/turtle",
-          "Authorization": `Bearer ${await this.auth.getIdToken()}`,
+          "Authorization": assigner,
         },
         body: turtle,
       });
+      console.log(await this.auth.getIdToken());
 
       if (!resp.ok) {
         console.error(`Error ${resp.status}:`, await resp.text());
@@ -82,7 +83,7 @@ export class KvasirManagement {
           method: "DELETE",
           headers: {
             "Content-Type": "text/turtle",
-            "Authorization": assigner,
+            "Authorization": `${assigner}`,
           },
         });
 

@@ -14,19 +14,12 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type RegistrationRequest struct {
+type Registration struct {
 	UserID      string `json:"user_id"`
-	IDToken     string `json:"id_token"`
 	AuthzServer string `json:"as_url"`
 }
 
-type Registration struct {
-	UserID      string
-	AuthzServer string
-}
-
 type Credentials struct {
-	IDToken      string
 	ClientID     string
 	ClientSecret string
 	ExpiresAt    time.Time
@@ -38,7 +31,6 @@ type PAT struct {
 }
 
 var (
-	userCredentials   = make(map[string]string)
 	serverCredentials = make(map[Registration]Credentials)
 	mu                sync.Mutex
 	patMap            = make(map[Registration]PAT)
@@ -57,34 +49,23 @@ func HandleRegistrationRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req RegistrationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var reg Registration
+	if err := json.NewDecoder(r.Body).Decode(&reg); err != nil {
 		log.WithError(err).Error("Failed to decode registration request body")
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	if req.UserID == "" || req.IDToken == "" || req.AuthzServer == "" {
+	if reg.UserID == "" || reg.AuthzServer == "" {
 		log.Warn("Missing required fields: user_id, id_token or as_url")
 		http.Error(w, "user_id, id_token and as_url are required", http.StatusBadRequest)
 		return
 	}
 
 	log = log.WithFields(logrus.Fields{
-		"user_id": req.UserID,
-		"as_url":  req.AuthzServer,
+		"user_id": reg.UserID,
+		"as_url":  reg.AuthzServer,
 	})
-
-	log.Debug("Storing user ID token")
-
-	mu.Lock()
-	userCredentials[req.UserID] = req.IDToken
-	mu.Unlock()
-
-	reg := Registration{
-		UserID:      req.UserID,
-		AuthzServer: req.AuthzServer,
-	}
 
 	mu.Lock()
 	_, exists := serverCredentials[reg]
@@ -198,7 +179,11 @@ func requestCredentials(reg Registration) (Credentials, error) {
 		return Credentials{}, err
 	}
 
-	idToken := userCredentials[reg.UserID]
+	idToken, err := getIDToken(reg.UserID)
+	if err != nil {
+		log.WithError(err).Error("Failed to get ID token for client registration")
+		return Credentials{}, err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+idToken)
 
@@ -248,6 +233,53 @@ func requestCredentials(reg Registration) (Credentials, error) {
 		ClientSecret: response.ClientSecret,
 		ExpiresAt:    expiresAt,
 	}, nil
+}
+
+func DeleteCredentials() {
+	logrus.Info("Starting credential cleanup")
+	for reg := range serverCredentials {
+		log := logrus.WithFields(logrus.Fields{
+			"user_id":   reg.UserID,
+			"as_url":    reg.AuthzServer,
+			"component": "credential_cleanup",
+		})
+
+		mu.Lock()
+		creds, _ := serverCredentials[reg]
+		mu.Unlock()
+
+		config, err := fetchUmaConfig(reg.AuthzServer)
+		if err != nil {
+			log.WithError(err).Error("Failed to fetch UMA configuration for cleanup")
+			continue
+		}
+		req, err := http.NewRequest("DELETE", config.RegistrationEndpoint+creds.ClientID, nil)
+		if err != nil {
+			log.WithError(err).Error("Failed to create client deletion request")
+			continue
+		}
+
+		// TODO - get id token from user id
+		idToken, err := getIDToken(reg.UserID)
+		if err != nil {
+			log.WithError(err).Error("Failed to get ID token for cleanup")
+			continue
+		}
+		req.Header.Set("Authorization", "Bearer "+idToken)
+
+		resp, err := model.HttpClient.Do(req)
+		if err != nil {
+			log.WithError(err).Error("HTTP request to AS failed during cleanup")
+			continue
+		}
+		defer resp.Body.Close()
+		log.WithField("status_code", resp.StatusCode).Info("Successfully deleted client credentials")
+
+		mu.Lock()
+		delete(serverCredentials, reg)
+		delete(patMap, reg)
+		mu.Unlock()
+	}
 }
 
 func getPAT(reg Registration) (string, error) {
@@ -328,6 +360,49 @@ func getPAT(reg Registration) (string, error) {
 		Info("Successfully obtained new PAT")
 
 	return pat.AccessToken, nil
+}
+
+func getIDToken(userId string) (string, error) {
+	log := logrus.WithFields(logrus.Fields{
+		"user_id":   userId,
+		"component": "token_service",
+	})
+
+	url := fmt.Sprintf("http://token-service:8080/token/%s", userId)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := model.HttpClient.Do(req)
+	if err != nil {
+		log.WithError(err).Error("Failed to contact token service")
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.WithField("status_code", resp.StatusCode).
+			Error("Token service returned error")
+		return "", fmt.Errorf("token service returned %d", resp.StatusCode)
+	}
+
+	var body struct {
+		AccessToken string `json:"access_token"`
+		IDToken     string `json:"id_token"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		log.WithError(err).Error("Failed to decode token service response")
+		return "", err
+	}
+
+	if body.IDToken == "" {
+		return "", errors.New("no id_token returned from token service")
+	}
+
+	return body.IDToken, nil
 }
 
 func basicAuth(s string) string {

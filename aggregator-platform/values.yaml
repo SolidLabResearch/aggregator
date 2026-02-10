@@ -37,6 +37,20 @@ ingressUma:
     timeoutSeconds: 2
     failureThreshold: 3
 
+tokenService:
+  replicaCount: 1
+
+  image:
+    repository: token-service
+    tag: latest
+    pullPolicy: Never
+
+  readinessProbe:
+    initialDelaySeconds: 2
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 3
+
 tls:
   enabled: false
   secretName: aggregator-tls

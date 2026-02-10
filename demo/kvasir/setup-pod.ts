@@ -7,13 +7,13 @@ const IDP = "https://pacsoi-idp.faqir.org";
 const REALM = "kvasir";
 const CLIENT_ID = "moveup-backend";
 const CLIENT_SECRET = "GD7VyY29Eeim5BWfdTAFJ8FTDW7SeU2g";
-const CLIENT_WEBID = "http://example.com/id/moveup-backend"
+const CLIENT_WEBID = `http://example.com/${CLIENT_ID}`
 
 const POD_NAME = "97fc4346-f2d6-49a4-ac09-6117233c1e05";
-const USER_ID = "d4c5e084-48ac-4c32-80e8-ec9276434bae";
+const USER_ID = "080645fd-f3a7-47a3-a841-77b035f59842";
 const USERNAME = "patient0@example.com";
-const PASSWORD = "1234";
-const DOCTOR_ID = "056e2d71-21aa-4528-a9f8-735ad76f0baa";
+const PASSWORD = "patient0";
+const DOCTOR_ID = "de370081-3539-4416-9b24-ee932011c13c";
 
 const CONTEXT = {
   "kss": "https://kvasir.discover.ilabt.imec.be/vocab#",
@@ -76,7 +76,7 @@ async function main() {
       {
         name: "owner_slice_management",
         assignee: `${IDP}/users/${USER_ID}`,
-        assigner: CLIENT_WEBID,
+        assigner: `${IDP}/users/${USER_ID}`,
         scopes: ["read", "write"],
         target: `${POD_PROVIDER}/${POD_NAME}/slices`,
         client: "moveup-backend",
@@ -84,7 +84,7 @@ async function main() {
     ]);
 
     policyIds.push(...ownerPolicyIds);
-    await kvasir.registerPolicies(ownerPolicyTurtle, CLIENT_WEBID);
+    await kvasir.registerPolicies(`${IDP}/users/${USER_ID}`, ownerPolicyTurtle);
 
     console.log("▶ Registering new slice…");
 
@@ -103,7 +103,7 @@ async function main() {
 
     console.log("▶ Granting owner access to slice…");
 
-    // grant owner access to slice
+    // grant owner & doctor access to slice
     const {
       turtle: slicePolicyTurtle,
       ids: slicePolicyIds,
@@ -111,28 +111,28 @@ async function main() {
       {
         name: "SlicesOwnerDelete",
         assignee: `${IDP}/users/${USER_ID}`,
-        assigner: CLIENT_WEBID,
+        assigner: `${IDP}/users/${USER_ID}`,
         target: slice,
         scopes: ["delete"],
       },
       {
         name: "AggregatorDemoSliceOwnerReadWrite",
         assignee: `${IDP}/users/${USER_ID}`,
-        assigner: CLIENT_WEBID,
+        assigner: `${IDP}/users/${USER_ID}`,
         target: `${slice}/query`,
         scopes: ["read", "write"],
       },
       {
         name: "AggregatorDemoSliceDoctorRead",
         assignee: `${IDP}/users/${DOCTOR_ID}`,
-        assigner: CLIENT_WEBID,
+        assigner: `${IDP}/users/${DOCTOR_ID}`,
         target: `${slice}/query`,
         scopes: ["read"],
       }
     ]);
 
     policyIds.push(...slicePolicyIds);
-    await kvasir.registerPolicies(slicePolicyTurtle, CLIENT_WEBID);
+    await kvasir.registerPolicies(`${IDP}/users/${USER_ID}`, slicePolicyTurtle);
 
     // Adding dummy data
     await kvasir.addData(slice, CONTEXT, "obs", generateObservation());
@@ -164,7 +164,7 @@ async function main() {
     // delete policies
     try {
       console.log("   ➝ Deleting policies…");
-      await kvasir.deletePolicies(CLIENT_WEBID, policyIds);
+      await kvasir.deletePolicies(`${IDP}/users/${USER_ID}`, policyIds);
     } catch (err) {
       console.error("   ❌ Failed to delete policies:", err);
     }

@@ -106,7 +106,10 @@ func createPolicy(asUrl string, resourceId string, scopes []Scope, clients []str
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	idToken := userCredentials[data.UserID]
+	idToken, err := getIDToken(data.UserID)
+	if err != nil {
+		return fmt.Errorf("failed to get ID token: %w", err)
+	}
 	req.Header.Set("Content-Type", "application/n-quads")
 	req.Header.Set("Authorization", "Bearer "+idToken)
 	logrus.WithFields(logrus.Fields{

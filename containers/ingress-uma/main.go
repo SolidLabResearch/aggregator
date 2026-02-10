@@ -6,7 +6,6 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 
 	"ingress-uma/auth"
 
@@ -66,15 +65,16 @@ func main() {
 	<-sigs
 	logrus.Info("Termination signal received, starting resource cleanup")
 
-	// Keep the server running while deleting resources
-	start := time.Now()
+	// Clean up resources before exiting
 	if err := auth.DeleteResources(); err != nil {
 		logrus.WithError(err).Error("Failed to delete UMA resources")
 	} else {
 		logrus.Info("Successfully deleted all UMA resources")
 	}
-	elapsed := time.Since(start)
-	logrus.Infof("Resource deletion completed in %s", elapsed)
+	logrus.Infof("Resource deletion completed")
+
+	// Clean up credentials after resources are deleted
+	auth.DeleteCredentials()
 
 	// Now it is safe to exit
 	logrus.Info("Exiting container after resource cleanup")

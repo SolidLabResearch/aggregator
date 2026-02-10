@@ -26,7 +26,7 @@ export async function createPolicies(policies: PolicyOptions[]): Promise<{ turtl
   // Serialize store to Turtle
   const writer = new Writer({
     prefixes: {
-      ex: `http://example.org/`,
+      ex: `http://example.com/`,
       odrl: "http://www.w3.org/ns/odrl/2/",
       odrl_p: "https://w3id.org/force/odrl3proposal#",
       ldp: "http://www.w3.org/ns/ldp#",
@@ -46,7 +46,7 @@ export async function createPolicies(policies: PolicyOptions[]): Promise<{ turtl
 export function createPolicy(store: Store, options: PolicyOptions): string {
   const { name, assignee, assigner, scopes = ["read"], target, containerName, client } = options;
   const uuid = randomUUID();
-  const baseIRI = `http://example.org/${uuid}#`;
+  const baseIRI = `http://example.com/${uuid}#`;
 
   const policyNode = namedNode(`${baseIRI}${name}Policy`);
   const permissionNode = blankNode();
@@ -81,7 +81,7 @@ export function createPolicy(store: Store, options: PolicyOptions): string {
     store.addQuad(permissionNode, namedNode("odrl:constraint"), constraintNode);
     store.addQuad(constraintNode, namedNode("odrl:leftOperand"), namedNode("odrl:purpose"));
     store.addQuad(constraintNode, namedNode("odrl:operator"), namedNode("odrl:eq"));
-    store.addQuad(constraintNode, namedNode("odrl:rightOperand"), namedNode(client));
+    store.addQuad(constraintNode, namedNode("odrl:rightOperand"), namedNode(`ex:${client}`));
   }
 
   return policyNode.value;
