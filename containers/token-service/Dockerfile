@@ -1,10 +1,11 @@
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
-COPY main.go ./
+# Copy all Go files
+COPY *.go ./
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o token-service
 
 FROM gcr.io/distroless/base-debian12

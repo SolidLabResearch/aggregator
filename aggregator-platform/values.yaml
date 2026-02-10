@@ -36,6 +36,8 @@ ingressUma:
     periodSeconds: 5
     timeoutSeconds: 2
     failureThreshold: 3
+  
+  terminationGracePeriodSeconds: 50
 
 tokenService:
   replicaCount: 1
@@ -50,6 +52,8 @@ tokenService:
     periodSeconds: 5
     timeoutSeconds: 2
     failureThreshold: 3
+  
+  terminationGracePeriodSeconds: 60
 
 tls:
   enabled: false

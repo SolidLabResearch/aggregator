@@ -22,7 +22,7 @@ spec:
       annotations:
         {{- include "aggregator.annotations" $ | nindent 8 }}
     spec:
-      terminationGracePeriodSeconds: 120
+      serviceAccountName: token-service-sa
       containers:
         - name: token-service
           image: "{{ .Values.tokenService.image.repository }}:{{ .Values.tokenService.image.tag }}"
@@ -46,3 +46,4 @@ spec:
               value: "{{ .Values.auth.server }}"
             - name: LOG_LEVEL
               value: "{{ .Values.loglevel }}"
+          terminationGracePeriodSeconds: {{ .Values.tokenService.terminationGracePeriodSeconds }}

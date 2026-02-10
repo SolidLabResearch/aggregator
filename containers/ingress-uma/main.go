@@ -65,18 +65,16 @@ func main() {
 	<-sigs
 	logrus.Info("Termination signal received, starting resource cleanup")
 
-	// Clean up resources before exiting
+	// Clean up UMA resources
 	if err := auth.DeleteResources(); err != nil {
 		logrus.WithError(err).Error("Failed to delete UMA resources")
 	} else {
 		logrus.Info("Successfully deleted all UMA resources")
 	}
-	logrus.Infof("Resource deletion completed")
 
-	// Clean up credentials after resources are deleted
+	// Clean up credentials
 	auth.DeleteCredentials()
 
-	// Now it is safe to exit
 	logrus.Info("Exiting container after resource cleanup")
 }
 

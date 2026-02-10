@@ -8,8 +8,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -76,6 +78,17 @@ func main() {
 
 	http.HandleFunc("/token/", tokenHandler)
 	http.HandleFunc("/healthz", healthHandler)
+
+	// Listen for SIGTERM
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	go func() {
+		time.Sleep(10 * time.Second)
+		<-ctx.Done()
+		log.Println("SIGTERM/SIGINT received, starting shutdown procedure")
+		waitForIngressUMA()
+	}()
 
 	log.Info("Listening on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {

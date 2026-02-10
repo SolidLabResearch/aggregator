@@ -22,7 +22,6 @@ spec:
       annotations:
         {{- include "aggregator.annotations" $ | nindent 8 }}
     spec:
-      terminationGracePeriodSeconds: 120
       containers:
         - name: ingress-uma
           image: "{{ .Values.ingressUma.image.repository }}:{{ .Values.ingressUma.image.tag }}"
