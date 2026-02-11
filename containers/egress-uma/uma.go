@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"egress-uma/model"
 	"encoding/json"
 	"errors"
 	"io"
