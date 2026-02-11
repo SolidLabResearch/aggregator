@@ -274,7 +274,6 @@ func createDeployment(service *model.Service, replicas int32, useUMA bool, ctx c
 	return nil
 }
 
-
 func createServiceResource(service *model.Service, ctx context.Context) error {
 	svcName := "svc-" + service.Id
 
@@ -345,7 +344,7 @@ func createIngressRoute(service *model.Service, owner model.User, ctx context.Co
 	middlewares := []interface{}{
 		map[string]interface{}{
 			"name":      "cors",
-			"namespace": namespace,
+			"namespace": "aggregator-app",
 		},
 	}
 	if useUMA {

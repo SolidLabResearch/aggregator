@@ -37,7 +37,7 @@ metadata:
   namespace: aggregator-app
 spec:
   headers:
-    accessControlAllowOriginList: 
+    accessControlAllowOriginList:
       - "*"
     accessControlAllowMethods:
       - GET
@@ -48,6 +48,8 @@ spec:
       - HEAD
       - OPTIONS
     accessControlAllowHeaders:
+      - "*"
+    accessControlExposeHeaders:
       - "*"
     accessControlMaxAge: 86400
     accessControlAllowCredentials: false
