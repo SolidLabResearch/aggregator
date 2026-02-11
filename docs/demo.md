@@ -53,35 +53,28 @@ You can configure available transformations in the [helm config file](/kind/helm
 ### Example Transformation
 ```yaml
 transformations:
-  - name: get
+  - name: pacsoi
     spec:
-      id: Get
-      image: fetch
+      id: Pacsoi
+      image: pacsoi-mock-service
       fno: |
         @prefix fno: <https://w3id.org/function/ontology#> .
         @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
         @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 
-        <Get>
+        <Pacsoi>
           a fno:Function ;
-          fno:expects ( <URL> ) ;
-          fno:returns ( <Response> ) .
+          fno:expects ( ) ;
+          fno:returns ( <WeightDistribution> ) .
 
-        <URL>
-          a fno:Parameter ;
-          fno:predicate <url> ;
-          fno:type xsd:string ;
-          fno:required "true"^^xsd:boolean .
-
-        <Response>
+        <WeightDistribution>
           a fno:Output ;
-          fno:predicate <resp> .
-      inputMapping:
-        url: GET_URL
+          fno:predicate <w-distribution> .
+      inputMapping: {}
       outputMapping:
-        resp:
-          port: 8080
-          path: /
+        w-distribution:
+          port: 8000
+          path: /report
 ```
 ---
 ### How Transformations Work
@@ -206,9 +199,8 @@ Content-Type: text/turtle
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#>.
 
-<https://aggregator.local/15359d0a-df50-4083-8c88-b457ec7d2399/get-example-service> a fno:Execution;
-    fno:executes trans:Get;
-    trans:url "http://example.com".
+<https://aggregator.local/15359d0a-df50-4083-8c88-b457ec7d2399/pacsoi-service> a fno:Execution;
+    fno:executes trans:Pacsoi;
 ```
 
 ---
@@ -223,7 +215,7 @@ const TF_ID = "<Fno Function>"
 const PARAMS = {
   "<inptu pred>": "<input value>",
   ...
-}
+} // Pacsoi service does not require inputs, so this can be left empty
 ```
 Then run:
 ```bash
@@ -244,8 +236,9 @@ This flow is implemented in [demo/pacsoi/get-service](/demo/pacsoi/get-service.t
 
 ```ts
 const SERVICE_ENDPOINT = "https://aggregator.local/<aggregator-id>/<service-id>";
+// https://aggregator.local/15359d0a-df50-4083-8c88-b457ec7d2399/pacsoi-service
 const OUTPUT_ENDPOINT = "https://aggregator.local/<aggregator-id>/<service-id>/<output pred>";
-
+// https://aggregator.local/15359d0a-df50-4083-8c88-b457ec7d2399/pacsoi-service/w-distribution
 ```
 Then run:
 ```bash
