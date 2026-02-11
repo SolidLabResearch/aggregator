@@ -2,7 +2,7 @@ host: aggregator.local
 auth:
   clientId: aggregator-server
   server: http://localhost:8280/realms/quarkus
-  clientSecret: m2kuLhREOFpDGPhNQgZuAFz0ZGAxtSEC
+  clientSecret: sYKzd9NtIay5tCxvlGiVXVBytcOe2F01
   allowedRegistrationTypes:
     - none
     - device_code

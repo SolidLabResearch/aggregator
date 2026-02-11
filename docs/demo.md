@@ -236,9 +236,9 @@ This flow is implemented in [demo/pacsoi/get-service](/demo/pacsoi/get-service.t
 
 ```ts
 const SERVICE_ENDPOINT = "https://aggregator.local/<aggregator-id>/<service-id>";
-// https://aggregator.local/15359d0a-df50-4083-8c88-b457ec7d2399/pacsoi-service
+// ex. https://aggregator.local/15359d0a-df50-4083-8c88-b457ec7d2399/pacsoi-service
 const OUTPUT_ENDPOINT = "https://aggregator.local/<aggregator-id>/<service-id>/<output pred>";
-// https://aggregator.local/15359d0a-df50-4083-8c88-b457ec7d2399/pacsoi-service/w-distribution
+// ex. https://aggregator.local/15359d0a-df50-4083-8c88-b457ec7d2399/pacsoi-service/w-distribution
 ```
 Then run:
 ```bash

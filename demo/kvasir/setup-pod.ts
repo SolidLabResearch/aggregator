@@ -1,19 +1,21 @@
 import { createPolicies } from "./policies.js";
 import { KvasirManagement } from "./management.js";
 
-const POD_PROVIDER = "https://pacsoi-kvasir.faqir.org";
-const AS_SERVER = "https://pacsoi-uma.faqir.org/uma"
-const IDP = "https://pacsoi-idp.faqir.org";
-const REALM = "kvasir";
-const CLIENT_ID = "moveup-backend";
-const CLIENT_SECRET = "GD7VyY29Eeim5BWfdTAFJ8FTDW7SeU2g";
-const CLIENT_WEBID = `http://example.com/${CLIENT_ID}`
+const POD_PROVIDER = "http://localhost:8080";
+const AS_SERVER = "http://localhost:4000/uma"
+const IDP = "http://localhost:8280";
+const REALM = "quarkus";
+const CLIENT_ID = "demo-client";
+const CLIENT_UMA_ID = `http://example.com/${CLIENT_ID}`;
+const CLIENT_SECRET = "tVizN2ADzL4qQdaEkCi4Zxxbept2lvDs";
 
-const POD_NAME = "97fc4346-f2d6-49a4-ac09-6117233c1e05";
-const USER_ID = "080645fd-f3a7-47a3-a841-77b035f59842";
-const USERNAME = "patient0@example.com";
-const PASSWORD = "patient0";
-const DOCTOR_ID = "de370081-3539-4416-9b24-ee932011c13c";
+const POD_NAME = "alice";
+const USER_ID = "bf53d8c4-cf4f-4847-9173-dcb17dd936df";
+const USER_UMA_ID = `http://example.com/${USER_ID}`;
+const USERNAME = "alice@example.com";
+const PASSWORD = "alice";
+const DOCTOR_ID = "257476d4-7b52-4dd1-a3ba-d57021e5d057";
+const DOCTOR_UMA_ID = `http://example.com/${DOCTOR_ID}`
 
 const CONTEXT = {
   "kss": "https://kvasir.discover.ilabt.imec.be/vocab#",
@@ -75,16 +77,16 @@ async function main() {
     } = await createPolicies([
       {
         name: "owner_slice_management",
-        assignee: `${IDP}/users/${USER_ID}`,
-        assigner: `${IDP}/users/${USER_ID}`,
+        assignee: USER_UMA_ID,
+        assigner: USER_UMA_ID,
         scopes: ["read", "write"],
         target: `${POD_PROVIDER}/${POD_NAME}/slices`,
-        client: "moveup-backend",
+        client: CLIENT_UMA_ID,
       },
     ]);
 
     policyIds.push(...ownerPolicyIds);
-    await kvasir.registerPolicies(`${IDP}/users/${USER_ID}`, ownerPolicyTurtle);
+    await kvasir.registerPolicies(ownerPolicyTurtle);
 
     console.log("▶ Registering new slice…");
 
@@ -110,29 +112,29 @@ async function main() {
     } = await createPolicies([
       {
         name: "SlicesOwnerDelete",
-        assignee: `${IDP}/users/${USER_ID}`,
-        assigner: `${IDP}/users/${USER_ID}`,
+        assignee: USER_UMA_ID,
+        assigner: USER_UMA_ID,
         target: slice,
         scopes: ["delete"],
       },
       {
         name: "AggregatorDemoSliceOwnerReadWrite",
-        assignee: `${IDP}/users/${USER_ID}`,
-        assigner: `${IDP}/users/${USER_ID}`,
+        assignee: USER_UMA_ID,
+        assigner: USER_UMA_ID,
         target: `${slice}/query`,
         scopes: ["read", "write"],
       },
       {
         name: "AggregatorDemoSliceDoctorRead",
-        assignee: `${IDP}/users/${DOCTOR_ID}`,
-        assigner: `${IDP}/users/${DOCTOR_ID}`,
+        assignee: DOCTOR_UMA_ID,
+        assigner: DOCTOR_UMA_ID,
         target: `${slice}/query`,
         scopes: ["read"],
       }
     ]);
 
     policyIds.push(...slicePolicyIds);
-    await kvasir.registerPolicies(`${IDP}/users/${USER_ID}`, slicePolicyTurtle);
+    await kvasir.registerPolicies(slicePolicyTurtle);
 
     // Adding dummy data
     await kvasir.addData(slice, CONTEXT, "obs", generateObservation());
@@ -164,7 +166,7 @@ async function main() {
     // delete policies
     try {
       console.log("   ➝ Deleting policies…");
-      await kvasir.deletePolicies(`${IDP}/users/${USER_ID}`, policyIds);
+      await kvasir.deletePolicies(policyIds);
     } catch (err) {
       console.error("   ❌ Failed to delete policies:", err);
     }
@@ -195,10 +197,10 @@ function waitForExitSignal(): Promise<void> {
 }
 
 function generateObservation(): Record<string, string> {
-  // Generate a random integer between 100 and 800
-  const randomValue = Math.floor(Math.random() * (800 - 100 + 1)) + 100;
+  // Generate a random integer between 60 and 100
+  const randomValue = Math.floor(Math.random() * (100 - 60 + 1)) + 60;
   // Fixed unit and current timestamp
-  const unit = "steps per day";
+  const unit = "kg";
   const timestamp = new Date().toISOString();
   // Generate a unique observation ID
   const obsId = `ex:Observation${crypto.randomUUID()}`;

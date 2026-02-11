@@ -4,8 +4,8 @@ const IDP = "http://localhost:8280";
 const REALM = "quarkus";
 const USERNAME = "alice@example.com";
 const PASSWORD = "alice";
-const CLIENT_ID = "moveup-app";
-const CLIENT_SECRET = "k9KYqrHeEt0GKdL4YbjeXylf39Yi5aPA";
+const CLIENT_ID = "demo-client";
+const CLIENT_SECRET = "tVizN2ADzL4qQdaEkCi4Zxxbept2lvDs";
 
 const AGGREGATOR = "https://aggregator.local/2a2b61ed-8976-4036-af9b-99b5925452a0"
 const SERVICE_ENDPOINT = `${AGGREGATOR}/pacsoi-svc`;

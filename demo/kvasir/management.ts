@@ -27,7 +27,7 @@ export class KvasirManagement {
     this.umaFetch = this.auth.createUMAFetch();
   }
 
-  public async registerPolicies(assigner: string, turtle: string) {
+  public async registerPolicies(turtle: string) {
     const policyUri = `${this.umaUrl}/policies`;
 
     try {
@@ -35,11 +35,10 @@ export class KvasirManagement {
         method: "POST",
         headers: {
           "Content-Type": "text/turtle",
-          "Authorization": assigner,
+          "Authorization": `Bearer ${await this.auth.getIdToken()}`,
         },
         body: turtle,
       });
-      console.log(await this.auth.getIdToken());
 
       if (!resp.ok) {
         console.error(`Error ${resp.status}:`, await resp.text());
@@ -75,15 +74,15 @@ export class KvasirManagement {
     }
   }
 
-  public async deletePolicies(assigner: string, policyIds: string[]) {
-    async function deletePolicy(policyId: string, umaUrl: string) {
+  public async deletePolicies(policyIds: string[]) {
+    async function deletePolicy(idToken: string, policyId: string, umaUrl: string) {
       const policyUri = `${umaUrl}/policies/${encodeURIComponent(policyId)}`;
       try {
         const resp = await fetch(policyUri, {
           method: "DELETE",
           headers: {
             "Content-Type": "text/turtle",
-            "Authorization": `${assigner}`,
+            "Authorization": `Bearer ${idToken}`,
           },
         });
 
@@ -99,7 +98,7 @@ export class KvasirManagement {
     }
 
     for (const id of policyIds) {
-      await deletePolicy(id, this.umaUrl);
+      await deletePolicy(await this.auth.getIdToken(), id, this.umaUrl);
     }
   }
 
