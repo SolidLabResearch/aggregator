@@ -35,7 +35,8 @@ Then you can follow the instructions in their readme:
 1. Install the [eye reasoner](https://github.com/eyereasoner/eye/) and have `eye` available on your path.
 2. Ensure that you are using Node.js 20 or higher, e.g. by running `nvm use`. (see [.nvmrc](./.nvmrc))
 3. Enable Node.js Corepack with `corepack enable`.
-4. Run `yarn install` in the project root (this will automatically call `yarn build`).
+4. Run `yarn install` in the project root.
+5. Run `yarn build` in the project root.
 
 ## Start Authoriation server
 Make sure `uma.local` host is setup corectly acording to `docs/name-resolving.md`.
@@ -62,6 +63,6 @@ needs to become:
 
 In the `user-managed-access` repo go to `packages/css` and start the server.
 ```bash
-cd packages/uma
+cd packages/css
 yarn run community-solid-server -m . -c ./config/default.json ./config/init-pat.json  --seedConfig ./config/seed.json -b "http://rs.local:3000/" -p 3000
 ```

@@ -210,10 +210,6 @@ kind-deploy:
 	@echo "📄 Adding localhost entries for ingress hosts..."
 	@grep -qxF "127.0.0.1 aggregator.local" /etc/hosts || sudo -- sh -c "echo '127.0.0.1 aggregator.local' >> /etc/hosts"
 	@grep -qxF "127.0.0.1 wsl.local" /etc/hosts || sudo -- sh -c "echo '127.0.0.1 wsl.local' >> /etc/hosts"
-	@if [ -f /mnt/c/Windows/System32/drivers/etc/hosts ]; then \
-		echo "📄 Detected Windows hosts file, adding ingress host entries..."; \
-		grep -qxF "127.0.0.1 aggregator.local" /mnt/c/Windows/System32/drivers/etc/hosts || sudo -- sh -c "echo '127.0.0.1 aggregator.local' >> /mnt/c/Windows/System32/drivers/etc/hosts"; \
-	fi
 
 	@echo "📄 Applying ingress-uma..."
 	@kubectl apply -f k8s/app/ingress-uma.yaml
@@ -257,9 +253,6 @@ kind-undeploy:
 	@echo "🧹 Removing localhost entries..."
 	@sudo sed -i.bak '/aggregator\.local/d' /etc/hosts || true
 	@sudo sed -i.bak '/wsl\.local/d' /etc/hosts || true
-	@if [ -f /mnt/c/Windows/System32/drivers/etc/hosts ]; then \
-		sudo sed -i.bak '/aggregator\.local/d' /mnt/c/Windows/System32/drivers/etc/hosts || true; \
-	fi
 	@echo "✅ Deployment stopped (Traefik and cleaner still running)"
 
 kind-stop-traefik:
@@ -292,9 +285,6 @@ kind-clean:
 	@echo "🧹 Removing localhost entries..."
 	@sudo sed -i.bak '/aggregator\.local/d' /etc/hosts || true
 	@sudo sed -i.bak '/wsl\.local/d' /etc/hosts || true
-	@if [ -f /mnt/c/Windows/System32/drivers/etc/hosts ]; then \
-		sudo sed -i.bak '/aggregator\.local/d' /mnt/c/Windows/System32/drivers/etc/hosts || true; \
-	fi
 	@echo "🗑️ Removing generated key files..."
 	@rm -f private_key.pem
 	@echo "✅ Cleanup complete"
