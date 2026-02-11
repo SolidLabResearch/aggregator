@@ -110,7 +110,7 @@ kind-start-traefik:
 	@kubectl config use-context kind-aggregator
 	@helm repo add aggregator-traefik https://traefik.github.io/charts || true
 	@helm repo update
-	@helm upgrade --install aggregator-traefik traefik/traefik \
+	@helm upgrade --install aggregator-traefik aggregator-traefik/traefik \
 		--namespace aggregator-traefik --create-namespace \
 		--set ingressClass.enabled=true \
 		--set ingressClass.name=aggregator-traefik \
@@ -123,7 +123,7 @@ kind-start-traefik:
 kind-stop-traefik:
 	@echo "🛑 Removing Traefik Ingress Controller..."
 	@kubectl config use-context kind-aggregator
-	@helm uninstall aggregator-traefik -n traefik || true
+	@helm uninstall aggregator-traefik -n aggregator-traefik || true
 	@kubectl delete namespace aggregator-traefik --ignore-not-found
 	@echo "✅ Traefik has been removed!"
 
