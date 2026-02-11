@@ -91,61 +91,73 @@ spec:
                 configMapKeyRef:
                   name: aggregator-config
                   key: log_level
+                  optional: true
             - name: DISABLE_AUTH
               valueFrom:
                 configMapKeyRef:
                   name: aggregator-config
                   key: disable_auth
+                  optional: true
             - name: CLIENT_ID
               valueFrom:
                 configMapKeyRef:
                   name: aggregator-config
                   key: client_id
+                  optional: true
             - name: CLIENT_SECRET
               valueFrom:
                 configMapKeyRef:
                   name: aggregator-config
                   key: client_secret
+                  optional: true
             - name: AGGREGATOR_EXTERNAL_HOST
               valueFrom:
                 configMapKeyRef:
                   name: aggregator-config
                   key: external_host
+                  optional: true
             - name: ALLOWED_REGISTRATION_TYPES
               valueFrom:
                 configMapKeyRef:
                   name: aggregator-config
                   key: allowed_registration_types
+                  optional: true
             - name: PROVISION_CLIENT_ID
               valueFrom:
                 configMapKeyRef:
                   name: aggregator-config
                   key: provision_client_id
+                  optional: true
             - name: PROVISION_CLIENT_SECRET
               valueFrom:
                 configMapKeyRef:
                   name: aggregator-config
                   key: provision_client_secret
+                  optional: true
             - name: PROVISION_WEBID
               valueFrom:
                 configMapKeyRef:
                   name: aggregator-config
                   key: provision_webid
+                  optional: true
             - name: PROVISION_IDP
               valueFrom:
                 configMapKeyRef:
                   name: aggregator-config
                   key: provision_idp
+                  optional: true
             - name: IDP_SERVER_TYPE
               valueFrom:
                 configMapKeyRef:
                   name: aggregator-config
                   key: idp_server_type
+                  optional: true
             - name: PROVISION_AUTHORIZATION_SERVER
               valueFrom:
                 configMapKeyRef:
                   name: aggregator-config
                   key: provision_authorization_server
+                  optional: true
 ---
 # ========================
 # 5 Service: expose aggregator

@@ -34,9 +34,23 @@ func main() {
 
 	// Read Network configuration from environment variables
 	externalBase := strings.TrimSpace(os.Getenv("AGGREGATOR_EXTERNAL_HOST"))
+	model.ClientId = strings.TrimSpace(os.Getenv("CLIENT_ID"))
+	model.ClientSecret = strings.TrimSpace(os.Getenv("CLIENT_SECRET"))
+
+	missingRequired := make([]string, 0, 3)
 	if externalBase == "" {
-		logrus.Fatal("Environment variables AGGREGATOR_EXTERNAL_HOST must be set")
+		missingRequired = append(missingRequired, "AGGREGATOR_EXTERNAL_HOST")
 	}
+	if model.ClientId == "" {
+		missingRequired = append(missingRequired, "CLIENT_ID")
+	}
+	if model.ClientSecret == "" {
+		missingRequired = append(missingRequired, "CLIENT_SECRET")
+	}
+	if len(missingRequired) > 0 {
+		logrus.Fatalf("Missing required environment variables: %s", strings.Join(missingRequired, ", "))
+	}
+
 	model.Protocol = "http"
 	model.ExternalHost = externalBase
 	if parsed, err := url.Parse(externalBase); err == nil && parsed.Scheme != "" {
@@ -44,40 +58,37 @@ func main() {
 		model.ExternalHost = parsed.Host
 	}
 
-	// Read Authorization configuration from environment variables
-	model.ClientId = os.Getenv("CLIENT_ID")
-	if model.ClientId == "" {
-		logrus.Fatal("Environment variable CLIENT_ID must be set")
-	}
-	model.ClientSecret = os.Getenv("CLIENT_SECRET")
-	if model.ClientSecret == "" {
-		logrus.Fatal("Environment variable CLIENT_SECRET must be set")
-	}
-
-	model.ProvisionClientID = os.Getenv("PROVISION_CLIENT_ID")
-	model.ProvisionClientSecret = os.Getenv("PROVISION_CLIENT_SECRET")
-	model.ProvisionWebID = os.Getenv("PROVISION_WEBID")
-	model.ProvisionIDP = os.Getenv("PROVISION_IDP")
-	model.ProvisionAuthorizationServer = os.Getenv("PROVISION_AUTHORIZATION_SERVER")
+	model.ProvisionClientID = strings.TrimSpace(os.Getenv("PROVISION_CLIENT_ID"))
+	model.ProvisionClientSecret = strings.TrimSpace(os.Getenv("PROVISION_CLIENT_SECRET"))
+	model.ProvisionWebID = strings.TrimSpace(os.Getenv("PROVISION_WEBID"))
+	model.ProvisionIDP = strings.TrimSpace(os.Getenv("PROVISION_IDP"))
+	model.ProvisionAuthorizationServer = strings.TrimSpace(os.Getenv("PROVISION_AUTHORIZATION_SERVER"))
 	model.IDPServerType = strings.ToLower(strings.TrimSpace(os.Getenv("IDP_SERVER_TYPE")))
 
 	allowedTypes := parseAllowedRegistrationTypes(os.Getenv("ALLOWED_REGISTRATION_TYPES"))
 	model.AllowedRegistrationTypes = allowedTypes
 	if hasRegistrationType(allowedTypes, "provision") {
+		missingProvision := make([]string, 0, 5)
 		if model.ProvisionClientID == "" {
-			logrus.Fatal("Environment variable PROVISION_CLIENT_ID must be set when provision registration is allowed")
+			missingProvision = append(missingProvision, "PROVISION_CLIENT_ID")
 		}
 		if model.ProvisionClientSecret == "" {
-			logrus.Fatal("Environment variable PROVISION_CLIENT_SECRET must be set when provision registration is allowed")
+			missingProvision = append(missingProvision, "PROVISION_CLIENT_SECRET")
 		}
 		if model.ProvisionWebID == "" {
-			logrus.Fatal("Environment variable PROVISION_WEBID must be set when provision registration is allowed")
+			missingProvision = append(missingProvision, "PROVISION_WEBID")
 		}
 		if model.ProvisionIDP == "" {
-			logrus.Fatal("Environment variable PROVISION_IDP must be set when provision registration is allowed")
+			missingProvision = append(missingProvision, "PROVISION_IDP")
 		}
 		if model.ProvisionAuthorizationServer == "" {
-			logrus.Fatal("Environment variable PROVISION_AUTHORIZATION_SERVER must be set when provision registration is allowed")
+			missingProvision = append(missingProvision, "PROVISION_AUTHORIZATION_SERVER")
+		}
+		if len(missingProvision) > 0 {
+			logrus.Fatalf(
+				"Missing required provisioning environment variables (ALLOWED_REGISTRATION_TYPES includes provision): %s",
+				strings.Join(missingProvision, ", "),
+			)
 		}
 	}
 
