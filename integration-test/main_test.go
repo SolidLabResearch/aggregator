@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	testAggregatorClientIDURL  = "http://aggregator.local/client.json"
+	testAggregatorClientIDURL  = "http://aggregator.local:5000/client.json"
 	testAggregatorClientSecret = "AtctW4sdbmjcfF9gQJIf5RoK6T6wetwG"
 	testProvisionClientID      = "provision-client-id"
 	testProvisionClientSecret  = "provision-client-secret"

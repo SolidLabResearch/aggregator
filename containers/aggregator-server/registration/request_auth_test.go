@@ -1,8 +1,12 @@
 package registration
 
 import (
+	"aggregator/model"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func TestExtractBearerToken_Success(t *testing.T) {
@@ -40,86 +44,6 @@ func TestExtractBearerToken_InvalidFormat(t *testing.T) {
 	}
 }
 
-// --- With Auth Server --- //
-/*
-func TestAuthenticateRequest_DisableAuth_AuthServer_StdOIDC(t *testing.T) {
-	originalDisableAuth := model.DisableAuth
-	originalAuthServer := model.UMAServer
-
-	defer func() {
-		model.DisableAuth = originalDisableAuth
-		model.UMAServer = originalAuthServer
-	}()
-
-	model.DisableAuth = true
-	model.UMAServer = "https://auth.example"
-
-	// Create a simple JWT token with subject claim
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": "alice@exmaple.com",
-		"iss": "https://auth.example",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	})
-	tokenString, _ := token.SignedString([]byte("test-secret"))
-
-	req := httptest.NewRequest("GET", "/", nil)
-	req.Header.Set("Authorization", "Bearer "+tokenString)
-
-	issuer, id, mode, err := authenticateRequest(req)
-	if err != nil {
-		t.Fatalf("Expected no error with disable_auth=true, got: %v", err)
-	}
-	if issuer != "https://auth.example" {
-		t.Errorf("Expected issuer 'https://auth.example', got '%s'", issuer)
-	}
-	if id != "alice@exmaple.com" {
-		t.Errorf("Expected ID 'alice@exmaple.com', got '%s'", id)
-	}
-	if mode != "oidc" {
-		t.Errorf("Expected mode 'oidc', got '%s'", mode)
-	}
-}
-
-func TestAuthenticateRequest_DisableAuth_AuthServer_SolidOIDC(t *testing.T) {
-	originalDisableAuth := model.DisableAuth
-	originalAuthServer := model.UMAServer
-
-	defer func() {
-		model.DisableAuth = originalDisableAuth
-		model.UMAServer = originalAuthServer
-	}()
-
-	model.DisableAuth = true
-	model.UMAServer = "https://auth.example"
-
-	// Create token with 'sub' claim
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": "https://alice.example/webid#me",
-		"iss": "https://solid-auth.example",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	})
-	tokenString, _ := token.SignedString([]byte("test-secret"))
-
-	req := httptest.NewRequest("GET", "/", nil)
-	req.Header.Set("Authorization", "Bearer "+tokenString)
-
-	issuer, id, mode, err := authenticateRequest(req)
-
-	if err != nil {
-		t.Fatalf("Expected no error with disable_auth=true, got: %v", err)
-	}
-	if issuer != "https://solid-auth.example" {
-		t.Errorf("Expected issuer 'https://solid-auth.example', got '%s'", issuer)
-	}
-	if id != "https://alice.example/webid#me" {
-		t.Errorf("Expected ID 'https://alice.example/webid#me', got '%s'", id)
-	}
-	if mode != "solid-oidc" {
-		t.Errorf("Expected mode 'solid-oidc', got '%s'", mode)
-	}
-}
-
-// --- Without auth server --- //
 func TestAuthenticateRequest_DisabledAuth(t *testing.T) {
 	// Save original state and restore after test
 	originalDisableAuth := model.DisableAuth
@@ -129,29 +53,29 @@ func TestAuthenticateRequest_DisabledAuth(t *testing.T) {
 	model.DisableAuth = true
 
 	// Create a simple JWT token with WebID claim
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"webid": "https://alice.example/webid#me",
 		"iss":   "https://idp.example",
 		"exp":   time.Now().Add(time.Hour).Unix(),
 	})
-	tokenString, _ := token.SignedString([]byte("test-secret"))
+	tokenString, _ := jwtToken.SignedString([]byte("test-secret"))
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Authorization", "Bearer "+tokenString)
 
-	issuer, id, mode, err := authenticateRequest(req)
+	webID, issuer, authToken, err := authenticateRequest(req)
 
 	if err != nil {
 		t.Fatalf("Expected no error with disable_auth=true, got: %v", err)
 	}
+	if webID != "https://alice.example/webid#me" {
+		t.Errorf("Expected WebID 'https://alice.example/webid#me', got '%s'", webID)
+	}
 	if issuer != "https://idp.example" {
 		t.Errorf("Expected issuer 'https://idp.example', got '%s'", issuer)
 	}
-	if id != "https://alice.example/webid#me" {
-		t.Errorf("Expected WebID 'https://alice.example/webid#me', got '%s'", id)
-	}
-	if mode != "solid-oidc" {
-		t.Errorf("Expected mode 'solid-oidc', got '%s'", mode)
+	if authToken != tokenString {
+		t.Errorf("Expected token to match input")
 	}
 }
 
@@ -163,29 +87,29 @@ func TestAuthenticateRequest_DisabledAuth_UsesSubClaim(t *testing.T) {
 	model.DisableAuth = true
 
 	// Create token with 'sub' claim instead of 'webid'
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub": "https://bob.example/webid#me",
 		"iss": "https://idp.example",
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
-	tokenString, _ := token.SignedString([]byte("test-secret"))
+	tokenString, _ := jwtToken.SignedString([]byte("test-secret"))
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Authorization", "Bearer "+tokenString)
 
-	issuer, id, mode, err := authenticateRequest(req)
+	webID, issuer, authToken, err := authenticateRequest(req)
 
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
+	if webID != "https://bob.example/webid#me" {
+		t.Errorf("Expected WebID from 'sub' claim, got '%s'", webID)
+	}
 	if issuer != "https://idp.example" {
 		t.Errorf("Expected issuer 'https://idp.example', got '%s'", issuer)
 	}
-	if id != "https://bob.example/webid#me" {
-		t.Errorf("Expected WebID from 'sub' claim, got '%s'", id)
-	}
-	if mode != "solid-oidc" {
-		t.Errorf("Expected mode 'solid-oidc', got '%s'", mode)
+	if authToken != tokenString {
+		t.Errorf("Expected token to match input")
 	}
 }
 
@@ -196,11 +120,11 @@ func TestAuthenticateRequest_DisabledAuth_NoWebID(t *testing.T) {
 	model.DisableAuth = true
 
 	// Create token without webid or sub claim
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"iss": "https://idp.example",
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
-	tokenString, _ := token.SignedString([]byte("test-secret"))
+	tokenString, _ := jwtToken.SignedString([]byte("test-secret"))
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Authorization", "Bearer "+tokenString)
@@ -228,7 +152,28 @@ func TestAuthenticateRequest_DisabledAuth_InvalidToken(t *testing.T) {
 	}
 }
 
+func TestAuthenticateRequest_DisabledAuth_MissingAuthorization(t *testing.T) {
+	originalDisableAuth := model.DisableAuth
+	defer func() { model.DisableAuth = originalDisableAuth }()
+
+	model.DisableAuth = true
+
+	req := httptest.NewRequest("GET", "/", nil)
+	webID, issuer, token, err := authenticateRequest(req)
+	if err != nil {
+		t.Fatalf("Expected no error when auth is disabled, got: %v", err)
+	}
+	if webID != "" {
+		t.Fatalf("Expected empty WebID when Authorization is missing, got %q", webID)
+	}
+	if issuer != "" {
+		t.Fatalf("Expected empty issuer when Authorization is missing, got %q", issuer)
+	}
+	if token != "" {
+		t.Fatalf("Expected empty token when Authorization is missing, got %q", token)
+	}
+}
+
 // Note: Testing full token validation (model.DisableAuth=false) requires setting up
 // a mock OIDC provider with JWKS endpoint, which is more appropriate for integration tests
 // The unit tests above verify the disable_auth bypass logic works correctly
-*/

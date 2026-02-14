@@ -24,7 +24,9 @@ var ClientSecret string
 var ProvisionClientID string
 var ProvisionClientSecret string
 var ProvisionWebID string
+var ProvisionIDP string
 var ProvisionAuthorizationServer string
+var IDPServerType string
 
 // Kubernetes
 var Namespace string

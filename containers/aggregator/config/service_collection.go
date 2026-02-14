@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"aggregator/auth"
 	"aggregator/model"
@@ -21,7 +22,8 @@ import (
 type ServiceCollection struct {
 	etagServices        int
 	etagTransformations int
-	services            map[string]model.Service
+	services            map[string]*model.Service
+	servicesMu          sync.RWMutex
 	serverMux           *http.ServeMux
 }
 
@@ -204,22 +206,34 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Check if service ID already exists
+	collec.servicesMu.Lock()
 	if _, exists := collec.services[serviceId]; exists {
+		collec.servicesMu.Unlock()
 		http.Error(w, "Service id already registered for user", http.StatusConflict)
 		return
 	}
+	collec.servicesMu.Unlock()
 
 	// Create service
 	service, err := services.CreateAggregatorService(serviceId, servicePath, exe)
 	if err != nil {
-		logrus.Error("Failed to create service from request")
-		http.Error(w, fmt.Sprintf("Failed to create service from request: %v", err), http.StatusInternalServerError)
+		logrus.WithError(err).Error("Failed to create service from request")
+		http.Error(w, "Failed to create service", http.StatusInternalServerError)
 		return
 	}
 
-	// Store service
+	// Store service and update ETag
+	collec.servicesMu.Lock()
+	if _, exists := collec.services[serviceId]; exists {
+		collec.servicesMu.Unlock()
+		http.Error(w, "Service id already registered for user", http.StatusConflict)
+		return
+	}
+
 	collec.services[service.InstanceID] = *service
 	collec.etagServices++
+	collec.servicesMu.Unlock()
 
 	// Create service endpoint
 	err = collec.HandleFunc(servicePath, collec.HandleServiceEndpoint, []model.Scope{model.Read, model.Delete})

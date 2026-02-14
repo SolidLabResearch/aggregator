@@ -54,19 +54,19 @@ type Service struct {
 func SetupTestEnvironment(ctx context.Context) (*TestEnvironment, error) {
 	env := &TestEnvironment{
 		ClusterName:   "aggregator",
-		AggregatorURL: "http://aggregator.local",
+		AggregatorURL: "http://aggregator.local:5000",
 	}
 
 	if err := env.configureMockOIDCHost(ctx); err != nil {
 		return nil, fmt.Errorf("failed to configure mock OIDC host: %w", err)
 	}
 
-	//if env.shouldUseOIDCProxy() {
-	// Start reverse proxy on port 80 to forward oidc.local requests
-	//	if err := env.startReverseProxy(ctx); err != nil {
-	//		return nil, fmt.Errorf("failed to start reverse proxy: %w", err)
-	//	}
-	//}
+	if env.shouldUseOIDCProxy() {
+		// Start reverse proxy on port 80 to forward oidc.local requests
+		if err := env.startReverseProxy(ctx); err != nil {
+			return nil, fmt.Errorf("failed to start reverse proxy: %w", err)
+		}
+	}
 
 	// Check if cluster exists
 	cmd := exec.CommandContext(ctx, "kind", "get", "clusters")
@@ -83,16 +83,12 @@ func SetupTestEnvironment(ctx context.Context) (*TestEnvironment, error) {
 	if err := env.ensureHostsEntry(); err != nil {
 		return nil, fmt.Errorf("failed to setup /etc/hosts entry: %w\n\nPlease manually add:\n  127.0.0.1 aggregator.local\n\nOr run:\n  echo '127.0.0.1 aggregator.local' | sudo tee -a /etc/hosts", err)
 	}
-	// Ensure test.local resolves to 127.0.0.1
-	if err := env.ensureTestHostEntry(); err != nil {
-		return nil, fmt.Errorf("failed to setup /etc/hosts entry: %w\n\nPlease manually add:\n  127.0.0.1 test.local\n\nOr run:\n  echo '127.0.0.1 test.local' | sudo tee -a /etc/hosts", err)
-	}
 
-	//if env.shouldUseOIDCProxy() {
-	//	if err := env.ensureTestHostEntry(); err != nil {
-	//		return nil, fmt.Errorf("failed to setup oidc.local entry: %w", err)
-	//	}
-	//}
+	if env.shouldUseOIDCProxy() {
+		if err := env.ensureOIDCHostEntry(); err != nil {
+			return nil, fmt.Errorf("failed to setup oidc.local entry: %w", err)
+		}
+	}
 
 	// Ensure aggregator is deployed with test config
 	if err := env.ensureTestDeployment(ctx); err != nil {
@@ -124,9 +120,9 @@ func (env *TestEnvironment) configureMockOIDCHost(ctx context.Context) error {
 	return nil
 }
 
-//func (env *TestEnvironment) shouldUseOIDCProxy() bool {
-//	return env.MockOIDCHost == "" || env.MockOIDCHost == "oidc.local"
-//}
+func (env *TestEnvironment) shouldUseOIDCProxy() bool {
+	return env.MockOIDCHost == "" || env.MockOIDCHost == "oidc.local"
+}
 
 func (env *TestEnvironment) getKindGatewayIP(ctx context.Context) (string, error) {
 	cmd := exec.CommandContext(ctx, "docker", "network", "inspect", "kind", "--format", "{{range .IPAM.Config}}{{.Gateway}} {{end}}")
@@ -174,28 +170,28 @@ func (env *TestEnvironment) ensureHostsEntry() error {
 	return nil
 }
 
-// ensureTestHostEntry ensures test.local resolves to 127.0.0.1
-func (env *TestEnvironment) ensureTestHostEntry() error {
+// ensureOIDCHostEntry ensures oidc.local resolves to 127.0.0.1
+func (env *TestEnvironment) ensureOIDCHostEntry() error {
 	// Check if already exists
-	checkCmd := exec.Command("grep", "-q", "^127.0.0.1.*test.local", "/etc/hosts")
+	checkCmd := exec.Command("grep", "-q", "^127.0.0.1.*oidc.local", "/etc/hosts")
 	if err := checkCmd.Run(); err == nil {
 		// Already exists
-		fmt.Println("✓ test.local DNS entry already configured")
+		fmt.Println("✓ oidc.local DNS entry already configured")
 		return nil
 	}
 
 	// Try to add it (requires sudo)
-	fmt.Println("📝 Adding test.local to /etc/hosts (requires sudo)...")
-	addCmd := exec.Command("sudo", "sh", "-c", "echo '127.0.0.1 test.local' >> /etc/hosts")
+	fmt.Println("📝 Adding oidc.local to /etc/hosts (requires sudo)...")
+	addCmd := exec.Command("sudo", "sh", "-c", "echo '127.0.0.1 oidc.local' >> /etc/hosts")
 	addCmd.Stdin = nil
 	addCmd.Stdout = nil
 	addCmd.Stderr = nil
 
 	if err := addCmd.Run(); err != nil {
-		return fmt.Errorf("failed to add test.local entry (sudo required): %w", err)
+		return fmt.Errorf("failed to add oidc.local entry (sudo required): %w", err)
 	}
 
-	fmt.Println("✅ Added test.local to /etc/hosts")
+	fmt.Println("✅ Added oidc.local to /etc/hosts")
 	return nil
 }
 
@@ -238,7 +234,7 @@ func (env *TestEnvironment) checkAggregatorDeployed(ctx context.Context) error {
 // ensureTestDeployment checks if aggregator is deployed with test config and deploys if needed
 func (env *TestEnvironment) ensureTestDeployment(ctx context.Context) error {
 	// Check if config exists and has the integration-test marker
-	configMap, err := env.KubeClient.CoreV1().ConfigMaps("aggregator-app").Get(ctx, "server-config", metav1.GetOptions{})
+	configMap, err := env.KubeClient.CoreV1().ConfigMaps("aggregator-app").Get(ctx, "aggregator-config", metav1.GetOptions{})
 	if err == nil && isTestConfigMap(configMap) {
 		if err := env.checkAggregatorDeployed(ctx); err == nil {
 			return nil // Already deployed with test config
@@ -265,32 +261,20 @@ func (env *TestEnvironment) ensureTestDeployment(ctx context.Context) error {
 		return fmt.Errorf("failed to set kubectl context: %w\nOutput: %s", err, string(output))
 	}
 
-	// Apply Transformation CDR
-	execCmd = exec.CommandContext(ctx, "kubectl", "apply", "-f", "../k8s/cluster/crds/transformation.yaml")
-	if output, err := execCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to apply transformation CRD: %w\nOutput: %s", err, string(output))
-	}
-
 	// Apply namespace
-	execCmd = exec.CommandContext(ctx, "kubectl", "apply", "-f", "../k8s/namespaces/app.yaml")
+	execCmd = exec.CommandContext(ctx, "kubectl", "apply", "-f", "../k8s/app/ns.yaml")
 	if output, err := execCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to apply namespace: %w\nOutput: %s", err, string(output))
 	}
 
 	// Apply test config BEFORE deployment (deployment needs the configmap)
-	execCmd = exec.CommandContext(ctx, "kubectl", "apply", "-f", "./config/config-test.yaml")
+	execCmd = exec.CommandContext(ctx, "kubectl", "apply", "-f", "./config-test.yaml")
 	if output, err := execCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to apply test config: %w\nOutput: %s", err, string(output))
 	}
 
-	// Apply available transformations
-	execCmd = exec.CommandContext(ctx, "kubectl", "apply", "-f", "./config/transformations-test.yaml")
-	if output, err := execCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to apply transformations: %w\nOutput: %s", err, string(output))
-	}
-
 	// Apply traefik config (needed for ingress) - warnings are OK
-	execCmd = exec.CommandContext(ctx, "kubectl", "apply", "-f", "../k8s/app/traefik/middlewares.yaml")
+	execCmd = exec.CommandContext(ctx, "kubectl", "apply", "-f", "../k8s/app/traefik-config.yaml")
 	if output, err := execCmd.CombinedOutput(); err != nil {
 		// Don't fail if traefik config fails, middlewares might already exist
 		fmt.Printf("Note: traefik config warnings (expected if already applied): %s\n", string(output))
@@ -301,7 +285,7 @@ func (env *TestEnvironment) ensureTestDeployment(ctx context.Context) error {
 	}
 
 	// Apply aggregator deployment - filter output to ignore IngressRoute warnings
-	execCmd = exec.CommandContext(ctx, "kubectl", "apply", "-k", "../k8s/app/server/")
+	execCmd = exec.CommandContext(ctx, "kubectl", "apply", "-f", "../k8s/app/aggregator.yaml")
 	output, err := execCmd.CombinedOutput()
 	if err != nil {
 		// Check if it's just IngressRoute errors (non-critical)
@@ -313,6 +297,14 @@ func (env *TestEnvironment) ensureTestDeployment(ctx context.Context) error {
 		} else {
 			return fmt.Errorf("failed to apply aggregator deployment: %w\nOutput: %s", err, outputStr)
 		}
+	}
+
+	// Force a rollout so ConfigMap changes are picked up by the running pods.
+	execCmd = exec.CommandContext(ctx, "kubectl", "rollout", "restart",
+		"deployment/aggregator-server",
+		"-n", "aggregator-app")
+	if output, err := execCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to restart aggregator deployment: %w\nOutput: %s", err, string(output))
 	}
 
 	// Wait for deployment to be ready
@@ -344,7 +336,8 @@ func (env *TestEnvironment) ensureTestDeployment(ctx context.Context) error {
 	// Health check: verify aggregator is responding via Traefik
 	fmt.Println("🔍 Verifying aggregator is responding...")
 	for i := 0; i < 10; i++ {
-		execCmd = exec.CommandContext(ctx, "curl", "-sf", "http://aggregator.local/")
+		checkURL := strings.TrimRight(env.AggregatorURL, "/") + "/"
+		execCmd = exec.CommandContext(ctx, "curl", "-sf", checkURL)
 		if err := execCmd.Run(); err == nil {
 			fmt.Println("✅ Aggregator is responding via Traefik")
 			break
@@ -374,7 +367,7 @@ func (env *TestEnvironment) ensureIngressUMA(ctx context.Context) error {
 		return fmt.Errorf("failed to ensure ingress-uma secret: %w", err)
 	}
 
-	execCmd := exec.CommandContext(ctx, "kubectl", "apply", "-k", "../k8s/app/ingress-uma/")
+	execCmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", "../k8s/app/ingress-uma.yaml")
 	if output, err := execCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to apply ingress-uma deployment: %w\nOutput: %s", err, string(output))
 	}
@@ -517,8 +510,8 @@ func (env *TestEnvironment) installTraefik(ctx context.Context) error {
 		"--create-namespace",
 		"--set", "ingressClass.enabled=true",
 		"--set", "ingressClass.name=aggregator-traefik",
-		"--set", "ports.web.hostPort=80",
-		"--set", "ports.websecure.hostPort=443",
+		"--set", "ports.web.hostPort=5000",
+		"--set", "ports.websecure.hostPort=5001",
 		"--set", "service.type=ClusterIP",
 		"--set", "providers.kubernetesCRD.allowCrossNamespace=true")
 	if output, err := execCmd.CombinedOutput(); err != nil {
@@ -540,7 +533,7 @@ func (env *TestEnvironment) installTraefik(ctx context.Context) error {
 }
 
 // startReverseProxy starts a reverse proxy on port 80 to forward oidc.local to mock OIDC provider
-/*func (env *TestEnvironment) startReverseProxy(ctx context.Context) error {
+func (env *TestEnvironment) startReverseProxy(ctx context.Context) error {
 	// Check if port 80 is already in use
 	checkCmd := exec.CommandContext(ctx, "sh", "-c", "netstat -tuln | grep ':80 ' || true")
 	output, _ := checkCmd.CombinedOutput()
@@ -572,7 +565,7 @@ func (env *TestEnvironment) installTraefik(ctx context.Context) error {
 
 	fmt.Println("✅ Reverse proxy started on port 80")
 	return nil
-}*/
+}
 
 func (env *TestEnvironment) Cleanup() error {
 	fmt.Println("Cleaning up test environment...")

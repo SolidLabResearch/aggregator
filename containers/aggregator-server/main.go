@@ -33,7 +33,7 @@ func main() {
 	// Read Network configuration from environment variables
 	model.ExternalHost = os.Getenv("EXTERNAL_HOST")
 	if model.ExternalHost == "" {
-		logrus.Fatal("Environment variables EXTERNAL_HOST must be set")
+		logrus.Fatal("Environment variable EXTERNAL_HOST must be set")
 	}
 	model.TLSSecret = os.Getenv("TLS_SECRET")
 	if model.TLSSecret != "" {
@@ -44,16 +44,47 @@ func main() {
 	}
 
 	// Read Authorization configuration from environment variables
+	missingRequired := make([]string, 0, 3)
+
 	model.ClientId = os.Getenv("CLIENT_ID")
 	if model.ClientId == "" {
-		logrus.Fatal("Environment variable CLIENT_ID must be set")
+		missingRequired = append(missingRequired, "CLIENT_ID")
 	}
 
-	// Standard OIDC Authorization Server configuration
+	// Registration Authorization configuration
+	allowedTypes := parseAllowedRegistrationTypes(os.Getenv("ALLOWED_REGISTRATION_TYPES"))
+	model.AllowedRegistrationTypes = allowedTypes
+	if hasRegistrationType(allowedTypes, "provision") {
+		model.ProvisionClientID = strings.TrimSpace(os.Getenv("PROVISION_CLIENT_ID"))
+		model.ProvisionClientSecret = strings.TrimSpace(os.Getenv("PROVISION_CLIENT_SECRET"))
+		model.ProvisionWebID = strings.TrimSpace(os.Getenv("PROVISION_WEBID"))
+		model.ProvisionIDP = strings.TrimSpace(os.Getenv("PROVISION_IDP"))
+		model.ProvisionAuthorizationServer = strings.TrimSpace(os.Getenv("PROVISION_AUTHORIZATION_SERVER"))
+		model.IDPServerType = strings.ToLower(strings.TrimSpace(os.Getenv("IDP_SERVER_TYPE")))
+		if model.ProvisionClientID == "" {
+			missingRequired = append(missingRequired, "PROVISION_CLIENT_ID (required for provision registration)")
+		}
+		if model.ProvisionClientSecret == "" {
+			missingRequired = append(missingRequired, "PROVISION_CLIENT_SECRET (required for provision registration)")
+		}
+		if model.ProvisionWebID == "" {
+			missingRequired = append(missingRequired, "PROVISION_WEBID (required for provision registration)")
+		}
+		if model.ProvisionAuthorizationServer == "" {
+			missingRequired = append(missingRequired, "PROVISION_AUTHORIZATION_SERVER (required for provision registration)")
+		}
+	}
+
 	model.AuthServer = os.Getenv("AUTH_SERVER")
 	if model.AuthServer == "" {
-		logrus.Info("Only Solid-OIDC with Web IDs is supported (no standard OIDC Authorization Server configured)")
-	} else {
+		if hasRegistrationType(allowedTypes, "device_code") {
+			missingRequired = append(missingRequired, "AUTH_SERVER (required for device_code registration)")
+		} else {
+			logrus.Info("Only Solid-OIDC with Web IDs is supported (no standard OIDC Authorization Server configured)")
+		}
+	}
+
+	if model.AuthServer != "" || hasRegistrationType(allowedTypes, "client_credentials") {
 		secretBytes, err := os.ReadFile("/etc/secrets/clientSecret")
 		if err != nil {
 			logrus.Fatalf("Failed to read CLIENT_SECRET from mounted secret: %v", err)
@@ -63,29 +94,12 @@ func main() {
 		if model.ClientSecret == "" {
 			logrus.Fatal("Mounted CLIENT_SECRET is empty")
 		}
-
 	}
 
-	model.ProvisionClientID = os.Getenv("PROVISION_CLIENT_ID")
-	model.ProvisionClientSecret = os.Getenv("PROVISION_CLIENT_SECRET")
-	model.ProvisionWebID = os.Getenv("PROVISION_WEBID")
-	model.ProvisionAuthorizationServer = os.Getenv("PROVISION_AUTHORIZATION_SERVER")
-
-	allowedTypes := parseAllowedRegistrationTypes(os.Getenv("ALLOWED_REGISTRATION_TYPES"))
-	model.AllowedRegistrationTypes = allowedTypes
-	if hasRegistrationType(allowedTypes, "provision") {
-		if model.ProvisionClientID == "" {
-			logrus.Fatal("Environment variable PROVISION_CLIENT_ID must be set when provision registration is allowed")
-		}
-		if model.ProvisionClientSecret == "" {
-			logrus.Fatal("Environment variable PROVISION_CLIENT_SECRET must be set when provision registration is allowed")
-		}
-		if model.ProvisionWebID == "" {
-			logrus.Fatal("Environment variable PROVISION_WEBID must be set when provision registration is allowed")
-		}
-		if model.ProvisionAuthorizationServer == "" {
-			logrus.Fatal("Environment variable PROVISION_AUTHORIZATION_SERVER must be set when provision registration is allowed")
-		}
+	// Log missing required authorization variables and exit if any are missing
+	if len(missingRequired) > 0 {
+		logrus.WithField("missing_variables", missingRequired).
+			Fatal("Missing required environment variables")
 	}
 
 	// Load in-cluster kubeConfig
@@ -105,7 +119,7 @@ func main() {
 
 	ingressClassName := os.Getenv("INGRESS_CLASS_NAME")
 	if ingressClassName == "" {
-		logrus.Info("No IngressClass configured. Using the default IngressClass.")
+		logrus.Warn("No IngressClass configured. Using the default IngressClass.")
 		model.IngressClassName = nil
 	} else {
 		model.IngressClassName = &ingressClassName
@@ -149,42 +163,6 @@ func main() {
 
 	// Registration endpoint
 	initRegistration(serverMux)
-
-	// While we wait for instance to start the aggregator server responds with 503 to config requests
-	/*
-		serverMux.HandleFunc("/config/", func(w http.ResponseWriter, r *http.Request) {
-			namespace := strings.TrimPrefix(r.URL.Path, "/config/")
-			namespace = strings.TrimPrefix(namespace, "/")
-			if namespace == "" {
-				http.NotFound(w, r)
-				return
-			}
-			if idx := strings.Index(namespace, "/"); idx != -1 {
-				namespace = namespace[:idx]
-			}
-
-			if model.Clientset != nil {
-				ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-				defer cancel()
-				ns, err := model.Clientset.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
-				if err != nil {
-					if apierrors.IsNotFound(err) {
-						http.NotFound(w, r)
-						return
-					}
-					http.Error(w, "Failed to check instance namespace", http.StatusInternalServerError)
-					return
-				}
-				if ns.Labels["created-by"] != "aggregator" {
-					http.NotFound(w, r)
-					return
-				}
-			}
-
-			w.Header().Set("Retry-After", "1")
-			http.Error(w, "Aggregator instance not ready", http.StatusServiceUnavailable)
-		})
-	*/
 
 	// Healthz endpoint waits for ingress-uma to be ready
 	serverMux.HandleFunc("/healthz", healthz)

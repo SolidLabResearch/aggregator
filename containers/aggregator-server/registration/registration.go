@@ -75,8 +75,6 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 			handleAuthorizationCodeFlow(w, req, issuer, id, mode)
 		case "client_credentials":
 			handleClientCredentialsFlow(w, req, issuer, id)
-		case "device_code":
-			http.Error(w, "device_code flow not yet implemented", http.StatusNotImplemented)
 		default:
 			logrus.Warnf("Unsupported registration_type: %s", registrationType)
 			http.Error(w, "Unsupported registration_type", http.StatusBadRequest)

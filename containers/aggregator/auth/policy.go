@@ -20,6 +20,8 @@ func DefinePolicy(resourceId string, scopes []model.Scope) error {
 		"as_url":      model.Owner.AuthzServerURL,
 		"resource_id": resourceId,
 		"scopes":      scopes,
+		"assignee":    model.Owner.UserId,
+		"assigner":    model.Owner.UserId,
 	}
 
 	jsonBody, err := json.Marshal(body)

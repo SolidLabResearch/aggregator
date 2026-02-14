@@ -1,9 +1,59 @@
 import { QueryEngine as GraphqlQueryEngine } from "@comunica-graphql/query-sparql-graphql";
 import { QueryEngine as SparqlQueryEngine } from "@comunica/query-sparql";
 import http from 'http';
-import { url } from "inspector";
 
 const proxyUrl = process.env.http_proxy || process.env.HTTP_PROXY;
+const statusEndpoint = process.env.STATUS_ENDPOINT;
+const derivedResourceEndpoint = process.env.DERIVED_RESOURCE_ENDPOINT;
+const resourceLocation = process.env.RESOURCE_LOCATION;
+
+async function postStatus(status: string, statusText?: string): Promise<void> {
+  if (!statusEndpoint) {
+    return;
+  }
+  try {
+    await fetch(statusEndpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        status,
+        status_text: statusText || ""
+      })
+    });
+  } catch (err) {
+    console.error("Failed to post status update:", err);
+  }
+}
+
+async function postDerivedResource(location: string, sources: string[]): Promise<boolean> {
+  if (!derivedResourceEndpoint) {
+    return true;
+  }
+
+  try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    const response = await fetch(derivedResourceEndpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        location,
+        sources: sources.map((url) => ({ id: "", url })),
+      }),
+    });
+    if (!response.ok) {
+      console.error("Failed to post derived resource usage:", await response.text());
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("Failed to post derived resource usage:", err);
+    return false;
+  }
+}
 
 export async function fetchProxy(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   // If no proxy is configured, use native fetch
@@ -29,8 +79,7 @@ export async function fetchProxy(input: RequestInfo | URL, init?: RequestInit): 
     // Body may be Blob, BufferSource, FormData, string, etc.
     bodyString = typeof init.body === "string" ? init.body : await convertBodyToString(init.body);
   } else if (input instanceof Request && input.body) {
-    const text = await input.clone().text();
-    bodyString = text;
+    bodyString = await input.clone().text();
   }
 
   // Build JSON payload for proxy /fetch endpoint
@@ -81,8 +130,7 @@ async function convertBodyToString(body: BodyInit): Promise<string> {
   }
 
   // Last resort
-  const text = await new Response(body).text();
-  return text;
+  return await new Response(body).text();
 }
 
 async function main() {
@@ -92,81 +140,114 @@ async function main() {
     throw new Error("Environment variable QUERY is required");
   }
 
-  const sourceURL = process.env.SOURCE;
-  if (!sourceURL) {
-    throw new Error("Environment variable SOURCE is required");
+  const sourcesRaw = process.env.SOURCES;
+  if (!sourcesRaw) {
+    throw new Error("Environment variable SOURCES is required");
   }
+
+  const sourceURLs = sourcesRaw.split(",").map(s => s.trim());
+  await postDerivedResource(resourceLocation || "/", sourceURLs);
 
   const contextRaw = process.env.CONTEXT;
-  if (!contextRaw) {
-    throw new Error("Environment variable CONTEXT is required");
-  }
-
-  let context: Record<string, string>;
-  try {
-    context = JSON.parse(contextRaw);
-  } catch (err) {
-    throw new Error(`Failed to parse CONTEXT: ${err}`);
-  }
-
   const schema = process.env.SCHEMA;
-  if (!schema) {
-    throw new Error("Environment variable SCHEMA is required");
+
+  let context: Record<string, string> | undefined;
+  if (contextRaw) {
+    try {
+      context = JSON.parse(contextRaw);
+    } catch (err) {
+      throw new Error(`Failed to parse CONTEXT: ${err}`);
+    }
   }
 
-  const source: Source = {
-    type: "graphql",
-    value: sourceURL,
-    context: {
-      schema: schema,
-      context: context
-    }
-  };
+  const useGraphQL = !!(schema && context);
 
-  // ✅ Now you have:
+  let sources: Array<Source | string>;
+  if (useGraphQL) {
+    sources = sourceURLs.map(url => ({
+      type: "graphql" as const,
+      value: url,
+      context: {
+        schema: schema!,
+        context: context!
+      }
+    }));
+    console.log("Using GraphQL engine with schema and context");
+  } else {
+    sources = sourceURLs;
+    console.log("Using SPARQL engine with RDF sources");
+  }
+
   console.log("QUERY:", query);
-  console.log("SOURCE:", sourceURL);
-  console.log("CONTEXT:", context);
-  console.log("SCHEMA:", schema);
+  console.log("SOURCES:", sourceURLs);
+  if (context) console.log("CONTEXT:", context);
+  if (schema) console.log("SCHEMA:", schema);
 
-  const graphqlEngine = new GraphqlQueryEngine();
+  const graphqlEngine = useGraphQL ? new GraphqlQueryEngine() : null;
   const sparqlEngine = new SparqlQueryEngine();
+
+  await postStatus("starting");
 
   const server = http.createServer((req, res) => {
     (async () => {
       try {
         console.log(`Received request: ${req.method} ${req.url}`);
 
+        if (req.method === "GET" && req.url === "/health") {
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("OK");
+          return;
+        }
+
         if (req.method === "GET" && req.url === "/") {
           let result;
-          try {
-             result = await graphqlEngine.query(query, { 
-               sources: [source],
-               fetch: fetchProxy
-             });
-          } catch (e: any) {
-             if (e.message && (e.message.includes("variable predicate") || e.message.includes("does not exist in the schema"))) {
-                 console.log("Fallback to Generic SPARQL Engine:", e.message);
-                 // Use simple source URL for generic engine
-                 result = await sparqlEngine.query(query, { 
-                    sources: [sourceURL], 
-                    fetch: fetchProxy 
-                 });
-             } else {
-                 throw e;
-             }
+
+          if (useGraphQL && graphqlEngine) {
+            try {
+              result = await graphqlEngine.query(query, {
+                sources: sources as any,
+                fetch: fetchProxy,
+                lenient: true
+              });
+            } catch (e: any) {
+              if (e.message && (e.message.includes("variable predicate") || e.message.includes("does not exist in the schema"))) {
+                console.log("Fallback to Generic SPARQL Engine:", e.message);
+                result = await sparqlEngine.query(query, {
+                  sources: sourceURLs as any,
+                  fetch: fetchProxy,
+                  lenient: true
+                });
+              } else {
+                throw e;
+              }
+            }
+          } else {
+            result = await sparqlEngine.query(query, {
+              sources: sources as any,
+              fetch: fetchProxy,
+              lenient: true
+            });
           }
 
-          if (result.resultType !== "bindings") {
-            res.writeHead(400, { "Content-Type": "text/plain" });
-            res.end("Only SELECT queries with bindings are supported.");
-            return;
+          let mediaType: string;
+          switch (result.resultType) {
+            case "bindings":
+            case "boolean":
+              mediaType = "application/sparql-results+json";
+              break;
+            case "quads":
+              mediaType = "text/turtle";
+              break;
+            default:
+              res.writeHead(400, { "Content-Type": "text/plain" });
+              res.end("Unsupported query result type.");
+              return;
           }
 
           // Only write headers after result is validated
-          res.writeHead(200, { "Content-Type": "application/sparql-results+json" });
+          res.writeHead(200, { "Content-Type": mediaType });
 
-          const { data } = await sparqlEngine.resultToString(result, "application/sparql-results+json");
+          const { data } = await sparqlEngine.resultToString(result, mediaType);
 
           // Handle stream errors
           data.on("error", (err: any) => {
@@ -184,6 +265,7 @@ async function main() {
         }
       } catch (err) {
         console.error("Server error:", err);
+        void postStatus("errored", err instanceof Error ? err.message : String(err));
         if (!res.headersSent) {
           res.writeHead(500, { "Content-Type": "text/plain" });
         }
@@ -192,8 +274,14 @@ async function main() {
     })();
   });
 
+  server.on("error", (err) => {
+    console.error("Server error:", err);
+    void postStatus("errored", err instanceof Error ? err.message : String(err));
+  });
+
   server.listen(8080, '0.0.0.0', () => {
     console.log("SPARQL SELECT result server running at http://0.0.0.0:8080/");
+    void postStatus("running");
   });
 }
 

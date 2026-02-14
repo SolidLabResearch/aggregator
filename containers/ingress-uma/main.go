@@ -41,6 +41,7 @@ func main() {
 	mux.HandleFunc("/register", auth.HandleRegistrationRequest)
 	mux.HandleFunc("/authorize", auth.HandleAuthorizationRequest)
 	mux.HandleFunc("/resources", auth.HandleResourceRequest)
+	mux.HandleFunc("/derived-resources", auth.HandleDerivedResourceRequest)
 	mux.HandleFunc("/policies", auth.HandlePolicyRequest)
 
 	// healthz endpoint

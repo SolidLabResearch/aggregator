@@ -28,7 +28,8 @@ var requiredFields = map[string]func(UmaConfig) string{
 }
 
 func fetchUmaConfig(issuer string) (UmaConfig, error) {
-	url := fmt.Sprintf("%s/.well-known/uma2-configuration", issuer)
+	trimmed := strings.TrimRight(strings.TrimSpace(issuer), "/")
+	url := fmt.Sprintf("%s/.well-known/uma2-configuration", trimmed)
 
 	resp, err := model.HttpClient.Get(url)
 	if err != nil {

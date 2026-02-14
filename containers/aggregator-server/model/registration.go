@@ -29,7 +29,6 @@ type RegistrationRequest struct {
 	State string `json:"state,omitempty"`
 
 	// client_credentials flow
-	WebID        string `json:"webid,omitempty"`
 	ClientID     string `json:"client_id,omitempty"`
 	ClientSecret string `json:"client_secret,omitempty"`
 
@@ -40,9 +39,10 @@ type RegistrationRequest struct {
 
 // RegistrationResponse represents the response for successful aggregator creation/update
 type RegistrationResponse struct {
-	AggregatorId string `json:"id,omitempty"`
+	AggregatorID string `json:"aggregator_id,omitempty"`
 	Aggregator   string `json:"aggregator,omitempty"`
-	WebID        string `json:"webid,omitempty"`
+	Subject      string `json:"subject,omitempty"`
+	IDP 				 string `json:"idp,omitempty"`
 }
 
 // AuthorizationCodeStartResponse represents the response for authorization_code start phase

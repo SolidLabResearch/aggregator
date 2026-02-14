@@ -203,7 +203,7 @@ docker-clean:
 
 integration-test:
 	@echo "🧪 Running integration tests..."
-	@cd integration-test && go mod download && go test -v -timeout 20m ./...
+	@cd integration-test && go mod download && go test -count=1 -v -timeout 20m ./...
 
 unit-test:
 	@echo "🧪 Running unit tests..."

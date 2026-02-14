@@ -34,6 +34,8 @@ func HandlePolicyRequest(w http.ResponseWriter, r *http.Request) {
 		ASUrl      string   `json:"as_url"`
 		ResourceID string   `json:"resource_id"`
 		Scopes     []string `json:"scopes"`
+		Assignee   string   `json:"assignee"`
+		Assigner   string   `json:"assigner"`
 		ClientIDs  []string `json:"client_ids"`
 	}
 
@@ -46,19 +48,33 @@ func HandlePolicyRequest(w http.ResponseWriter, r *http.Request) {
 
 	scopes := stringsToScopes(reqData.Scopes)
 
-	logrus.WithFields(logrus.Fields{
-		"issuer":      reqData.ASUrl,
-		"resource_id": reqData.ResourceID,
-		"scopes":      reqData.Scopes,
-		"client_ids":  reqData.ClientIDs,
-	}).Info("Received policy request")
+	assignee := reqData.Assignee
+	if strings.TrimSpace(assignee) == "" {
+		assignee = PublicId
+	}
 
 	clients := reqData.ClientIDs
 	if clients == nil {
 		clients = []string{}
 	}
 
-	if err := createPolicy(reqData.ASUrl, reqData.ResourceID, scopes, clients); err != nil {
+	logrus.WithFields(logrus.Fields{
+		"issuer":      reqData.ASUrl,
+		"resource_id": reqData.ResourceID,
+		"scopes":      reqData.Scopes,
+		"assignee":    assignee,
+		"assigner":    reqData.Assigner,
+		"client_ids":  reqData.ClientIDs,
+	}).Info("Received policy request")
+
+	if err := createPolicy(
+		reqData.ASUrl,
+		reqData.ResourceID,
+		scopes,
+		assignee,
+		reqData.Assigner,
+		clients,
+	); err != nil {
 		logrus.WithError(err).Error("Failed to create UMA policy")
 		http.Error(w, "Failed to create policy", http.StatusInternalServerError)
 		return
@@ -67,7 +83,14 @@ func HandlePolicyRequest(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-func createPolicy(asUrl string, resourceId string, scopes []Scope, clients []string) error {
+func createPolicy(
+	asUrl string,
+	resourceId string,
+	scopes []Scope,
+	assignee string,
+	assigner string,
+	clients []string,
+) error {
 	// Policy URI
 	policyUri := asUrl + "/policies"
 
@@ -80,11 +103,11 @@ func createPolicy(asUrl string, resourceId string, scopes []Scope, clients []str
 	// Define policies
 	policyStore := rdfgo.NewStore()
 	if len(clients) == 0 {
-		permissionUri := definePermission(policyStore, data.UmaID, scopes, data.UserID)
+		permissionUri := definePermission(policyStore, data.UmaID, scopes, assignee, assigner)
 		definePolicy(policyStore, permissionUri)
 	} else {
 		for _, clientId := range clients {
-			permissionUri := definePermission(policyStore, data.UmaID, scopes, data.UserID)
+			permissionUri := definePermission(policyStore, data.UmaID, scopes, assignee, assigner)
 			defineClientConstraint(policyStore, clientId, permissionUri)
 			definePolicy(policyStore, permissionUri)
 		}
@@ -106,12 +129,8 @@ func createPolicy(asUrl string, resourceId string, scopes []Scope, clients []str
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	idToken, err := getIDToken(data.UserID)
-	if err != nil {
-		return fmt.Errorf("failed to get ID token: %w", err)
-	}
 	req.Header.Set("Content-Type", "application/n-quads")
-	req.Header.Set("Authorization", "Bearer "+idToken)
+	req.Header.Set("Authorization", assignerHeader(assigner))
 	logrus.WithFields(logrus.Fields{
 		"policy_uri": policyUri,
 		"policy":     buf.String(),
@@ -164,7 +183,7 @@ func defineClientConstraint(store rdfgo.Store, client string, permissionUri rdfg
 	)
 }
 
-func definePermission(store rdfgo.Store, umaId string, scopes []Scope, userId string) rdfgo.INamedNode {
+func definePermission(store rdfgo.Store, umaId string, scopes []Scope, assignee string, assigner string) rdfgo.INamedNode {
 	permissionUri := rdfgo.NewNamedNode(ExPrefix + uuid.NewString())
 
 	store.AddQuadFromTerms(
@@ -199,7 +218,7 @@ func definePermission(store rdfgo.Store, umaId string, scopes []Scope, userId st
 	store.AddQuadFromTerms(
 		permissionUri,
 		rdfgo.NewNamedNode(OdrlPrefix+"assignee"),
-		toValidId(userId),
+		toValidId(assignee),
 		nil,
 	)
 
@@ -207,7 +226,7 @@ func definePermission(store rdfgo.Store, umaId string, scopes []Scope, userId st
 	store.AddQuadFromTerms(
 		permissionUri,
 		rdfgo.NewNamedNode(OdrlPrefix+"assigner"),
-		toValidId(userId),
+		toValidId(assigner),
 		nil,
 	)
 
@@ -260,4 +279,14 @@ func toValidId(id string) rdfgo.INamedNode {
 
 	// Otherwise treat as local ID and prefix it
 	return rdfgo.NewNamedNode(idPrefix + strings.TrimSpace(id))
+}
+
+func assignerHeader(assigner string) string {
+	// First, try to get an id token
+	idToken, err := getIDToken(assigner)
+	if err != nil {
+		logrus.WithError(err).Warnf("Failed to get ID token for assigner %s, falling back to WebId authorization", assigner)
+		return "WebId " + assigner
+	}
+	return "Bearer " + idToken
 }

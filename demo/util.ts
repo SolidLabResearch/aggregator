@@ -155,27 +155,43 @@ export class SolidOIDCAuth {
     /**
      * Create a UMA fetch function that uses Solid OIDC authentication
      */
-    createUMAFetch() {
-        return async (url: string, init: RequestInit = {}): Promise<Response> => {
-            // Try request without token first
-            const noTokenResponse = await fetch(url, init);
-            if (noTokenResponse.status > 199 && noTokenResponse.status < 300) {
-                console.log('No Authorization token was required.')
+    createAuthFetch() {
+        return async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
+            // First attempt with no token.
+            const noTokenResponse = await fetch(input, init);
+            if (noTokenResponse.ok) {
+                console.log('No Authorization token was required.');
                 return noTokenResponse;
             }
 
-            const {tokenEndpoint, ticket} = await this.parseAuthenticateHeader(noTokenResponse.headers);
+            if (noTokenResponse.status !== 401) {
+                return noTokenResponse;
+            }
 
-            const {token, tokenType, error} = await this.fetchAccessToken(tokenEndpoint, ticket);
-            if (error) {
-                throw error;
+            const wwwAuthenticateHeader = noTokenResponse.headers.get("WWW-Authenticate");
+            const isUmaChallenge = wwwAuthenticateHeader?.trim().toLowerCase().startsWith("uma");
+
+            if (isUmaChallenge) {
+                const { tokenEndpoint, ticket } = await this.parseAuthenticateHeader(noTokenResponse.headers);
+
+                const { token, tokenType, error } = await this.fetchAccessToken(tokenEndpoint, ticket);
+                if (error) {
+                    throw error;
+                }
+
+                const headers = new Headers(init.headers);
+                headers.set('Authorization', `${tokenType} ${token}`);
+                return fetch(input, { ...init, headers });
+            }
+
+            await this.ensureValidToken();
+            if (!this.accessToken) {
+                return noTokenResponse;
             }
 
             const headers = new Headers(init.headers);
-            headers.set('Authorization', `${tokenType} ${token}`);
-
-            // Retry request with RPT
-            return fetch(url, {...init, headers});
+            headers.set('Authorization', `Bearer ${this.accessToken}`);
+            return fetch(input, { ...init, headers });
         }
     }
 

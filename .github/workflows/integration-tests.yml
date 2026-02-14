@@ -25,6 +25,9 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('integration-test/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
+      - name: Run unit tests
+        run: |
+          make unit-test
       - name: Set up Docker
         uses: docker/setup-buildx-action@v3
         with:
@@ -105,7 +108,7 @@ jobs:
             --create-namespace \
             --set ingressClass.enabled=true \
             --set ingressClass.name=aggregator-traefik \
-            --set ports.web.hostPort=80 \
+            --set ports.web.hostPort=5000 \
             --set ports.websecure.hostPort=443 \
             --set service.type=ClusterIP \
             --set providers.kubernetesCRD.allowCrossNamespace=true \

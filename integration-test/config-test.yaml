@@ -1,0 +1,32 @@
+# ------------------------
+# 🔹 ConfigMap for Integration Tests
+# ------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aggregator-config
+  namespace: aggregator-app
+data:
+  log_level: "debug"                             # Set log level (debug, info, warn, error)
+  disable_auth: "false"                          # Enable auth so UMA flows are exercised
+  config_source: "integration-test"             # Marker to verify test config was applied
+  client_id: "http://aggregator.local:5000/client.json" # OAuth2 Client ID (dereferenceable)
+  client_secret: "AtctW4sdbmjcfF9gQJIf5RoK6T6wetwG"      # OAuth2 Client Secret
+  external_host: "http://aggregator.local:5000"    # External base URL for building public URLs
+  allowed_registration_types: "authorization_code,client_credentials,provision,none" # Comma-separated registration types
+  idp_server_type: "solid"                      # solid or keycloak
+  provision_client_id: "provision-client-id"    # Client credentials for provision flow
+  provision_client_secret: "provision-client-secret" # Client secret for provision flow
+  provision_webid: "https://provision.example/webid#me" # WebID to provision
+  provision_idp: "https://provision.example"    # OIDC issuer for provision flow
+  provision_authorization_server: "https://uma.example" # UMA authorization server
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aggregator-provision-uma
+  namespace: aggregator-app
+type: Opaque
+stringData:
+  provision_uma_client_id: ""
+  provision_uma_client_secret: ""

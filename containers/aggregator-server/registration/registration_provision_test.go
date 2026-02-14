@@ -13,17 +13,20 @@ func TestHandleProvisionFlow_MissingConfig(t *testing.T) {
 	originalClientID := model.ProvisionClientID
 	originalClientSecret := model.ProvisionClientSecret
 	originalWebID := model.ProvisionWebID
+	originalIDP := model.ProvisionIDP
 	originalAuthServer := model.ProvisionAuthorizationServer
 	t.Cleanup(func() {
 		model.ProvisionClientID = originalClientID
 		model.ProvisionClientSecret = originalClientSecret
 		model.ProvisionWebID = originalWebID
+		model.ProvisionIDP = originalIDP
 		model.ProvisionAuthorizationServer = originalAuthServer
 	})
 
 	model.ProvisionClientID = ""
 	model.ProvisionClientSecret = ""
 	model.ProvisionWebID = ""
+	model.ProvisionIDP = ""
 	model.ProvisionAuthorizationServer = ""
 
 	recorder := httptest.NewRecorder()

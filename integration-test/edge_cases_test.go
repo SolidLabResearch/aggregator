@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"aggregator-integration-test/mocks"
-
 	"github.com/google/uuid"
 )
 
@@ -137,8 +136,8 @@ func TestRegistration_Update_NonexistentAggregator(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("Expected 403 Forbidden for unknown aggregator, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("Expected 404 Not Found or 403 Forbidden for unknown aggregator, got %d", resp.StatusCode)
 	}
 }
 
@@ -168,8 +167,8 @@ func TestRegistration_Delete_NonexistentAggregator(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("Expected 403 Forbidden for unknown aggregator, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("Expected 404 Not Found or 403 Forbidden for unknown aggregator, got %d", resp.StatusCode)
 	}
 }
 

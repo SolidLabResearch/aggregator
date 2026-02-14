@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -28,8 +29,9 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 	webID := model.ProvisionWebID
 	clientID := model.ProvisionClientID
 	clientSecret := model.ProvisionClientSecret
+	idpIssuer := model.ProvisionIDP
 
-	if authorizationServer == "" || webID == "" || clientID == "" || clientSecret == "" {
+	if authorizationServer == "" || webID == "" || clientID == "" || clientSecret == "" || idpIssuer == "" {
 		http.Error(w, "Provisioning configuration is not set", http.StatusInternalServerError)
 		return
 	}
@@ -50,6 +52,26 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 		return
 	}
 
+	clientIDToUse := clientID
+	clientSecretToUse := clientSecret
+	if strings.EqualFold(model.IDPServerType, "solid") &&
+		strings.Contains(clientID, "@") && !strings.HasPrefix(clientID, "http") {
+		baseURL, err := deriveSolidBaseURL(idpIssuer)
+		if err != nil {
+			logrus.WithError(err).Error("Unable to determine Solid base URL")
+			http.Error(w, "Unable to determine Solid base URL", http.StatusInternalServerError)
+			return
+		}
+		solidClientID, solidClientSecret, err := fetchSolidClientCredentials(baseURL, clientID, clientSecret, "aggregator-provision", webID)
+		if err != nil {
+			logrus.WithError(err).Error("Unable to obtain Solid client credentials")
+			http.Error(w, "Unable to obtain Solid client credentials", http.StatusInternalServerError)
+			return
+		}
+		clientIDToUse = solidClientID
+		clientSecretToUse = solidClientSecret
+	}
+
 	// Step 3: Perform client_credentials grant using configured client_id/client_secret
 	tokenData := url.Values{
 		"grant_type": {"client_credentials"},
@@ -61,8 +83,8 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 		oidcConfig.TokenEndpoint,
 		oidcConfig.TokenEndpointAuthMethodsSupported,
 		tokenData,
-		clientID,
-		clientSecret,
+		clientIDToUse,
+		clientSecretToUse,
 	)
 	if err != nil {
 		logrus.WithError(err).Error("Token request failed")
@@ -141,8 +163,9 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 	logrus.Infof("Aggregator created (provision): %s for ID %s (acting as %s)", instance.AggregatorID, id, webID)
 
 	response := model.RegistrationResponse{
-		Aggregator: instance.BaseURL,
-		WebID:      webID,
+		AggregatorID: instance.AggregatorID,
+		Aggregator:   instance.BaseURL,
+		Subject:      webID,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
