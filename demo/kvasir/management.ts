@@ -27,6 +27,48 @@ export class KvasirManagement {
     this.umaFetch = this.auth.createUMAFetch();
   }
 
+  public async delegatePodToUMA() {
+    const relationsUri = this.podUrl + "/rebac/relationships";
+    console.log("POD URL: ", this.podUrl)
+    try {
+      const resp = await fetch(relationsUri, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/ld+json",
+          "Authorization": `Bearer ${await this.auth.getAccessToken()}`
+        },
+        body: JSON.stringify({
+          "@context": {
+            "kss": "https://kvasir.discover.ilabt.imec.be/vocab#",
+            "kss-fga": "https://kvasir.discover.ilabt.imec.be/fine-grained-access#"
+          },
+          "kss:insert": [
+            {
+              "@id": "urn:kvasir-wildcard",
+              "@type": "kss-fga:User",
+              "kss-fga:owner": {
+                "@id": this.podUrl,
+                "@type": "kss-fga:Resource",
+                "kss-fga:external_access": {
+                  "@id": "kss-fga:Uma"
+                }
+              }
+            }
+          ]
+        })
+      });
+
+      if (!resp.ok) {
+        console.error(`Error ${resp.status}:`, await resp.text());
+        return;
+      }
+      
+      console.log(`Response ${resp.status}:, ${await resp.text()}`);
+    } catch(err) {
+      console.error("Request failed:", err);
+    }
+  }
+
   public async registerPolicies(turtle: string) {
     const policyUri = `${this.umaUrl}/policies`;
 
@@ -103,13 +145,12 @@ export class KvasirManagement {
   }
 
   public async registerSlice(
-    podName: string, 
     context: any, 
     schema: string, 
     sliceName: string,
     sliceDescription: string,
   ): Promise<string> {
-    const sliceUri = `${this.podUrl}/${podName}/slices`;
+    const sliceUri = `${this.podUrl}/slices`;
 
     const body = {
       "@context": context,

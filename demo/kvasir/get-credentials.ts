@@ -5,18 +5,18 @@ const REALM = "quarkus";
 const USERNAME = "alice@example.com";
 const PASSWORD = "alice";
 const CLIENT_ID = "demo-client";
-const CLIENT_SECRET = "j2guasxTdxHum3Feyb42h6kObNqfIiCj";
+const CLIENT_SECRET = "bF9L3p1uGQNofLnixJviG7BR9L17ce9F";
 
 const UMA_SERVER = "http://localhost:4000/uma";
-const KVASIR_SERVER = "http://localhost:8080/alice";
+const KVASIR_SERVER = "http://localhost:8080/test";
 
 async function main() {
   try {
     console.log("=== Initializing Keycloak Authentication ===");
     
-    const auth = new KeycloakOIDCAuth();
-    await auth.init(IDP, REALM);
-    await auth.login(USERNAME, PASSWORD, CLIENT_ID, CLIENT_SECRET);
+    // const auth = new KeycloakOIDCAuth();
+    // await auth.init(IDP, REALM);
+    // await auth.login(USERNAME, PASSWORD, CLIENT_ID, CLIENT_SECRET);
 
     // 1️⃣ Fetch UMA config
     const configRes = await fetch(
@@ -42,7 +42,7 @@ async function main() {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${await auth.getIdToken()}`,
+        // "Authorization": `Bearer ${await auth.getIdToken()}`,
       },
       body: JSON.stringify({
         client_uri: KVASIR_SERVER,

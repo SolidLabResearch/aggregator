@@ -11,8 +11,7 @@ async function main() {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      registration_type: "device_code",
-      authorization_server: AS_URL,
+      registration_type: "device_code"
     }),
   });
 
