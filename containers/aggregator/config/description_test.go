@@ -29,14 +29,6 @@ func TestFetchAccessTokenExpiry(t *testing.T) {
 			"access_token_expiry": "2025-01-01T00:00:00Z",
 		},
 	})
-
-	expiry, err := fetchAccessTokenExpiry()
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if expiry != "2025-01-01T00:00:00Z" {
-		t.Fatalf("expected token expiry, got %q", expiry)
-	}
 }
 
 func TestHandleAggregatorDescription(t *testing.T) {
@@ -89,9 +81,6 @@ func TestHandleAggregatorDescription(t *testing.T) {
 	}
 	if !desc.LoginStatus {
 		t.Fatal("expected login_status true")
-	}
-	if desc.TokenExpiry != tokenExpiry {
-		t.Fatalf("expected token_expiry %s, got %s", tokenExpiry, desc.TokenExpiry)
 	}
 	if _, err := time.Parse(time.RFC3339, desc.CreatedAt); err != nil {
 		t.Fatalf("created_at not RFC3339: %v", err)

@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 // AggregatorDescription represents the aggregator instance description
@@ -16,7 +18,6 @@ type AggregatorDescription struct {
 	ID                    string `json:"id,omitempty"`
 	CreatedAt             string `json:"created_at"`
 	LoginStatus           bool   `json:"login_status"`
-	TokenExpiry           string `json:"token_expiry,omitempty"`
 	TransformationCatalog string `json:"transformation_catalog"`
 	ServiceCollection     string `json:"service_collection"`
 }
@@ -47,14 +48,7 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenExpiry, err := fetchAccessTokenExpiry()
-	loginStatus := false
-	if err == nil && tokenExpiry != "" {
-		parsed, parseErr := time.Parse(time.RFC3339, tokenExpiry)
-		if parseErr == nil {
-			loginStatus = time.Now().Before(parsed)
-		}
-	}
+	loginStatus := checkLoginStatus()
 
 	createdAt, err := fetchCreatedAt()
 	if err != nil || createdAt == "" {
@@ -66,7 +60,6 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 		ID:                    model.BaseUrl,
 		CreatedAt:             createdAt,
 		LoginStatus:           loginStatus,
-		TokenExpiry:           tokenExpiry,
 		TransformationCatalog: model.BaseUrl + model.TransformationCatalog,
 		ServiceCollection:     model.BaseUrl + model.ServiceCollection,
 	}
@@ -77,13 +70,42 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// fetchAccessTokenExpiry reads the "access_token_expiry" key from the mounted ConfigMap
-func fetchAccessTokenExpiry() (string, error) {
-	data, err := os.ReadFile("/etc/config/access_token_expiry")
+func checkLoginStatus() bool {
+	url := fmt.Sprintf(
+		"http://token-service.%s.svc.cluster.local/loginstatus/%s",
+		model.Namespace,
+		model.Owner.UserId,
+	)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return "", err
+		logrus.WithError(err).Debug("Failed to create login status check request")
+		return false
 	}
-	return strings.TrimSpace(string(data)), nil
+
+	resp, err := model.HttpClient.Do(req)
+	if err != nil {
+		logrus.WithError(err).Debug("Failed to check login status")
+		return false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		logrus.WithField("status_code", resp.StatusCode).
+			Debug("Login status check returned non-OK status")
+		return false
+	}
+
+	var result struct {
+		LoginStatus bool `json:"login_status"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		logrus.WithError(err).Debug("Failed to decode login status response")
+		return false
+	}
+
+	return result.LoginStatus
 }
 
 // fetchCreatedAt reads the "created_at" key from the mounted ConfigMap

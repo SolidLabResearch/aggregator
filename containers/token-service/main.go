@@ -77,6 +77,7 @@ func main() {
 	}
 
 	http.HandleFunc("/token/", tokenHandler)
+	http.HandleFunc("/loginstatus/", authorizedHandler)
 	http.HandleFunc("/healthz", healthHandler)
 
 	// Listen for SIGTERM
@@ -145,7 +146,7 @@ func tokenHandler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		handleStore(w, r, userID)
 	case http.MethodPut:
-		handleStore(w, r, userID)
+		handleUpdate(w, r, userID)
 	case http.MethodGet:
 		handleGet(w, r, userID)
 	case http.MethodDelete:
@@ -255,6 +256,45 @@ func handleDelete(w http.ResponseWriter, _ *http.Request, userID string) {
 
 	log.WithField("user_id", userID).Info("Deleted token")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func authorizedHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID := r.URL.Path[len("/loginstatus/"):]
+
+	entry, err := getEntry(userID)
+	if err != nil {
+		log.WithField("user_id", userID).
+			Warn("Authorization check failed: token not found")
+
+		json.NewEncoder(w).Encode(map[string]bool{
+			"login_status": false,
+		})
+		return
+	}
+
+	_, _, err = ensureValidToken(entry, userID)
+	if err != nil {
+		log.WithError(err).
+			WithField("user_id", userID).
+			Warn("Authorization check failed: refresh failed")
+
+		json.NewEncoder(w).Encode(map[string]bool{
+			"authorized": false,
+		})
+		return
+	}
+
+	log.WithField("user_id", userID).
+		Debug("Authorization check successful")
+
+	json.NewEncoder(w).Encode(map[string]bool{
+		"authorized": true,
+	})
 }
 
 func getEntry(userID string) (*TokenEntry, error) {
