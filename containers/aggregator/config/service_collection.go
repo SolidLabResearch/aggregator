@@ -33,7 +33,7 @@ func InitServiceCollection(mux *http.ServeMux) error {
 	collection := ServiceCollection{
 		etagServices:        0,
 		etagTransformations: 0,
-		services:            make(map[string]model.Service),
+		services:            make(map[string]*model.Service),
 		serverMux:           mux,
 	}
 
@@ -118,11 +118,11 @@ func (collec *ServiceCollection) HandleServiceEndpoint(w http.ResponseWriter, r 
 
 	switch r.Method {
 	case "HEAD":
-		collec.headService(w, r, service)
+		collec.headService(w, r, *service)
 	case "GET":
-		collec.getService(w, r, service)
+		collec.getService(w, r, *service)
 	case "DELETE":
-		collec.deleteService(w, r, service)
+		collec.deleteService(w, r, *service)
 	default:
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 	}
@@ -231,7 +231,7 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	collec.services[service.InstanceID] = *service
+	collec.services[service.InstanceID] = service
 	collec.etagServices++
 	collec.servicesMu.Unlock()
 

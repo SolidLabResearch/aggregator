@@ -91,14 +91,14 @@ func deleteAggregatorInstance(aggregatorID string) error {
 	return nil
 }
 
-// checkOwnership verifies that the WebID owns the aggregator
-func checkOwnership(aggregatorID string, webID string) error {
+// checkOwnership verifies that the user ID owns the aggregator
+func checkOwnership(aggregatorID string, id string) error {
 	instance, err := getAggregatorInstance(aggregatorID)
 	if err != nil {
 		return err
 	}
 
-	if instance.OwnerID != webID {
+	if instance.OwnerID != id {
 		return errors.New("not authorized")
 	}
 
