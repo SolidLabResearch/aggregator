@@ -5,7 +5,6 @@ import (
 	"aggregator/ingress"
 	"aggregator/model"
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -78,7 +77,6 @@ func main() {
 	if model.TransformationCatalog == "" {
 		logrus.Fatal("Environment variable SERVICE_COLLECTION must be set")
 	}
-	model.BaseUrl = fmt.Sprintf("%s://%s/%s", model.Protocol, model.ExternalHost, model.ID)
 
 	// Load in-cluster kubeConfig
 	kubeConfig, err := rest.InClusterConfig()

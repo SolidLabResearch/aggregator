@@ -11,8 +11,22 @@ import (
 
 // Network configuration
 var Protocol string
-var TLSSecret string
 var ExternalHost string
+var ExternalHttpPort string
+var ExternalHttpsPort string
+
+func ExternalURL() string {
+	if Protocol == "https" {
+		if ExternalHttpsPort == "443" {
+			return "https://" + ExternalHost + "/" + ID
+		}
+		return "https://" + ExternalHost + ":" + ExternalHttpsPort + "/" + ID
+	}
+	if ExternalHttpPort == "80" {
+		return "http://" + ExternalHost + "/" + ID
+	}
+	return "http://" + ExternalHost + ":" + ExternalHttpPort + "/" + ID
+}
 
 // Aggregator identity
 var Owner User
@@ -21,7 +35,6 @@ var ProvisionID string
 var Namespace string
 
 // Aggregator configuration
-var BaseUrl string
 var ServiceCollection string
 var TransformationCatalog string
 

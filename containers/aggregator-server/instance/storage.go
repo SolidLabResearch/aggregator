@@ -113,7 +113,7 @@ func CreateAggregatorInstanceRecord(
 		OwnerID:             ownerID,
 		RegistrationType:    registrationType,
 		AuthorizationServer: authorizationServer,
-		BaseURL:             fmt.Sprintf("%s://%s/%s", model.Protocol, model.ExternalHost, aggregatorID),
+		BaseURL:             fmt.Sprintf("%s/%s", model.ExternalURL(), aggregatorID),
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}

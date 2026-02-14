@@ -12,6 +12,22 @@ import (
 var Protocol string
 var TLSSecret string
 var ExternalHost string
+var ExternalHttpPort string
+var ExternalHttpsPort string
+
+func ExternalURL() string {
+	if TLSSecret != "" {
+		if ExternalHttpsPort == "443" {
+			return "https://" + ExternalHost
+		}
+		return "https://" + ExternalHost + ":" + ExternalHttpsPort
+	}
+
+	if ExternalHttpPort == "80" {
+		return "http://" + ExternalHost
+	}
+	return "http://" + ExternalHost + ":" + ExternalHttpPort
+}
 
 var AllowedRegistrationTypes []string
 var ClientId string

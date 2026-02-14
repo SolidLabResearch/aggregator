@@ -46,7 +46,7 @@ func InitServiceCollection(mux *http.ServeMux) error {
 }
 
 func (collec *ServiceCollection) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), scopes []model.Scope) error {
-	fullURL := model.BaseUrl + pattern
+	fullURL := model.ExternalURL() + pattern
 
 	// Register resource and define policies
 	if err := auth.RegisterResource(fullURL, scopes); err != nil {
@@ -247,7 +247,7 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 	for output := range service.Exe.Transformation.OutputMapping {
 		path := servicePath + "/" + output
 		uri := service.Exe.Transformation.Base + output
-		service.Exe.Outputs[uri] = rdfgo.NewNamedNode(model.BaseUrl + path)
+		service.Exe.Outputs[uri] = rdfgo.NewNamedNode(model.ExternalURL() + path)
 		err = collec.HandleFunc(path, collec.HandleServiceOutput, []model.Scope{model.Read, model.Write})
 		if err != nil {
 			logrus.WithError(err).Errorf("Error registering handler for output %s", output)

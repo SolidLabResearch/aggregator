@@ -28,7 +28,7 @@ func InitTransformationCatalog(mux *http.ServeMux) error {
 	logrus.Infof("Handler registered at %s", model.TransformationCatalog)
 
 	// Register catalog resource and policy
-	fullURL := model.BaseUrl + model.TransformationCatalog
+	fullURL := model.ExternalURL() + model.TransformationCatalog
 	if err := auth.RegisterResource(fullURL, []model.Scope{model.Read}); err != nil {
 		return fmt.Errorf("failed to register resource %s: %w", fullURL, err)
 	}

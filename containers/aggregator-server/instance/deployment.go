@@ -163,7 +163,10 @@ func ensureDeployment(
 								{ContainerPort: 5000},
 							},
 							Env: []corev1.EnvVar{
-								{Name: "AGGREGATOR_EXTERNAL_HOST", Value: model.ExternalHost},
+								{Name: "PROTOCOL", Value: model.Protocol},
+								{Name: "EXTERNAL_HOST", Value: model.ExternalHost},
+								{Name: "EXTERNAL_HTTP_PORT", Value: model.ExternalHttpPort},
+								{Name: "EXTERNAL_HTTPS_PORT", Value: model.ExternalHttpsPort},
 								{Name: "CLIENT_ID", Value: model.ClientId},
 								{Name: "CLIENT_SECRET", Value: model.ClientSecret},
 								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
@@ -174,7 +177,6 @@ func ensureDeployment(
 								{Name: "PROVISION_ID", Value: provisionId},
 								{Name: "TRANSFORMATION_CATALOG", Value: model.TransformationCatalog},
 								{Name: "SERVICE_COLLECTION", Value: model.ServiceCollection},
-								{Name: "PROTOCOL", Value: model.Protocol},
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{

@@ -1,11 +1,27 @@
 {
   "$schema": "http://json-schema.org/schema#",
   "type": "object",
-  "required": ["host", "auth", "ingressClassName"],
+  "required": ["external", "auth", "ingressClassName"],
   "properties": {
-    "host": {
-      "type": "string",
-      "minLength": 1
+    "external": {
+      "type": "object",
+      "required": ["host", "httpPort", "httpsPort"],
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1
+        },
+        "httpPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "httpsPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
     },
     "ingressClassName": {
       "type": "string",

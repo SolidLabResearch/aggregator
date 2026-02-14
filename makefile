@@ -114,8 +114,8 @@ kind-start-traefik:
 		--namespace aggregator-traefik --create-namespace \
 		--set ingressClass.enabled=true \
 		--set ingressClass.name=aggregator-traefik \
-		--set ports.web.hostPort=80 \
-		--set ports.websecure.hostPort=443 \
+		--set ports.web.hostPort=5000 \
+		--set ports.websecure.hostPort=5001 \
 		--set service.type=ClusterIP
 	@kubectl rollout status deployment aggregator-traefik -n aggregator-traefik --timeout=180s
 	@echo "✅ Traefik deployment is ready!"

@@ -1,4 +1,8 @@
-host: aggregator.local
+external:
+  host: aggregator.local
+  httpPort: 5000
+  httpsPort: 5001
+
 auth:
   clientId: aggregator-server
   server: http://localhost:8280/realms/quarkus

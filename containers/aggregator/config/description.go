@@ -23,11 +23,11 @@ type AggregatorDescription struct {
 }
 
 func InitAggregatorDescription(mux *http.ServeMux) error {
-	if err := auth.RegisterResource(model.BaseUrl, []model.Scope{model.Read}); err != nil {
-		return fmt.Errorf("failed to register resource %s: %w", model.BaseUrl, err)
+	if err := auth.RegisterResource(model.ExternalURL(), []model.Scope{model.Read}); err != nil {
+		return fmt.Errorf("failed to register resource %s: %w", model.ExternalURL(), err)
 	}
-	if err := auth.DefinePolicy(model.BaseUrl, []model.Scope{model.Read}); err != nil {
-		return fmt.Errorf("failed to define policy for resource %s: %w", model.BaseUrl, err)
+	if err := auth.DefinePolicy(model.ExternalURL(), []model.Scope{model.Read}); err != nil {
+		return fmt.Errorf("failed to define policy for resource %s: %w", model.ExternalURL(), err)
 	}
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -57,11 +57,11 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 
 	// TODO: semantic representations need to be added at some point
 	desc := AggregatorDescription{
-		ID:                    model.BaseUrl,
+		ID:                    model.ID,
 		CreatedAt:             createdAt,
 		LoginStatus:           loginStatus,
-		TransformationCatalog: model.BaseUrl + model.TransformationCatalog,
-		ServiceCollection:     model.BaseUrl + model.ServiceCollection,
+		TransformationCatalog: model.ExternalURL() + model.TransformationCatalog,
+		ServiceCollection:     model.ExternalURL() + model.ServiceCollection,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

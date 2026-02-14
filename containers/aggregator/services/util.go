@@ -26,7 +26,7 @@ var forbidden = map[string]struct{}{
 
 func ValidServiceUri(uri string) (string, string, error) {
 	// Validate service path
-	servicePath, err := StripPrefix(uri, model.BaseUrl)
+	servicePath, err := StripPrefix(uri, model.ExternalURL())
 	if err != nil {
 		return "", "", fmt.Errorf("Invalid execution URI: %w", err)
 	}

@@ -38,11 +38,11 @@ func handleServerDescription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	desc := AggregatorServerDescription{
-		RegistrationEndpoint: fmt.Sprintf("%s://%s/registration", model.Protocol, model.ExternalHost),
+		RegistrationEndpoint:       fmt.Sprintf("%s/%s", model.ExternalURL(), model.RegistrationEndpoint),
 		SupportedRegistrationTypes: supported,
-		Version:               "1.0.0",
-		ClientIdentifier:      fmt.Sprintf("%s://%s/client.json", model.Protocol, model.ExternalHost),
-		TransformationCatalog: fmt.Sprintf("%s://%s/config/transformations", model.Protocol, model.ExternalHost),
+		Version:                    "1.0.0",
+		ClientIdentifier:           fmt.Sprintf("%s/client.json", model.ExternalURL()),
+		TransformationCatalog:      fmt.Sprintf("%s/%s", model.ExternalURL(), model.TransformationCatalog),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
