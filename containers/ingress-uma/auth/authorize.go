@@ -46,14 +46,14 @@ func HandleAuthorizationRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, ok := idIndex[payload.ResourceID]
+	resData, ok := resourceIndex[payload.ResourceID]
 	if !ok {
 		logrus.WithFields(logrus.Fields{"resource": payload.ResourceID}).Warn("No resource found")
 		http.Error(w, "No resource found", http.StatusUnauthorized)
 		return
 	}
 
-	asUrl := asIndex[payload.ResourceID]
+	asUrl := resData.AggData.AuthzServer
 	if asUrl == "" {
 		logrus.WithFields(logrus.Fields{"resource": payload.ResourceID}).Warn("No as url found for resource")
 		http.Error(w, "No Authz Server URL found", http.StatusUnauthorized)
@@ -62,8 +62,8 @@ func HandleAuthorizationRequest(w http.ResponseWriter, r *http.Request) {
 
 	logrus.WithFields(logrus.Fields{
 		"resource": payload.ResourceID,
-		"uma_id":   data.UmaID,
-		"user_id":  data.UserID,
+		"uma_id":   resData.UmaID,
+		"user_id":  resData.AggData.UserID,
 		"method":   payload.Method,
 		"as_url":   asUrl,
 	}).Info("Authorize request")
@@ -75,21 +75,21 @@ func HandleAuthorizationRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reg := Registration{
-		UserID:      data.UserID,
+	reg := AggregatorAuthData{
+		UserID:      resData.AggData.UserID,
 		AuthzServer: asUrl,
 	}
 
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		ticketlessAuthorization(w, reg, data.UmaID, payload.Method)
+		ticketlessAuthorization(w, reg, resData.UmaID, payload.Method)
 		return
 	}
 
-	ticketedAuthorization(w, r, data.UmaID, payload.Method, asUrl)
+	ticketedAuthorization(w, r, resData.UmaID, payload.Method, asUrl)
 }
 
-func ticketlessAuthorization(w http.ResponseWriter, reg Registration, umaId string, method string) {
+func ticketlessAuthorization(w http.ResponseWriter, reg AggregatorAuthData, umaId string, method string) {
 	permissions := make(map[string][]Scope)
 	scopes, err := determineScopes(method)
 	if err != nil {
@@ -164,7 +164,7 @@ func ticketedAuthorization(w http.ResponseWriter, r *http.Request, umaId string,
 	w.WriteHeader(http.StatusBadRequest)
 }
 
-func fetchTicket(reg Registration, permissions map[string][]Scope) (string, error) {
+func fetchTicket(reg AggregatorAuthData, permissions map[string][]Scope) (string, error) {
 	config, err := fetchUmaConfig(reg.AuthzServer)
 	if err != nil {
 		return "", fmt.Errorf("error while retrieving config: %w", err)

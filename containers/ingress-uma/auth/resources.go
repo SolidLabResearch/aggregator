@@ -12,12 +12,11 @@ import (
 )
 
 type ResourceData struct {
-	UmaID  string
-	UserID string
+	UmaID   string
+	AggData AggregatorAuthData
 }
 
-var idIndex = make(map[string]ResourceData)
-var asIndex = make(map[string]string)
+var resourceIndex = make(map[string]ResourceData)
 
 func HandleResourceRequest(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -32,10 +31,11 @@ func HandleResourceRequest(w http.ResponseWriter, r *http.Request) {
 
 func handlePostResource(w http.ResponseWriter, r *http.Request) {
 	var reqData struct {
-		UserID     string   `json:"user_id"`
-		ASUrl      string   `json:"as_url"`
-		ResourceID string   `json:"resource_id"`
-		Scopes     []string `json:"scopes"`
+		AggregatorID string   `json:"aggregator_id"`
+		UserID       string   `json:"user_id"`
+		ASUrl        string   `json:"as_url"`
+		ResourceID   string   `json:"resource_id"`
+		Scopes       []string `json:"scopes"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&reqData); err != nil {
@@ -46,25 +46,27 @@ func handlePostResource(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	// Basic validation
-	if reqData.UserID == "" || reqData.ASUrl == "" || reqData.ResourceID == "" || len(reqData.Scopes) == 0 {
-		http.Error(w, "Missing required fields: user_id, as_url, resource_id, scopes", http.StatusBadRequest)
+	if reqData.AggregatorID == "" || reqData.UserID == "" || reqData.ASUrl == "" || reqData.ResourceID == "" || len(reqData.Scopes) == 0 {
+		http.Error(w, "Missing required fields: aggregator_id, user_id, as_url, resource_id, scopes", http.StatusBadRequest)
 		return
 	}
 
 	scopes := stringsToScopes(reqData.Scopes)
 
 	logrus.WithFields(logrus.Fields{
-		"user_id":     reqData.UserID,
-		"as_url":      reqData.ASUrl,
-		"resource_id": reqData.ResourceID,
-		"scopes":      reqData.Scopes,
+		"aggregator_id": reqData.AggregatorID,
+		"user_id":       reqData.UserID,
+		"as_url":        reqData.ASUrl,
+		"resource_id":   reqData.ResourceID,
+		"scopes":        reqData.Scopes,
 	}).Info("Received resource registration request")
 
-	reg := Registration{
-		UserID:      reqData.UserID,
-		AuthzServer: reqData.ASUrl,
+	data := AggregatorAuthData{
+		AggregatorID: reqData.AggregatorID,
+		UserID:       reqData.UserID,
+		AuthzServer:  reqData.ASUrl,
 	}
-	if err := createResource(reg, reqData.ResourceID, scopes); err != nil {
+	if err := createResource(data, reqData.ResourceID, scopes); err != nil {
 		logrus.WithError(err).Error("Failed to create UMA resource")
 		http.Error(w, "Failed to register resource", http.StatusInternalServerError)
 		return
@@ -73,20 +75,20 @@ func handlePostResource(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
-func createResource(reg Registration, resourceId string, scopes []Scope) error {
+func createResource(aggData AggregatorAuthData, resourceId string, scopes []Scope) error {
 	// Fetch UMA configuration
-	config, err := fetchUmaConfig(reg.AuthzServer)
+	config, err := fetchUmaConfig(aggData.AuthzServer)
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("Error while retrieving UMA configuration")
 		return err
 	}
 
 	// Check if resource already registered
-	data, update := idIndex[resourceId]
+	resData, update := resourceIndex[resourceId]
 	endpoint := config.ResourceRegistrationEndpoint
 	method := "POST"
 	if update {
-		endpoint = endpoint + "/" + data.UmaID
+		endpoint = endpoint + "/" + resData.UmaID
 		method = "PUT"
 	}
 
@@ -114,7 +116,7 @@ func createResource(reg Registration, resourceId string, scopes []Scope) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	pat, err := getPAT(reg)
+	pat, err := getPAT(aggData)
 	if err != nil {
 		return err
 	}
@@ -159,8 +161,7 @@ func createResource(reg Registration, resourceId string, scopes []Scope) error {
 			logrus.WithFields(logrus.Fields{"resource_id": resourceId}).Warn("Unexpected UMA response; no UMA id received")
 			return nil
 		}
-		idIndex[resourceId] = ResourceData{UmaID: responseData.ID, UserID: reg.UserID}
-		asIndex[resourceId] = reg.AuthzServer
+		resourceIndex[resourceId] = ResourceData{UmaID: responseData.ID, AggData: aggData}
 		logrus.WithFields(logrus.Fields{"resource_id": resourceId, "uma_id": responseData.ID}).Info("Registered resource with UMA")
 	}
 	return nil
@@ -200,36 +201,31 @@ func handleDeleteResource(w http.ResponseWriter, r *http.Request) {
 
 // deleteResource deletes a single resource from the authorization server and updates local state
 func deleteResource(resourceId string) error {
-	data, ok := idIndex[resourceId]
+	data, ok := resourceIndex[resourceId]
 	if !ok {
 		// Resource not registered / already deleted
 		return fmt.Errorf("resource %s not found locally", resourceId)
 	}
-	asUrl, ok := asIndex[resourceId]
+	resData, ok := resourceIndex[resourceId]
 	if !ok {
 		// Resource not registered at authz server
 		return fmt.Errorf("resource %s not registered at authz server", resourceId)
 	}
 
-	config, err := fetchUmaConfig(asUrl)
+	config, err := fetchUmaConfig(resData.AggData.AuthzServer)
 	if err != nil {
 		return fmt.Errorf("failed to fetch UMA config: %w", err)
 	}
 
-	deleteURL := fmt.Sprintf("%s%s", config.ResourceRegistrationEndpoint, data.UmaID)
+	deleteURL := fmt.Sprintf("%s%s", config.ResourceRegistrationEndpoint, resData.UmaID)
 
 	req, err := http.NewRequest("DELETE", deleteURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create DELETE request for resource %s: %w", resourceId, err)
 	}
 
-	// Set headers
-	reg := Registration{
-		UserID:      data.UserID,
-		AuthzServer: asUrl,
-	}
 	req.Header.Set("Accept", "application/json")
-	pat, err := getPAT(reg)
+	pat, err := getPAT(resData.AggData)
 	if err != nil {
 		return err
 	}
@@ -244,8 +240,7 @@ func deleteResource(resourceId string) error {
 	// Successful deletion
 	if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusNoContent || res.StatusCode == http.StatusResetContent {
 		// Remove local references
-		delete(idIndex, resourceId)
-		delete(asIndex, resourceId)
+		delete(resourceIndex, resourceId)
 		logrus.WithFields(logrus.Fields{
 			"resource": resourceId,
 			"uma_id":   data.UmaID,
@@ -282,18 +277,18 @@ func DeleteResources() error {
 	sem := make(chan struct{}, concurrency)
 
 	// Launch deletion goroutines
-	for resourceID, asUrl := range asIndex {
+	for resourceID, resData := range resourceIndex {
 		sem <- struct{}{} // acquire semaphore
 		go func(res, asUrl string) {
 			defer func() { <-sem }() // release semaphore
 			err := deleteResource(resourceID)
 			results <- deletionResult{resourceID: res, err: err}
-		}(resourceID, asUrl)
+		}(resourceID, resData.AggData.AuthzServer)
 	}
 
 	// Collect results
 	var errs []error
-	for i := 0; i < len(asIndex); i++ {
+	for i := 0; i < len(resourceIndex); i++ {
 		r := <-results
 		if r.err != nil {
 			logrus.WithFields(logrus.Fields{

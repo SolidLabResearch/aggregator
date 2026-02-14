@@ -57,18 +57,18 @@ func HandleDerivedResourceRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, resourceID := range resourceIDs {
-		issuer := asIndex[resourceID]
-		if issuer == "" {
+		resData := resourceIndex[resourceID]
+		if resData.AggData.AuthzServer == "" {
 			logrus.WithFields(logrus.Fields{"resource_id": resourceID}).Warn("No Authentication Server Url found for resource")
 			continue
 		}
 
 		for owner := range owners {
-			if err := createPolicy(issuer, resourceID, []Scope{Read}, owner, owner, []string{}); err != nil {
+			if err := createPolicy(resData.AggData.AuthzServer, resourceID, []Scope{Read}, owner, owner, []string{}); err != nil {
 				logrus.WithFields(logrus.Fields{
 					"resource_id": resourceID,
 					"owner":       owner,
-					"issuer":      issuer,
+					"as_url":      resData.AggData.AuthzServer,
 					"error":       err,
 				}).Error("Failed to create policy for derived resource")
 				http.Error(w, "Failed to create policy", http.StatusInternalServerError)

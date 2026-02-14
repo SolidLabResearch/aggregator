@@ -14,9 +14,10 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type Registration struct {
-	UserID      string `json:"user_id"`
-	AuthzServer string `json:"as_url"`
+type AggregatorAuthData struct {
+	AggregatorID string `json:"aggregator_id"`
+	UserID       string `json:"user_id"`
+	AuthzServer  string `json:"as_url"`
 }
 
 type Credentials struct {
@@ -31,9 +32,9 @@ type PAT struct {
 }
 
 var (
-	serverCredentials = make(map[Registration]Credentials)
+	serverCredentials = make(map[AggregatorAuthData]Credentials)
 	mu                sync.Mutex
-	patMap            = make(map[Registration]PAT)
+	patMap            = make(map[AggregatorAuthData]PAT)
 )
 
 // HandleRegistrationRequest registers the aggregator as RS at the AS
@@ -49,26 +50,27 @@ func HandleRegistrationRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var reg Registration
-	if err := json.NewDecoder(r.Body).Decode(&reg); err != nil {
+	var data AggregatorAuthData
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
 		log.WithError(err).Error("Failed to decode registration request body")
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	if reg.UserID == "" || reg.AuthzServer == "" {
-		log.Warn("Missing required fields: user_id, id_token or as_url")
-		http.Error(w, "user_id, id_token and as_url are required", http.StatusBadRequest)
+	if data.UserID == "" || data.AuthzServer == "" || data.AggregatorID == "" {
+		log.Warn("Missing required fields: user_id, id_token or as_url or aggregator_id")
+		http.Error(w, "user_id, id_token, as_url and aggregator_id are required", http.StatusBadRequest)
 		return
 	}
 
 	log = log.WithFields(logrus.Fields{
-		"user_id": reg.UserID,
-		"as_url":  reg.AuthzServer,
+		"aggregator_id": data.AggregatorID,
+		"user_id":       data.UserID,
+		"as_url":        data.AuthzServer,
 	})
 
 	mu.Lock()
-	_, exists := serverCredentials[reg]
+	_, exists := serverCredentials[data]
 	mu.Unlock()
 
 	if exists {
@@ -79,7 +81,7 @@ func HandleRegistrationRequest(w http.ResponseWriter, r *http.Request) {
 
 	log.Info("Requesting client credentials from Authorization Server")
 
-	serverCreds, err := requestCredentials(reg)
+	serverCreds, err := requestCredentials(data)
 	if err != nil {
 		log.WithError(err).Error("Failed to register client at AS")
 		http.Error(w, fmt.Sprintf("Failed to register client: %v", err), http.StatusInternalServerError)
@@ -87,7 +89,7 @@ func HandleRegistrationRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mu.Lock()
-	serverCredentials[reg] = serverCreds
+	serverCredentials[data] = serverCreds
 	mu.Unlock()
 
 	log.WithFields(logrus.Fields{
@@ -99,7 +101,7 @@ func HandleRegistrationRequest(w http.ResponseWriter, r *http.Request) {
 	log.Info("Registration completed successfully")
 }
 
-func GetCredentials(reg Registration) (string, string, error) {
+func GetCredentials(reg AggregatorAuthData) (string, string, error) {
 	log := logrus.WithFields(logrus.Fields{
 		"user_id":   reg.UserID,
 		"as_url":    reg.AuthzServer,
@@ -148,23 +150,24 @@ func isExpired(creds Credentials) bool {
 	return time.Now().After(creds.ExpiresAt)
 }
 
-func requestCredentials(reg Registration) (Credentials, error) {
+func requestCredentials(data AggregatorAuthData) (Credentials, error) {
 	log := logrus.WithFields(logrus.Fields{
-		"user_id":   reg.UserID,
-		"as_url":    reg.AuthzServer,
-		"component": "client_registration",
+		"aggregator_id": data.AggregatorID,
+		"user_id":       data.UserID,
+		"as_url":        data.AuthzServer,
+		"component":     "client_registration",
 	})
 
 	log.Debug("Fetching UMA configuration")
 
-	config, err := fetchUmaConfig(reg.AuthzServer)
+	config, err := fetchUmaConfig(data.AuthzServer)
 	if err != nil {
 		log.WithError(err).Error("Failed to fetch UMA configuration")
 		return Credentials{}, err
 	}
 
 	payload := map[string]string{
-		"client_uri": "http://" + ExternalHost,
+		"client_uri": "http://" + ExternalHost + "/" + data.AggregatorID,
 	}
 
 	body, err := json.Marshal(payload)
@@ -179,13 +182,8 @@ func requestCredentials(reg Registration) (Credentials, error) {
 		return Credentials{}, err
 	}
 
-	idToken, err := getIDToken(reg.UserID)
-	if err != nil {
-		log.WithError(err).Error("Failed to get ID token for client registration")
-		return Credentials{}, err
-	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+idToken)
+	req.Header.Set("Authorization", UserAuthHeader(data.UserID))
 
 	log.WithField("endpoint", config.RegistrationEndpoint).
 		Debug("Sending client registration request")
@@ -201,7 +199,7 @@ func requestCredentials(reg Registration) (Credentials, error) {
 		Debug("Received response from AS")
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		err := errors.New("failed to register client with AS")
+		err := errors.New("failed to register aggregator with AS")
 		log.WithField("status_code", resp.StatusCode).
 			Error("AS returned error during client registration")
 		return Credentials{}, err
@@ -237,18 +235,19 @@ func requestCredentials(reg Registration) (Credentials, error) {
 
 func DeleteCredentials() {
 	logrus.Info("Starting credential cleanup")
-	for reg := range serverCredentials {
+	for data := range serverCredentials {
 		log := logrus.WithFields(logrus.Fields{
-			"user_id":   reg.UserID,
-			"as_url":    reg.AuthzServer,
-			"component": "credential_cleanup",
+			"aggregator_id": data.AggregatorID,
+			"user_id":       data.UserID,
+			"as_url":        data.AuthzServer,
+			"component":     "credential_cleanup",
 		})
 
 		mu.Lock()
-		creds, _ := serverCredentials[reg]
+		creds, _ := serverCredentials[data]
 		mu.Unlock()
 
-		config, err := fetchUmaConfig(reg.AuthzServer)
+		config, err := fetchUmaConfig(data.AuthzServer)
 		if err != nil {
 			log.WithError(err).Error("Failed to fetch UMA configuration for cleanup")
 			continue
@@ -258,14 +257,7 @@ func DeleteCredentials() {
 			log.WithError(err).Error("Failed to create client deletion request")
 			continue
 		}
-
-		// TODO - get id token from user id
-		idToken, err := getIDToken(reg.UserID)
-		if err != nil {
-			log.WithError(err).Error("Failed to get ID token for cleanup")
-			continue
-		}
-		req.Header.Set("Authorization", "Bearer "+idToken)
+		req.Header.Set("Authorization", UserAuthHeader(data.UserID))
 
 		resp, err := model.HttpClient.Do(req)
 		if err != nil {
@@ -276,21 +268,22 @@ func DeleteCredentials() {
 		log.WithField("status_code", resp.StatusCode).Info("Successfully deleted client credentials")
 
 		mu.Lock()
-		delete(serverCredentials, reg)
-		delete(patMap, reg)
+		delete(serverCredentials, data)
+		delete(patMap, data)
 		mu.Unlock()
 	}
 }
 
-func getPAT(reg Registration) (string, error) {
+func getPAT(data AggregatorAuthData) (string, error) {
 	log := logrus.WithFields(logrus.Fields{
-		"user_id":   reg.UserID,
-		"as_url":    reg.AuthzServer,
-		"component": "pat",
+		"aggregator_id": data.AggregatorID,
+		"user_id":       data.UserID,
+		"as_url":        data.AuthzServer,
+		"component":     "pat",
 	})
 
 	mu.Lock()
-	pat, exists := patMap[reg]
+	pat, exists := patMap[data]
 	mu.Unlock()
 
 	if exists && time.Now().Before(pat.ExpiresAt) {
@@ -300,13 +293,13 @@ func getPAT(reg Registration) (string, error) {
 
 	log.Info("Requesting new PAT")
 
-	clientID, clientSecret, err := GetCredentials(reg)
+	clientID, clientSecret, err := GetCredentials(data)
 	if err != nil {
 		log.WithError(err).Error("Failed to obtain client credentials for PAT")
 		return "", err
 	}
 
-	config, err := fetchUmaConfig(reg.AuthzServer)
+	config, err := fetchUmaConfig(data.AuthzServer)
 	if err != nil {
 		log.WithError(err).Error("Failed to fetch UMA configuration for PAT")
 		return "", err
@@ -353,13 +346,23 @@ func getPAT(reg Registration) (string, error) {
 	}
 
 	mu.Lock()
-	patMap[reg] = pat
+	patMap[data] = pat
 	mu.Unlock()
 
 	log.WithField("expires", pat.ExpiresAt).
 		Info("Successfully obtained new PAT")
 
 	return pat.AccessToken, nil
+}
+
+func UserAuthHeader(assigner string) string {
+	// First, try to get an id token
+	idToken, err := getIDToken(assigner)
+	if err != nil {
+		logrus.WithError(err).Warnf("Failed to get ID token for assigner %s, falling back to WebId authorization", assigner)
+		return "WebId " + assigner
+	}
+	return "Bearer " + idToken
 }
 
 func getIDToken(userId string) (string, error) {

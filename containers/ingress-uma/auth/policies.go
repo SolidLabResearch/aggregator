@@ -95,7 +95,7 @@ func createPolicy(
 	policyUri := asUrl + "/policies"
 
 	// Get UMA ID
-	data, ok := idIndex[resourceId]
+	data, ok := resourceIndex[resourceId]
 	if !ok {
 		return fmt.Errorf("resource ID %s not registered, cannot create policy", resourceId)
 	}
@@ -130,7 +130,7 @@ func createPolicy(
 	}
 
 	req.Header.Set("Content-Type", "application/n-quads")
-	req.Header.Set("Authorization", assignerHeader(assigner))
+	req.Header.Set("Authorization", UserAuthHeader(assigner))
 	logrus.WithFields(logrus.Fields{
 		"policy_uri": policyUri,
 		"policy":     buf.String(),
@@ -279,14 +279,4 @@ func toValidId(id string) rdfgo.INamedNode {
 
 	// Otherwise treat as local ID and prefix it
 	return rdfgo.NewNamedNode(idPrefix + strings.TrimSpace(id))
-}
-
-func assignerHeader(assigner string) string {
-	// First, try to get an id token
-	idToken, err := getIDToken(assigner)
-	if err != nil {
-		logrus.WithError(err).Warnf("Failed to get ID token for assigner %s, falling back to WebId authorization", assigner)
-		return "WebId " + assigner
-	}
-	return "Bearer " + idToken
 }
