@@ -2,6 +2,7 @@ package main
 
 import (
 	"aggregator/config"
+	"aggregator/instance"
 	"aggregator/model"
 	reg "aggregator/registration"
 	"context"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -162,10 +164,13 @@ func main() {
 	config.InitServerDescription(serverMux)
 
 	// Registration endpoint
-	initRegistration(serverMux)
+	serverMux.HandleFunc(model.RegistrationEndpoint, reg.RegistrationHandler)
+
+	// Status endpoint
+	serverMux.HandleFunc("/status", statusHandler)
 
 	// Healthz endpoint waits for ingress-uma to be ready
-	serverMux.HandleFunc("/healthz", healthz)
+	serverMux.HandleFunc("/healthz", healthzHandler)
 
 	// Start HTTP server
 	loggingMux := loggingMiddleware(serverMux)
@@ -198,8 +203,125 @@ func main() {
 	logrus.Info("Server stopped gracefully")
 }
 
-func initRegistration(mux *http.ServeMux) {
-	mux.HandleFunc(model.RegistrationEndpoint, reg.RegistrationHandler)
+func statusHandler(w http.ResponseWriter, r *http.Request) {
+	aggregatorID := strings.TrimPrefix(r.URL.Path, "/status/")
+	if aggregatorID == "" {
+		http.Error(w, "missing aggregator id", http.StatusBadRequest)
+		return
+	}
+
+	// 1 Check if aggregator instance exists in your system
+	_, err := instance.GetAggregatorInstance(aggregatorID)
+	if err != nil {
+		http.Error(w, "aggregator not found", http.StatusNotFound)
+		return
+	}
+
+	labelSelector := fmt.Sprintf("agg.knows.idlab.ugent.be/id=%s", aggregatorID)
+
+	// 2 Check Deployment
+	deployments, err := model.Clientset.AppsV1().
+		Deployments(model.Namespace).
+		List(r.Context(), metav1.ListOptions{
+			LabelSelector: labelSelector,
+		})
+	if err != nil {
+		http.Error(w, "failed to query deployment", http.StatusInternalServerError)
+		return
+	}
+
+	if len(deployments.Items) == 0 {
+		http.Error(w, "deployment not found", http.StatusTooEarly)
+		return
+	}
+
+	deployment := deployments.Items[0]
+	if deployment.Status.ReadyReplicas < *deployment.Spec.Replicas {
+		w.Header().Set("Retry-After", "3")
+		http.Error(w, "deployment not ready", http.StatusServiceUnavailable)
+		return
+	}
+
+	// 3 Check Service
+	services, err := model.Clientset.CoreV1().
+		Services(model.Namespace).
+		List(r.Context(), metav1.ListOptions{
+			LabelSelector: labelSelector,
+		})
+	if err != nil {
+		http.Error(w, "failed to query service", http.StatusInternalServerError)
+		return
+	}
+
+	if len(services.Items) == 0 {
+		http.Error(w, "service not found", http.StatusTooEarly)
+		return
+	}
+
+	// 4 Check Ingress
+	ingresses, err := model.Clientset.NetworkingV1().
+		Ingresses(model.Namespace).
+		List(r.Context(), metav1.ListOptions{
+			LabelSelector: labelSelector,
+		})
+	if err != nil {
+		http.Error(w, "failed to query ingress", http.StatusInternalServerError)
+		return
+	}
+
+	if len(ingresses.Items) == 0 {
+		http.Error(w, "ingress not found", http.StatusTooEarly)
+		return
+	}
+
+	// 5 Check actual service health endpoint
+	serviceURL := fmt.Sprintf(
+		"http://%s.%s.svc.cluster.local:5000/healthz",
+		services.Items[0].Name,
+		model.Namespace,
+	)
+
+	resp, err := model.HttpClient.Get(serviceURL)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		http.Error(w, "service not healthy", http.StatusTooEarly)
+		return
+	}
+	defer resp.Body.Close()
+
+	// ✅ All good
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("ready"))
+}
+
+func healthzHandler(w http.ResponseWriter, r *http.Request) {
+	umaURL := fmt.Sprintf(
+		"http://ingress-uma.%s.svc.cluster.local:8080/healthz",
+		model.Namespace,
+	)
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, umaURL, nil)
+	if err != nil {
+		http.Error(w, "Failed to build request", http.StatusInternalServerError)
+		return
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logrus.WithError(err).Warn("ingress-uma not reachable")
+		http.Error(w, "Dependency not ready", http.StatusServiceUnavailable)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		logrus.Warnf("ingress-uma unhealthy: %d", resp.StatusCode)
+		http.Error(w, "Dependency unhealthy", http.StatusServiceUnavailable)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }
 
 func parseAllowedRegistrationTypes(raw string) []string {
@@ -231,37 +353,6 @@ func hasRegistrationType(allowed []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func healthz(w http.ResponseWriter, r *http.Request) {
-	umaURL := fmt.Sprintf(
-		"http://ingress-uma.%s.svc.cluster.local:8080/healthz",
-		model.Namespace,
-	)
-
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, umaURL, nil)
-	if err != nil {
-		http.Error(w, "Failed to build request", http.StatusInternalServerError)
-		return
-	}
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		logrus.WithError(err).Warn("ingress-uma not reachable")
-		http.Error(w, "Dependency not ready", http.StatusServiceUnavailable)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		logrus.Warnf("ingress-uma unhealthy: %d", resp.StatusCode)
-		http.Error(w, "Dependency unhealthy", http.StatusServiceUnavailable)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
 }
 
 func loggingMiddleware(next http.Handler) http.Handler {

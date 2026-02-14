@@ -118,6 +118,9 @@ func main() {
 		logrus.WithError(err).Fatalf("Failed to set up transformation catalog endpoint")
 	}
 
+	// Health check endpoint
+	serverMux.HandleFunc("/healthz", healthzHandler)
+
 	// Add middlewares
 	mwMux := ingress.Chain(serverMux,
 		ingress.UMAAuthMiddleware(),
@@ -153,4 +156,9 @@ func main() {
 	}
 
 	logrus.Info("Server stopped gracefully")
+}
+
+func healthzHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }
