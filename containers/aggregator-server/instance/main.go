@@ -20,6 +20,7 @@ import (
 func DeployAggregator(
 	ownerID string,
 	authzServerURL string,
+	provisionId string,
 	ctx context.Context,
 ) (string, error) {
 	aggregatorId := uuid.NewString()
@@ -47,7 +48,7 @@ func DeployAggregator(
 	}
 	logrus.Infof("Ensured configuration for %s", aggregatorId)
 
-	if err := ensureDeployment(aggregatorId, 1, resolvedOwner, authzServerURL, cmName, ctx); err != nil {
+	if err := ensureDeployment(aggregatorId, 1, resolvedOwner, authzServerURL, provisionId, cmName, ctx); err != nil {
 		return "", fmt.Errorf("failed to deploy aggregator %s: %w", aggregatorId, err)
 	}
 	logrus.Infof("Deployed aggregator %s", aggregatorId)

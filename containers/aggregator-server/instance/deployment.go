@@ -17,6 +17,7 @@ func ensureDeployment(
 	replicas int32,
 	userId string,
 	asURL string,
+	provisionId string,
 	configName string,
 	ctx context.Context,
 ) error {
@@ -170,6 +171,7 @@ func ensureDeployment(
 								{Name: "NAMESPACE", Value: model.Namespace},
 								{Name: "USER_ID", Value: userId},
 								{Name: "AS_URL", Value: asURL},
+								{Name: "PROVISION_ID", Value: provisionId},
 								{Name: "TRANSFORMATION_CATALOG", Value: model.TransformationCatalog},
 								{Name: "SERVICE_COLLECTION", Value: model.ServiceCollection},
 								{Name: "PROTOCOL", Value: model.Protocol},

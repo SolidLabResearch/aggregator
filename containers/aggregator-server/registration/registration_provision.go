@@ -36,14 +36,6 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 		return
 	}
 
-	// Step 1: Discover IDP from the target WebID
-	idpIssuer, err := discoverIDPFromWebID(webID)
-	if err != nil {
-		logrus.WithError(err).Errorf("Failed to discover IDP from WebID: %s", webID)
-		http.Error(w, "Failed to discover IDP from WebID", http.StatusInternalServerError)
-		return
-	}
-
 	// Step 2: Fetch OIDC configuration
 	oidcConfig, err := fetchOIDCConfig(idpIssuer)
 	if err != nil {
@@ -131,8 +123,9 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 	}
 
 	aggregatorId, err := instance.DeployAggregator(
-		webID,
+		id,
 		authorizationServer,
+		webID,
 		ctx,
 	)
 	if err != nil {

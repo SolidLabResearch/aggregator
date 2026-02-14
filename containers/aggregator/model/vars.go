@@ -17,6 +17,7 @@ var ExternalHost string
 // Aggregator identity
 var Owner User
 var ID string
+var ProvisionID string
 var Namespace string
 
 // Aggregator configuration

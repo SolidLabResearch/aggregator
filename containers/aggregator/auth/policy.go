@@ -16,12 +16,17 @@ func DefinePolicy(resourceId string, scopes []model.Scope) error {
 		return nil
 	}
 
+	assigner := model.ProvisionID
+	if assigner == "" {
+		assigner = model.Owner.UserId
+	}
+
 	body := map[string]interface{}{
 		"as_url":      model.Owner.AuthzServerURL,
 		"resource_id": resourceId,
 		"scopes":      scopes,
 		"assignee":    model.Owner.UserId,
-		"assigner":    model.Owner.UserId,
+		"assigner":    assigner,
 	}
 
 	jsonBody, err := json.Marshal(body)

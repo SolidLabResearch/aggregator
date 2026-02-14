@@ -244,6 +244,7 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 		aggregatorId, err := instance.DeployAggregator(
 			id,
 			storedData.AuthorizationServer,
+			"",
 			ctx,
 		)
 		if err != nil {

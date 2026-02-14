@@ -247,6 +247,7 @@ func processDeviceCodeFlow(session *DeviceSession, oidcConfig *model.OIDCConfig)
 		aggregatorID, err := instance.DeployAggregator(
 			userID,
 			session.AuthorizationServer,
+			"",
 			ctx,
 		)
 		if err != nil {

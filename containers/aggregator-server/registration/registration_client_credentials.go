@@ -135,6 +135,7 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 		aggregatorId, err := instance.DeployAggregator(
 			req.WebID,
 			req.AuthorizationServer,
+			"",
 			ctx,
 		)
 		if err != nil {
