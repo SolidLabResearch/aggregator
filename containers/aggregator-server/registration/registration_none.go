@@ -20,26 +20,23 @@ func handleNoneFlow(w http.ResponseWriter, req model.RegistrationRequest) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	aggregatorId, err := instance.DeployAggregator("", "", "", "", "", "", "", ctx)
+	aggregatorId, err := instance.DeployAggregator("", "", ctx)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to deploy aggregator")
 		http.Error(w, "Failed to deploy aggregator", http.StatusInternalServerError)
 		return
 	}
 
-	instance := createAggregatorInstanceRecord(
+	inst := instance.CreateAggregatorInstanceRecord(
 		"",
 		"none",
 		"",
 		aggregatorId,
-		"",
-		"",
-		"",
 	)
 
 	response := model.RegistrationResponse{
-		AggregatorId: aggregatorId,
-		Aggregator:   instance.BaseURL,
+		AggregatorID: aggregatorId,
+		Aggregator:   inst.BaseURL,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

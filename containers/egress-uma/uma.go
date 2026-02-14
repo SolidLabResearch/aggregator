@@ -101,7 +101,7 @@ func RequestWithUMA(client *http.Client, r *http.Request) (*http.Response, error
 	}).Info("Parsed UMA challenge: obtained ticket and token endpoint")
 
 	// --- Step 3: Create claim token ---
-	claimToken, err := createClaimToken()
+	claimToken, err := getAccessToken()
 	if err != nil {
 		logrus.WithError(err).Error("Failed to create claim token for UMA")
 		return nil, err

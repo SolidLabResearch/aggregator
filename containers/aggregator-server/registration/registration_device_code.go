@@ -26,22 +26,13 @@ type DeviceCodeResponse struct {
 	Interval        int    `json:"interval"`
 }
 
-// Device code flow token response struct
-type TokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	IDToken      string `json:"id_token"`
-	ExpiresIn    int    `json:"expires_in"`
-	TokenType    string `json:"token_type"`
-	Scope        string `json:"scope"`
-}
-
 // DeviceFlowStatus represents the current status of a device code flow session
 type DeviceFlowStatus string
 
 const (
 	StatusPending   DeviceFlowStatus = "pending"   // waiting for tokens
 	StatusDeploying DeviceFlowStatus = "deploying" // creating aggregator
+	StatusUpdating  DeviceFlowStatus = "updating"  // updating existing aggregator with new tokens
 	StatusDone      DeviceFlowStatus = "done"
 	StatusError     DeviceFlowStatus = "error"
 )
@@ -62,6 +53,7 @@ type DeviceSession struct {
 	// Result fields
 	ResultAggregatorID string
 	ResultBaseURL      string
+	ResultSubject      string
 }
 
 var deviceSessions = make(map[string]*DeviceSession)
@@ -213,52 +205,70 @@ func processDeviceCodeFlow(session *DeviceSession, oidcConfig *model.OIDCConfig)
 		return
 	}
 
-	// Store tokens in central token service
-	if err := storeTokens(
-		userID,
-		tok,
-		model.Namespace,
-	); err != nil {
-		setSessionError(session, "Failed to store tokens in token service")
-		return
+	var aggregatorID string
+	var baseURL string
+	if session.AggregatorID != "" {
+		aggregatorID = session.AggregatorID
+		// Update existing aggregator instance with new tokens
+		session.Status = StatusUpdating
+
+		// Check if aggregator exists and user is authorized to update it
+		inst, err := instance.GetAggregatorInstance(aggregatorID)
+		if err != nil {
+			setSessionError(session, "Aggregator not found")
+			return
+		}
+
+		// Is user authorized to update this aggregator?
+		if !inst.HasOwnership(userID) {
+			setSessionError(session, "Not authorized to update this aggregator")
+			return
+		}
+
+		baseURL = inst.BaseURL
+		updateTokens(userID, tok)
+		logrus.Infof("Aggregator tokens updated (device_code flow): %s", session.AggregatorID)
+	} else {
+		// Store tokens in central token service
+		if err := storeTokens(
+			userID,
+			tok,
+		); err != nil {
+			setSessionError(session, "Failed to store tokens in token service")
+			return
+		}
+
+		// Deploy aggregator instance
+		session.Status = StatusDeploying
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		aggregatorID, err := instance.DeployAggregator(
+			userID,
+			session.AuthorizationServer,
+			ctx,
+		)
+		if err != nil {
+			setSessionError(session, "Failed to deploy aggregator")
+			return
+		}
+
+		// Create aggregator record
+		inst := instance.CreateAggregatorInstanceRecord(
+			session.AggregatorID,
+			"device_code",
+			session.AuthorizationServer,
+			aggregatorID,
+		)
+		baseURL = inst.BaseURL
+
+		logrus.Infof("Aggregator created (device_code flow): %s for user %s", inst.AggregatorID, userID)
 	}
-
-	// Deploy aggregator instance
-	session.Status = StatusDeploying
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tokenExpiry := time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
-
-	aggregatorID, err := instance.DeployAggregator(
-		tok.IDToken,
-		oidcConfig.TokenEndpoint,
-		tok.AccessToken,
-		tok.RefreshToken,
-		tokenExpiry,
-		userID,
-		session.AuthorizationServer,
-		ctx,
-	)
-	if err != nil {
-		setSessionError(session, "Failed to deploy aggregator")
-		return
-	}
-
-	// Create aggregator record
-	inst := createAggregatorInstanceRecord(
-		session.AggregatorID,
-		"device_code",
-		session.AuthorizationServer,
-		aggregatorID,
-		tok.IDToken,
-		tok.AccessToken,
-		tok.RefreshToken,
-	)
 
 	session.ResultAggregatorID = aggregatorID
-	session.ResultBaseURL = inst.BaseURL
+	session.ResultBaseURL = baseURL
+	session.ResultSubject = userID
 	session.Status = StatusDone
 }
 
@@ -287,8 +297,9 @@ func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationReq
 
 	case StatusDone:
 		resp := model.RegistrationResponse{
-			AggregatorId: session.ResultAggregatorID,
+			AggregatorID: session.ResultAggregatorID,
 			Aggregator:   session.ResultBaseURL,
+			Subject:      session.ResultSubject,
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)

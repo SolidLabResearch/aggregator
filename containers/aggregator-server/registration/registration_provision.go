@@ -106,14 +106,7 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 		return
 	}
 
-	var tokenResp struct {
-		IDToken      string `json:"id_token"`
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		TokenType    string `json:"token_type"`
-		ExpiresIn    int    `json:"expires_in"`
-		Scope        string `json:"scope"`
-	}
+	var tokenResp TokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
 		logrus.WithError(err).Error("Failed to parse token response")
 		http.Error(w, "Invalid token response", http.StatusInternalServerError)
@@ -129,17 +122,15 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	tokenExpiry := ""
-	if tokenResp.ExpiresIn > 0 {
-		tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
+	// Store user tokens
+	err = storeTokens(id, tokenResp)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to store user tokens")
+		http.Error(w, "Failed to store user tokens", http.StatusInternalServerError)
+		return
 	}
 
 	aggregatorId, err := instance.DeployAggregator(
-		tokenResp.IDToken,
-		oidcConfig.TokenEndpoint,
-		tokenResp.AccessToken,
-		tokenResp.RefreshToken,
-		tokenExpiry,
 		webID,
 		authorizationServer,
 		ctx,
@@ -150,21 +141,18 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 		return
 	}
 
-	instance := createAggregatorInstanceRecord(
+	inst := instance.CreateAggregatorInstanceRecord(
 		id,
 		"provision",
 		authorizationServer,
 		aggregatorId,
-		"",
-		tokenResp.AccessToken,
-		tokenResp.RefreshToken,
 	)
 
-	logrus.Infof("Aggregator created (provision): %s for ID %s (acting as %s)", instance.AggregatorID, id, webID)
+	logrus.Infof("Aggregator created (provision): %s for ID %s (acting as %s)", inst.AggregatorID, id, webID)
 
 	response := model.RegistrationResponse{
-		AggregatorID: instance.AggregatorID,
-		Aggregator:   instance.BaseURL,
+		AggregatorID: inst.AggregatorID,
+		Aggregator:   inst.BaseURL,
 		Subject:      webID,
 	}
 

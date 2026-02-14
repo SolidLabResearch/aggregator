@@ -48,3 +48,4 @@ var HttpClient = &http.Client{
 }
 
 var LogLevel logrus.Level
+var DisableAuth bool

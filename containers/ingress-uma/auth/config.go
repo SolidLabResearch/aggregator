@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"ingress-uma/model"
 	"io"
+	"strings"
 )
 
 type UmaConfig struct {

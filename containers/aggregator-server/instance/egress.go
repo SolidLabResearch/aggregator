@@ -15,23 +15,10 @@ import (
 
 func ensureEgress(
 	aggregatorId string,
-	tokenEndpoint string,
-	accessToken string,
-	refreshToken string,
-	accessTokenExpiry string,
+	ownerID string,
 	ctx context.Context,
 ) error {
-	tokensPayload, err := buildTokensPayload(accessToken, refreshToken, accessTokenExpiry)
-	if err != nil {
-		return fmt.Errorf("failed to build egress-uma token payload: %w", err)
-	}
-
-	cmName, err := ensureConfigMap(aggregatorId, "egress-uma-config", tokensPayload, ctx)
-	if err != nil {
-		return fmt.Errorf("failed to ensure egress-uma configmap: %w", err)
-	}
-
-	if err := ensureEgressDeployment(aggregatorId, 1, tokenEndpoint, cmName, ctx); err != nil {
+	if err := ensureEgressDeployment(aggregatorId, 1, ownerID, ctx); err != nil {
 		return fmt.Errorf("failed to ensure egress-uma deployment: %w", err)
 	}
 
@@ -56,7 +43,7 @@ func buildTokensPayload(accessToken string, refreshToken string, accessTokenExpi
 	return map[string]string{"tokens.json": string(data)}, nil
 }
 
-func ensureEgressDeployment(aggregatorId string, replicas int32, tokenEndpoint string, configName string, ctx context.Context) error {
+func ensureEgressDeployment(aggregatorId string, replicas int32, ownerID string, ctx context.Context) error {
 	egressName := "egress-uma-" + aggregatorId
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -105,28 +92,9 @@ func ensureEgressDeployment(aggregatorId string, replicas int32, tokenEndpoint s
 							Env: []corev1.EnvVar{
 								{Name: "CLIENT_ID", Value: model.ClientId},
 								{Name: "CLIENT_SECRET", Value: model.ClientSecret},
-								{Name: "TOKEN_ENDPOINT", Value: tokenEndpoint},
-								{Name: "UPDATE_TOKENS_FILE", Value: "/etc/config/tokens.json"},
+								{Name: "AGGREGATOR_ID", Value: aggregatorId},
+								{Name: "OWNER_ID", Value: ownerID},
 								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      configName,
-									MountPath: "/etc/config",
-									ReadOnly:  true,
-								},
-							},
-						},
-					},
-					Volumes: []corev1.Volume{
-						{
-							Name: configName,
-							VolumeSource: corev1.VolumeSource{
-								ConfigMap: &corev1.ConfigMapVolumeSource{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: configName,
-									},
-								},
 							},
 						},
 					},

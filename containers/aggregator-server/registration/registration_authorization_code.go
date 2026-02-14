@@ -32,9 +32,18 @@ func handleAuthorizationCodeStart(w http.ResponseWriter, req model.RegistrationR
 	isUpdate := req.AggregatorID != ""
 
 	if isUpdate {
-		// Verify ownership
-		if err := checkOwnership(req.AggregatorID, id); err != nil {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+		// Check if aggregator exists and user is authorized to update it
+		inst, err := instance.GetAggregatorInstance(req.AggregatorID)
+		if err != nil {
+			logrus.WithError(err).Errorf("Failed to retrieve aggregator %s for update", req.AggregatorID)
+			http.Error(w, "Aggregator not found for update", http.StatusNotFound)
+			return
+		}
+
+		// Is user authorized to update this aggregator?
+		if !inst.HasOwnership(id) {
+			logrus.Errorf("User %s does not have ownership of the aggregator %s", id, req.AggregatorID)
+			http.Error(w, "Not authorized to update this aggregator", http.StatusForbidden)
 			return
 		}
 	}
@@ -189,13 +198,7 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 	}
 
 	// Parse token response
-	var tokenResp struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		IDToken      string `json:"id_token"`
-		TokenType    string `json:"token_type"`
-		ExpiresIn    int    `json:"expires_in"`
-	}
+	var tokenResp TokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
 		logrus.WithError(err).Error("Failed to parse token response")
 		http.Error(w, "Invalid token response", http.StatusInternalServerError)
@@ -205,42 +208,40 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 	// Determine if this is create or update
 	isUpdate := storedData.AggregatorID != ""
 
-	tokenExpiry := ""
-	if tokenResp.ExpiresIn > 0 {
-		tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
-	}
-
-	var inst *model.AggregatorInstance
+	var inst *instance.AggregatorInstance
 	if isUpdate {
-		// Update existing aggregator tokens
-		if err := updateAggregatorInstanceTokens(storedData.AggregatorID, tokenResp.AccessToken, tokenResp.RefreshToken); err != nil {
-			logrus.WithError(err).Errorf("Failed to update aggregator tokens: %s", storedData.AggregatorID)
-			http.Error(w, "Failed to update aggregator", http.StatusInternalServerError)
+		// Check if aggregator exists
+		inst, err := instance.GetAggregatorInstance(storedData.AggregatorID)
+		if err != nil {
+			logrus.WithError(err).Error("Failed to retrieve aggregator for update")
+			http.Error(w, "Aggregator not found for update", http.StatusNotFound)
 			return
 		}
-		inst, _ = getAggregatorInstance(storedData.AggregatorID)
-		if inst != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if err := instance.UpdateAggregator(inst.AggregatorID, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, ctx); err != nil {
-				logrus.WithError(err).Errorf("Failed to update aggregator deployments: %s", storedData.AggregatorID)
-				http.Error(w, "Failed to update aggregator", http.StatusInternalServerError)
-				return
-			}
+
+		// Is user authorized to update this aggregator?
+		if !inst.HasOwnership(id) {
+			logrus.Warnf("User %s not authorized to update aggregator %s", id, storedData.AggregatorID)
+			http.Error(w, "Not authorized to update this aggregator", http.StatusForbidden)
+			return
 		}
+
+		updateTokens(id, tokenResp)
 		logrus.Infof("Aggregator tokens updated: %s", storedData.AggregatorID)
 	} else {
+		// Store user tokens
+		err = storeTokens(id, tokenResp)
+		if err != nil {
+			logrus.WithError(err).Error("Failed to store user tokens")
+			http.Error(w, "Failed to store user tokens", http.StatusInternalServerError)
+			return
+		}
+
 		// Create new aggregator instance
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		// Deploy aggregator instance
 		aggregatorId, err := instance.DeployAggregator(
-			tokenResp.IDToken,
-			storedData.TokenEndpoint,
-			tokenResp.AccessToken,
-			tokenResp.RefreshToken,
-			tokenExpiry,
 			id,
 			storedData.AuthorizationServer,
 			ctx,
@@ -252,14 +253,11 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 		}
 
 		// Create aggregator record
-		inst = createAggregatorInstanceRecord(
+		inst = instance.CreateAggregatorInstanceRecord(
 			id,
 			"authorization_code",
 			storedData.AuthorizationServer,
 			aggregatorId,
-			tokenResp.IDToken,
-			tokenResp.AccessToken,
-			tokenResp.RefreshToken,
 		)
 
 		logrus.Infof("Aggregator created: %s for ID %s", inst.AggregatorID, id)
@@ -267,8 +265,9 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 
 	// Return response
 	response := model.RegistrationResponse{
-		AggregatorId: inst.AggregatorID,
+		AggregatorID: inst.AggregatorID,
 		Aggregator:   inst.BaseURL,
+		Subject:      id,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

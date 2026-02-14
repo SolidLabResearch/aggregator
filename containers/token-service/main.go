@@ -144,6 +144,8 @@ func tokenHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		handleStore(w, r, userID)
+	case http.MethodPut:
+		handleStore(w, r, userID)
 	case http.MethodGet:
 		handleGet(w, r, userID)
 	case http.MethodDelete:
@@ -161,6 +163,13 @@ type StoreRequest struct {
 }
 
 func handleStore(w http.ResponseWriter, r *http.Request, userID string) {
+	_, exists := store.tokens[userID]
+	if exists {
+		log.WithField("user_id", userID).Warn("Token store requested but existing token found")
+		http.Error(w, "User tokens already exists. Use PUT to update a token", 409)
+		return
+	}
+
 	var req StoreRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.WithError(err).Warn("Invalid store request")
@@ -175,15 +184,47 @@ func handleStore(w http.ResponseWriter, r *http.Request, userID string) {
 		Expiry:       time.Unix(req.Expiry, 0),
 	}
 
+	storeToken(userID, token, req.IDToken)
+
+	w.WriteHeader(http.StatusCreated)
+}
+
+func handleUpdate(w http.ResponseWriter, r *http.Request, userID string) {
+	_, exists := store.tokens[userID]
+	if !exists {
+		log.WithField("user_id", userID).Warn("Token update requested but no existing token found")
+		http.Error(w, "User tokens not found. Use POST to create a token", 404)
+		return
+	}
+
+	var req StoreRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.WithError(err).Warn("Invalid update request")
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	token := &oauth2.Token{
+		AccessToken:  req.AccessToken,
+		RefreshToken: req.RefreshToken,
+		TokenType:    "Bearer",
+		Expiry:       time.Unix(req.Expiry, 0),
+	}
+
+	storeToken(userID, token, req.IDToken)
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func storeToken(userID string, token *oauth2.Token, idToken string) {
 	store.mu.Lock()
 	store.tokens[userID] = &TokenEntry{
 		Token:   token,
-		IDToken: req.IDToken,
+		IDToken: idToken,
 	}
 	store.mu.Unlock()
 
 	log.WithField("user_id", userID).Info("Stored token")
-	w.WriteHeader(http.StatusCreated)
 }
 
 func handleGet(w http.ResponseWriter, _ *http.Request, userID string) {

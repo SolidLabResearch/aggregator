@@ -100,7 +100,7 @@ func handleRegistrationDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get aggregator inst
-	inst, err := getAggregatorInstance(req.AggregatorID)
+	inst, err := instance.GetAggregatorInstance(req.AggregatorID)
 	if err != nil {
 		http.Error(w, "Aggregator not found", http.StatusNotFound)
 		return
@@ -121,7 +121,7 @@ func handleRegistrationDelete(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Check ownership
-		if err := checkOwnership(req.AggregatorID, id); err != nil {
+		if !inst.HasOwnership(id) {
 			logrus.WithError(err).Warnf("Ownership check failed for aggregator %s", req.AggregatorID)
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
@@ -140,7 +140,7 @@ func handleRegistrationDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Delete from storage
-	if err := deleteAggregatorInstance(req.AggregatorID); err != nil {
+	if err := instance.DeleteAggregatorInstance(req.AggregatorID); err != nil {
 		logrus.WithError(err).Errorf("Failed to delete aggregator from storage: %s", req.AggregatorID)
 		http.Error(w, "Failed to delete aggregator", http.StatusInternalServerError)
 		return

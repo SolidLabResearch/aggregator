@@ -1,4 +1,4 @@
-package registration
+package instance
 
 import (
 	"aggregator/model"
@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestCreateAggregatorInstanceRecord_BaseURLUsesNamespace(t *testing.T) {
+func TestCreateAggregatorInstanceRecord_BaseURLUsesID(t *testing.T) {
 	originalProtocol := model.Protocol
 	originalHost := model.ExternalHost
 	model.Protocol = "http"
@@ -17,21 +17,18 @@ func TestCreateAggregatorInstanceRecord_BaseURLUsesNamespace(t *testing.T) {
 		model.ExternalHost = originalHost
 	})
 
-	namespace := "ns-test-123"
-	instance := createAggregatorInstanceRecord(
+	id := "ns-test-123"
+	instance := CreateAggregatorInstanceRecord(
 		"https://owner.example/webid#me",
 		"none",
 		"",
-		namespace,
-		"",
-		"",
-		"",
+		id,
 	)
 	t.Cleanup(func() {
-		_ = deleteAggregatorInstance(instance.AggregatorID)
+		_ = DeleteAggregatorInstance(instance.AggregatorID)
 	})
 
-	expected := fmt.Sprintf("%s://%s/config/%s", model.Protocol, model.ExternalHost, namespace)
+	expected := fmt.Sprintf("%s://%s/%s", model.Protocol, model.ExternalHost, id)
 	actual := strings.TrimRight(instance.BaseURL, "/")
 	if actual != expected {
 		t.Fatalf("Expected BaseURL %q, got %q", expected, instance.BaseURL)

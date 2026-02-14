@@ -19,10 +19,20 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 	// Check if this is an update
 	isUpdate := req.AggregatorID != ""
 
+	var inst *instance.AggregatorInstance
 	if isUpdate {
-		// Verify ownership
-		if err := checkOwnership(req.AggregatorID, id); err != nil {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+		// Check if aggregator exists and user is authorized to update it
+		inst, err := instance.GetAggregatorInstance(req.AggregatorID)
+		if err != nil {
+			logrus.WithError(err).Errorf("Failed to retrieve aggregator %s for update", req.AggregatorID)
+			http.Error(w, "Aggregator not found for update", http.StatusNotFound)
+			return
+		}
+
+		// Is user authorized to update this aggregator?
+		if !inst.HasOwnership(id) {
+			logrus.Errorf("User %s does not have ownership of the aggregator %s", id, req.AggregatorID)
+			http.Error(w, "Not authorized to update this aggregator", http.StatusForbidden)
 			return
 		}
 	}
@@ -91,14 +101,7 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 	}
 
 	// Parse token response
-	var tokenResp struct {
-		IDToken      string `json:"id_token"`
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		TokenType    string `json:"token_type"`
-		ExpiresIn    int    `json:"expires_in"`
-		Scope        string `json:"scope"`
-	}
+	var tokenResp TokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
 		logrus.WithError(err).Error("Failed to parse token response")
 		http.Error(w, "Invalid token response", http.StatusInternalServerError)
@@ -112,42 +115,24 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 		return
 	}
 
-	tokenExpiry := ""
-	if tokenResp.ExpiresIn > 0 {
-		tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
-	}
-
-	var inst *model.AggregatorInstance
 	if isUpdate {
-		// Update existing aggregator tokens
-		if err := updateAggregatorInstanceTokens(req.AggregatorID, tokenResp.AccessToken, tokenResp.RefreshToken); err != nil {
-			logrus.WithError(err).Errorf("Failed to update aggregator tokens: %s", req.AggregatorID)
-			http.Error(w, "Failed to update aggregator", http.StatusInternalServerError)
-			return
-		}
-		inst, _ = getAggregatorInstance(req.AggregatorID)
-		if inst != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if err := instance.UpdateAggregator(inst.AggregatorID, tokenResp.AccessToken, tokenResp.RefreshToken, tokenExpiry, ctx); err != nil {
-				logrus.WithError(err).Errorf("Failed to update aggregator deployments: %s", req.AggregatorID)
-				http.Error(w, "Failed to update aggregator", http.StatusInternalServerError)
-				return
-			}
-		}
+		updateTokens(id, tokenResp)
 		logrus.Infof("Aggregator tokens updated (client_credentials): %s", req.AggregatorID)
 	} else {
+		// Store user tokens
+		err = storeTokens(id, tokenResp)
+		if err != nil {
+			logrus.WithError(err).Error("Failed to store user tokens")
+			http.Error(w, "Failed to store user tokens", http.StatusInternalServerError)
+			return
+		}
+
 		// Create new aggregator instance
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		// Deploy aggregator resources
 		aggregatorId, err := instance.DeployAggregator(
-			tokenResp.IDToken,
-			oidcConfig.TokenEndpoint,
-			tokenResp.AccessToken,
-			tokenResp.RefreshToken,
-			tokenExpiry,
 			req.WebID,
 			req.AuthorizationServer,
 			ctx,
@@ -159,14 +144,11 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 		}
 
 		// Create aggregator record
-		inst = createAggregatorInstanceRecord(
+		inst = instance.CreateAggregatorInstanceRecord(
 			id,
 			"client_credentials",
 			req.AuthorizationServer,
 			aggregatorId,
-			tokenResp.IDToken,
-			tokenResp.AccessToken,
-			tokenResp.RefreshToken,
 		)
 
 		logrus.Infof("Aggregator created (client_credentials): %s for ID %s (acting as %s)", inst.AggregatorID, id, req.WebID)
@@ -174,8 +156,9 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 
 	// Return response
 	response := model.RegistrationResponse{
-		AggregatorId: inst.AggregatorID,
+		AggregatorID: inst.AggregatorID,
 		Aggregator:   inst.BaseURL,
+		Subject:      id,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

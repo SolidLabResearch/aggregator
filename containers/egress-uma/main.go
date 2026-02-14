@@ -6,21 +6,16 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
 )
 
 var (
-	ClientId         string
-	ClientSecret     string
-	AccessToken      string
-	RefreshToken     string
-	UpdateTokensFile string
-	TokenMutex       sync.Mutex
-	TokenExpiry      time.Time
-	TokenEndpoint    string
+	UserId        string
+	ClientId      string
+	ClientSecret  string
+	TokenEndpoint string
 )
 
 func main() {
@@ -33,12 +28,14 @@ func main() {
 	logrus.SetOutput(os.Stdout)
 
 	// Read environment variables
+	UserId = os.Getenv("USER_ID")
 	ClientId = os.Getenv("CLIENT_ID")
 	ClientSecret = os.Getenv("CLIENT_SECRET")
-	RefreshToken = os.Getenv("REFRESH_TOKEN")
-	UpdateTokensFile = os.Getenv("UPDATE_TOKENS_FILE")
 	TokenEndpoint = os.Getenv("TOKEN_ENDPOINT")
 
+	if UserId == "" {
+		logrus.Fatal("USER_ID is not set")
+	}
 	if ClientId == "" {
 		logrus.Fatal("CLIENT_ID is not set")
 	}
@@ -46,19 +43,13 @@ func main() {
 		logrus.Warn("TOKEN_ENDPOINT is empty; token refresh disabled")
 	}
 
-	initConfigMapWriter()
-	if _, err := getRefreshToken(); err != nil {
-		logrus.WithError(err).Warn("Refresh token not available at startup")
-		markTokenInvalid(err)
+	// Check if the user has valid tokens at startup
+	_, err = getAccessToken()
+	if err != nil {
+		logrus.WithError(err).Error("Failed to obtain initial access token")
+	} else {
+		logrus.Info("Successfully obtained initial access token")
 	}
-
-	// Refresh token before starting the server
-	if err := initAccessToken(); err != nil {
-		logrus.WithError(err).Warn("Failed to initialize access token")
-	}
-
-	// Start a background goroutine to refresh the token automatically
-	go refreshTokenLoop()
 
 	// Start HTTP server
 	http.HandleFunc("/", handleHTTPRequest)

@@ -31,6 +31,7 @@ type RegistrationRequest struct {
 	// client_credentials flow
 	ClientID     string `json:"client_id,omitempty"`
 	ClientSecret string `json:"client_secret,omitempty"`
+	WebID        string `json:"webid,omitempty"`
 
 	// Internal fields (not from JSON)
 	OIDCConfig   OIDCConfig `json:"-"`
@@ -42,7 +43,7 @@ type RegistrationResponse struct {
 	AggregatorID string `json:"aggregator_id,omitempty"`
 	Aggregator   string `json:"aggregator,omitempty"`
 	Subject      string `json:"subject,omitempty"`
-	IDP 				 string `json:"idp,omitempty"`
+	IDP          string `json:"idp,omitempty"`
 }
 
 // AuthorizationCodeStartResponse represents the response for authorization_code start phase

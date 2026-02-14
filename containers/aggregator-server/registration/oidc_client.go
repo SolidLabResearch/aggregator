@@ -16,15 +16,15 @@ import (
 )
 
 type storedState struct {
-	OwnerWebID          string
-	AuthorizationServer string
-	AggregatorID        string // empty for new, set for updates
-	ClientID            string
-	CodeVerifier        string
-	IDPIssuer           string
-	TokenEndpoint       string
+	OwnerID                           string
+	AuthorizationServer               string
+	AggregatorID                      string // empty for new, set for updates
+	ClientID                          string
+	CodeVerifier                      string
+	IDPIssuer                         string
+	TokenEndpoint                     string
 	TokenEndpointAuthMethodsSupported []string
-	ExpiresAt           time.Time
+	ExpiresAt                         time.Time
 }
 
 var (

@@ -17,8 +17,8 @@ type derivedSource struct {
 }
 
 type derivedResourceRequest struct {
-	Location          string         `json:"location"`
-	Sources           []derivedSource `json:"sources"`
+	Location string          `json:"location"`
+	Sources  []derivedSource `json:"sources"`
 }
 
 func HandleDerivedResourceRequest(w http.ResponseWriter, r *http.Request) {
@@ -43,11 +43,6 @@ func HandleDerivedResourceRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing required fields: sources", http.StatusBadRequest)
 		return
 	}
-	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
-	if authHeader == "" {
-		http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
-		return
-	}
 
 	resourceIDs := derivedResourceIDs(reqData.Location)
 	if len(resourceIDs) == 0 {
@@ -62,14 +57,14 @@ func HandleDerivedResourceRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, resourceID := range resourceIDs {
-		issuer := issuerIndex[resourceID]
+		issuer := asIndex[resourceID]
 		if issuer == "" {
 			logrus.WithFields(logrus.Fields{"resource_id": resourceID}).Warn("No Authentication Server Url found for resource")
 			continue
 		}
 
 		for owner := range owners {
-			if err := createPolicy(issuer, resourceID, []Scope{Read}, owner, []string{}, authHeader); err != nil {
+			if err := createPolicy(issuer, resourceID, []Scope{Read}, owner, owner, []string{}); err != nil {
 				logrus.WithFields(logrus.Fields{
 					"resource_id": resourceID,
 					"owner":       owner,
