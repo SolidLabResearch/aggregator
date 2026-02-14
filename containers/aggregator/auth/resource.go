@@ -18,10 +18,11 @@ func RegisterResource(resourceId string, scopes []model.Scope) error {
 
 	logrus.Infof("Registering resource %s with scopes %v", resourceId, scopes)
 	body := map[string]interface{}{
-		"user_id":     model.Owner.UserId,
-		"as_url":      model.Owner.AuthzServerURL,
-		"resource_id": resourceId,
-		"scopes":      scopes,
+		"aggregator_id": model.ID,
+		"user_id":       model.Owner.UserId,
+		"as_url":        model.Owner.AuthzServerURL,
+		"resource_id":   resourceId,
+		"scopes":        scopes,
 	}
 
 	jsonBody, err := json.Marshal(body)

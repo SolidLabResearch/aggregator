@@ -26,7 +26,7 @@ func DeployAggregator(
 	resolvedOwner := resolveOwnerID(ownerID, aggregatorId)
 
 	if authzServerURL != "" {
-		registerAsResourceServer(ownerID, authzServerURL)
+		registerAsResourceServer(aggregatorId, ownerID, authzServerURL)
 		// Deploy egress for the aggregator
 		if err := ensureEgress(aggregatorId, ownerID, ctx); err != nil {
 			return "", fmt.Errorf("failed to deploy uma egress for %s: %w", aggregatorId, err)
@@ -274,11 +274,12 @@ func ensureConfigMap(aggregatorId string, name string, data map[string]string, c
 }
 
 // Register the aggregator server as resource server
-func registerAsResourceServer(ownerID, authzServerURL string) error {
+func registerAsResourceServer(aggregatorID string, ownerID string, authzServerURL string) error {
 	// Register the aggregator as RS at the AS
 	payload := map[string]string{
-		"user_id": ownerID,
-		"as_url":  authzServerURL,
+		"aggregator_id": aggregatorID,
+		"user_id":       ownerID,
+		"as_url":        authzServerURL,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
