@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -167,22 +169,20 @@ func processDeviceCodeFlow(session *DeviceSession, oidcConfig *model.OIDCConfig)
 
 	for time.Now().Before(session.ExpiresAt) {
 
-		data := fmt.Sprintf(
-			"grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=%s&client_id=%s&client_secret=%s",
-			session.DeviceCode,
-			model.ClientId,
-			model.ClientSecret,
-		)
+		form := url.Values{}
+		form.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+		form.Set("device_code", session.DeviceCode)
 
-		resp, err := model.HttpClient.Post(
-			oidcConfig.TokenEndpoint,
-			"application/x-www-form-urlencoded",
-			bytes.NewBufferString(data),
-		)
+		req, _ := http.NewRequest("POST", oidcConfig.TokenEndpoint, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth(model.ClientId, model.ClientSecret)
+
+		resp, err := model.HttpClient.Do(req)
 		if err != nil {
 			setSessionError(session, "Token request failed")
 			return
 		}
+		defer resp.Body.Close()
 
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
