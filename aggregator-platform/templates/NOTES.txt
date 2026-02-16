@@ -10,27 +10,27 @@ This is displayed after helm install / upgrade
 Aggregation platform is available at:
 
 {{- if .Values.tls.enabled }}
-https://{{ .Values.host }}
+https://{{ .Values.external.host }}
 {{- else }}
-http://{{ .Values.host }}
+http://{{ .Values.external.host }}
 {{- end }}
 
 ----------------------------------------------------------
 Manage transformations:
 
 {{- if .Values.tls.enabled }}
-- https://{{ .Values.host }}{{ .Values.spec.transformation_catalog }}
+- https://{{ .Values.external.host }}{{ .Values.spec.transformation_catalog }}
 {{- else }}
-- http://{{ .Values.host }}{{ .Values.spec.transformation_catalog }}
+- http://{{ .Values.external.host }}{{ .Values.spec.transformation_catalog }}
 {{- end }}
 
 ----------------------------------------------------------
 Create aggregators at:
 
 {{- if .Values.tls.enabled }}
-- https://{{ .Values.host }}{{ .Values.spec.registration }}
+- https://{{ .Values.external.host }}{{ .Values.spec.registration }}
 {{- else }}
-- http://{{ .Values.host }}{{ .Values.spec.registration }}
+- http://{{ .Values.external.host }}{{ .Values.spec.registration }}
 {{- end }}
 
 ##########################################################

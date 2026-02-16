@@ -2,7 +2,6 @@ import {fetch} from 'cross-fetch';
 
 export async function getUMAConfig(as_uri: string) {
     const config_uri = `${as_uri}/.well-known/uma2-configuration`;
-    console.log("UMA CONFIG URI: ", config_uri)
 
     const response = await fetch(config_uri, {
         method: "GET",
@@ -18,7 +17,6 @@ export async function getUMAConfig(as_uri: string) {
 }
 
 async function parseAuthenticateHeader(wwwAuthenticateHeader: string): Promise<{ issuer: string, tokenEndpoint: string; ticket: string }> {
-    console.log("WWW AUTH HEADER: ", wwwAuthenticateHeader);
     const paramsPart = wwwAuthenticateHeader.replace(/^\w+\s+/, '');
 
     const params = Object.fromEntries(
@@ -439,8 +437,6 @@ export class KeycloakOIDCAuth {
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify(umaRequestBody)
             });
-
-            console.log("GOT UMA RESPONSE: ", umaResponse);
 
             if (!umaResponse.ok) {
                 return umaResponse; // propagate error

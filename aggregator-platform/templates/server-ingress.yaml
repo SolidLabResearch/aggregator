@@ -13,12 +13,12 @@ spec:
   {{- if .Values.tls.enabled }}
   tls:
     - hosts:
-        - {{ .Values.host }}
+        - {{ .Values.external.host }}
       secretName: {{ .Values.tls.secretName }}
   {{- end }}
         
   rules:
-    - host: {{ .Values.host }}
+    - host: {{ .Values.external.host }}
       http:
         paths:
           - path: /

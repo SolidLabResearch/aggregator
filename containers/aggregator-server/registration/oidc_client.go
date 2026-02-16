@@ -64,7 +64,7 @@ func generateRandomState() (string, error) {
 func fetchOIDCConfig(idpURL string) (*model.OIDCConfig, error) {
 	discoveryURL := fmt.Sprintf("%s/.well-known/openid-configuration", idpURL)
 
-	res, err := http.Get(discoveryURL)
+	res, err := model.HttpClient.Get(discoveryURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch OIDC discovery document: %w", err)
 	}
@@ -98,8 +98,7 @@ func doTokenRequest(endpoint string, supportedMethods []string, data url.Values,
 		return nil, err
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	return client.Do(req)
+	return model.HttpClient.Do(req)
 }
 
 func selectTokenAuthMethod(supportedMethods []string) string {

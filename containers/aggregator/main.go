@@ -30,12 +30,23 @@ func main() {
 	logrus.SetOutput(os.Stdout)
 
 	// Read Network configuration from environment variables
-	model.ExternalHost = os.Getenv("AGGREGATOR_EXTERNAL_HOST")
+	model.ExternalHost = os.Getenv("EXTERNAL_HOST")
 	if model.ExternalHost == "" {
-		logrus.Fatal("Environment variables AGGREGATOR_EXTERNAL_HOST must be set")
+		logrus.Fatal("Environment variables EXTERNAL_HOST must be set")
 	}
+	model.ExternalHttpPort = os.Getenv("EXTERNAL_HTTP_PORT")
+	model.ExternalHttpsPort = os.Getenv("EXTERNAL_HTTPS_PORT")
 	model.Protocol = strings.ToLower(os.Getenv("PROTOCOL"))
-	if model.Protocol != "http" && model.Protocol != "https" {
+	switch model.Protocol {
+	case "http":
+		if model.ExternalHttpPort == "" {
+			logrus.Fatal("Environment variable EXTERNAL_HTTP_PORT must be set for http protocol")
+		}
+	case "https":
+		if model.ExternalHttpsPort == "" {
+			logrus.Fatal("Environment variable EXTERNAL_HTTPS_PORT must be set for https protocol")
+		}
+	default:
 		logrus.Fatal("Environment variables PROTOCOL must be either http or https")
 	}
 
@@ -124,7 +135,7 @@ func main() {
 
 	// HTTP Serve
 	srv := &http.Server{
-		Addr:    ":5000",
+		Addr:    "0.0.0.0:5000",
 		Handler: mwMux,
 	}
 

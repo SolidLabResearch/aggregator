@@ -12,10 +12,9 @@ import (
 )
 
 var (
-	UserId        string
-	ClientId      string
-	ClientSecret  string
-	TokenEndpoint string
+	UserId       string
+	ClientId     string
+	ClientSecret string
 )
 
 func main() {
@@ -31,16 +30,12 @@ func main() {
 	UserId = os.Getenv("USER_ID")
 	ClientId = os.Getenv("CLIENT_ID")
 	ClientSecret = os.Getenv("CLIENT_SECRET")
-	TokenEndpoint = os.Getenv("TOKEN_ENDPOINT")
 
 	if UserId == "" {
 		logrus.Fatal("USER_ID is not set")
 	}
 	if ClientId == "" {
 		logrus.Fatal("CLIENT_ID is not set")
-	}
-	if TokenEndpoint == "" {
-		logrus.Warn("TOKEN_ENDPOINT is empty; token refresh disabled")
 	}
 
 	// Check if the user has valid tokens at startup

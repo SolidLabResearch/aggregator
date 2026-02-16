@@ -1,7 +1,6 @@
 package model
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 
@@ -50,7 +49,7 @@ func (tf *Transformation) ParseTransformation() {
 		strings.NewReader(tf.FnO),
 		rdfgo.ParserOptions{
 			Format:  "text/turtle",
-			BaseIRI: fmt.Sprintf("%s://%s%s#", Protocol, ExternalHost, TransformationCatalog),
+			BaseIRI: ExternalServerURL() + TransformationCatalog + "#",
 		},
 	)
 

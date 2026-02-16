@@ -23,11 +23,11 @@ type AggregatorDescription struct {
 }
 
 func InitAggregatorDescription(mux *http.ServeMux) error {
-	if err := auth.RegisterResource(model.ExternalURL(), []model.Scope{model.Read}); err != nil {
-		return fmt.Errorf("failed to register resource %s: %w", model.ExternalURL(), err)
+	if err := auth.RegisterResource(model.ExternalBaseURL(), []model.Scope{model.Read}); err != nil {
+		return fmt.Errorf("failed to register resource %s: %w", model.ExternalBaseURL(), err)
 	}
-	if err := auth.DefinePolicy(model.ExternalURL(), []model.Scope{model.Read}); err != nil {
-		return fmt.Errorf("failed to define policy for resource %s: %w", model.ExternalURL(), err)
+	if err := auth.DefinePolicy(model.ExternalBaseURL(), []model.Scope{model.Read}); err != nil {
+		return fmt.Errorf("failed to define policy for resource %s: %w", model.ExternalBaseURL(), err)
 	}
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -60,8 +60,8 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 		ID:                    model.ID,
 		CreatedAt:             createdAt,
 		LoginStatus:           loginStatus,
-		TransformationCatalog: model.ExternalURL() + model.TransformationCatalog,
-		ServiceCollection:     model.ExternalURL() + model.ServiceCollection,
+		TransformationCatalog: model.ExternalBaseURL() + model.TransformationCatalog,
+		ServiceCollection:     model.ExternalBaseURL() + model.ServiceCollection,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

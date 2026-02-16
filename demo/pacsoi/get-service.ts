@@ -5,9 +5,9 @@ const REALM = "quarkus";
 const USERNAME = "alice@example.com";
 const PASSWORD = "alice";
 const CLIENT_ID = "demo-client";
-const CLIENT_SECRET = "tVizN2ADzL4qQdaEkCi4Zxxbept2lvDs";
+const CLIENT_SECRET = "0XAqVqleHW96DIPzvSzsyfSUOqWv8n2y";
 
-const AGGREGATOR = "https://aggregator.local/2a2b61ed-8976-4036-af9b-99b5925452a0"
+const AGGREGATOR = "https://aggregator.local:5443/693819fa-2ef1-447f-8eea-64c2e7789825"
 const SERVICE_ENDPOINT = `${AGGREGATOR}/pacsoi-svc`;
 const OUTPUT_ENDPOINT = `${SERVICE_ENDPOINT}/w-distribution`;
 

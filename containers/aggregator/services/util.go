@@ -26,7 +26,7 @@ var forbidden = map[string]struct{}{
 
 func ValidServiceUri(uri string) (string, string, error) {
 	// Validate service path
-	servicePath, err := StripPrefix(uri, model.ExternalURL())
+	servicePath, err := StripPrefix(uri, model.ExternalBaseURL())
 	if err != nil {
 		return "", "", fmt.Errorf("Invalid execution URI: %w", err)
 	}
@@ -111,7 +111,7 @@ func ParseRequestBody(fno string) (model.Execution, error) {
 }
 
 func LoadTransformationCR(uri string) (*model.Transformation, error) {
-	id, err := StripPrefix(uri, fmt.Sprintf("%s://%s%s#", model.Protocol, model.ExternalHost, model.TransformationCatalog))
+	id, err := StripPrefix(uri, model.ExternalServerURL()+model.TransformationCatalog+"#")
 	if err != nil {
 		return nil, fmt.Errorf("invalid transformation URI %q: %w", uri, err)
 	}
@@ -144,7 +144,7 @@ func LoadTransformationCR(uri string) (*model.Transformation, error) {
 		}
 
 		t := &model.Transformation{
-			Base:          fmt.Sprintf("%s://%s%s#", model.Protocol, model.ExternalHost, model.TransformationCatalog),
+			Base:          model.ExternalServerURL() + model.TransformationCatalog + "#",
 			URI:           uri,
 			Image:         getString(spec, "image"),
 			FnO:           getString(spec, "fno"),
@@ -222,7 +222,7 @@ func ParametersToEnvVars(params map[string]rdfgo.ITerm, inputMapping map[string]
 		{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 	}
 	for paramKey, paramValue := range params {
-		pred, err := StripPrefix(paramKey, fmt.Sprintf("%s://%s%s#", model.Protocol, model.ExternalHost, model.TransformationCatalog))
+		pred, err := StripPrefix(paramKey, model.ExternalServerURL()+model.TransformationCatalog+"#")
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse parameter key %q: %w", paramKey, err)
 		}

@@ -1,12 +1,12 @@
 external:
   host: aggregator.local
-  httpPort: 5000
-  httpsPort: 5001
+  httpPort: 5080
+  httpsPort: 5443
 
 auth:
   clientId: aggregator-server
   server: http://localhost:8280/realms/quarkus
-  clientSecret: DkkcL2h4YaXELMNEReuSo9I93duKQ0SX
+  clientSecret: rQomJNplrTmuTl3dGieb9VYB55CsbW0S
   allowedRegistrationTypes:
     - none
     - device_code

@@ -104,7 +104,7 @@ func (config *TransformationsConfigData) updateCatalog() {
 	reader := strings.NewReader(catalogBase)
 	quads, errChan := rdfgo.Parse(reader, rdfgo.ParserOptions{
 		Format:  "turtle",
-		BaseIRI: fmt.Sprintf("http://%s/config/transformations#", model.ExternalHost),
+		BaseIRI: model.ExternalURL() + model.TransformationCatalog + "#",
 	})
 
 	go func() {
@@ -118,11 +118,11 @@ func (config *TransformationsConfigData) updateCatalog() {
 	config.store.Import(quads)
 
 	// Insert transformations
-	for _, t := range config.transformations {
-		reader := strings.NewReader(t.FNO)
+	for _, tf := range config.transformations {
+		reader := strings.NewReader(tf.FNO)
 		quads, errChan := rdfgo.Parse(reader, rdfgo.ParserOptions{
 			Format:  "turtle",
-			BaseIRI: fmt.Sprintf("http://%s/config/transformations#", model.ExternalHost),
+			BaseIRI: model.ExternalURL() + model.TransformationCatalog + "#",
 		})
 
 		go func() {
@@ -137,9 +137,9 @@ func (config *TransformationsConfigData) updateCatalog() {
 
 		// Link transformation to catalog
 		config.store.AddQuadFromTerms(
-			rdfgo.NewNamedNode(fmt.Sprintf("http://%s/config/transformations#transformation-catalog", model.ExternalHost)),
+			rdfgo.NewNamedNode(model.ExternalURL()+model.TransformationCatalog+"#transformation-catalog"),
 			rdfgo.NewNamedNode("https://spec.knows.idlab.ugent.be/aggregator-protocol/latest/#hasTransformation"),
-			rdfgo.NewNamedNode(fmt.Sprintf("http://%s/config/transformations#%s", model.ExternalHost, t.ID)),
+			rdfgo.NewNamedNode(model.ExternalURL()+model.TransformationCatalog+"#"+tf.ID),
 			nil,
 		)
 	}

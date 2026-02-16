@@ -15,17 +15,21 @@ var ExternalHost string
 var ExternalHttpPort string
 var ExternalHttpsPort string
 
-func ExternalURL() string {
+func ExternalBaseURL() string {
+	return ExternalServerURL() + "/" + ID
+}
+
+func ExternalServerURL() string {
 	if Protocol == "https" {
 		if ExternalHttpsPort == "443" {
-			return "https://" + ExternalHost + "/" + ID
+			return "https://" + ExternalHost
 		}
-		return "https://" + ExternalHost + ":" + ExternalHttpsPort + "/" + ID
+		return "https://" + ExternalHost + ":" + ExternalHttpsPort
 	}
 	if ExternalHttpPort == "80" {
-		return "http://" + ExternalHost + "/" + ID
+		return "http://" + ExternalHost
 	}
-	return "http://" + ExternalHost + ":" + ExternalHttpPort + "/" + ID
+	return "http://" + ExternalHost + ":" + ExternalHttpPort
 }
 
 // Aggregator identity

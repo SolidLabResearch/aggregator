@@ -11,8 +11,8 @@ data:
   NAMESPACE: {{ .Release.Namespace }}
   LOG_LEVEL: {{ .Values.loglevel }}
   EXTERNAL_HOST: {{ .Values.external.host }}
-  EXTERNAL_HTTP_PORT: {{ .Values.external.httpPort }}
-  EXTERNAL_HTTPS_PORT: {{ .Values.external.httpsPort }}
+  EXTERNAL_HTTP_PORT: {{ .Values.external.httpPort | quote }}
+  EXTERNAL_HTTPS_PORT: {{ .Values.external.httpsPort | quote }}
   CLIENT_ID: {{ .Values.auth.clientId }}
   AUTH_SERVER: {{ .Values.auth.server }}
   ALLOWED_REGISTRATION_TYPES: {{ join "," .Values.auth.allowedRegistrationTypes | quote }}

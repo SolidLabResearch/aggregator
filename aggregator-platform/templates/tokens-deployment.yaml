@@ -46,4 +46,4 @@ spec:
               value: "{{ .Values.auth.server }}"
             - name: LOG_LEVEL
               value: "{{ .Values.loglevel }}"
-          terminationGracePeriodSeconds: {{ .Values.tokenService.terminationGracePeriodSeconds }}
+      terminationGracePeriodSeconds: {{ .Values.tokenService.terminationGracePeriodSeconds }}

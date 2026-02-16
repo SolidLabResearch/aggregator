@@ -37,6 +37,16 @@ func main() {
 	if model.ExternalHost == "" {
 		logrus.Fatal("Environment variable EXTERNAL_HOST must be set")
 	}
+	model.ExternalHttpPort = os.Getenv("EXTERNAL_HTTP_PORT")
+	if model.ExternalHttpPort == "" {
+		logrus.Warn("Environment variable EXTERNAL_HTTP_PORT was not set. default=80")
+		model.ExternalHttpPort = "80"
+	}
+	model.ExternalHttpsPort = os.Getenv("EXTERNAL_HTTPS_PORT")
+	if model.ExternalHttpsPort == "" {
+		logrus.Warn("Environment variable EXTERNAL_HTTPS_PORT was not set. default=443")
+		model.ExternalHttpsPort = "443"
+	}
 	model.TLSSecret = os.Getenv("TLS_SECRET")
 	if model.TLSSecret != "" {
 		logrus.Info("HTTPS enabled!")
