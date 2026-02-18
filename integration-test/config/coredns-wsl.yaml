@@ -12,7 +12,7 @@ data:
         }
         ready
         hosts {
-          172.22.254.95 test.local
+          172.22.254.95 wsl.local
           fallthrough
         }
         kubernetes cluster.local in-addr.arpa ip6.arpa {

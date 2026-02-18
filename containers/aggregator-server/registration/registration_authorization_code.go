@@ -220,7 +220,7 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 	var inst *instance.AggregatorInstance
 	if isUpdate {
 		// Check if aggregator exists
-		inst, err := instance.GetAggregatorInstance(storedData.AggregatorID)
+		inst, err = instance.GetAggregatorInstance(storedData.AggregatorID)
 		if err != nil {
 			logrus.WithError(err).Error("Failed to retrieve aggregator for update")
 			http.Error(w, "Aggregator not found for update", http.StatusNotFound)

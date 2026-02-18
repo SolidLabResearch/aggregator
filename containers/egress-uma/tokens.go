@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/sirupsen/logrus"
 )
@@ -16,7 +17,13 @@ func getAccessToken() (string, error) {
 		"component": "token_service",
 	})
 
-	url := fmt.Sprintf("http://token-service:8080/token/%s", UserId)
+	// URL-encode the userID for safe use as a query parameter
+	encodedID := url.QueryEscape(UserId)
+
+	url := fmt.Sprintf(
+		"http://token-service:8080/token?id=%s",
+		encodedID,
+	)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {

@@ -148,6 +148,11 @@ func handleRegistrationDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	logrus.Infof("Kubernetes resources deleted for aggregator: %s", req.AggregatorID)
 
+	// Delete user tokens
+	if inst.RegistrationType != "none" {
+		deleteTokens(inst.OwnerID)
+	}
+
 	// Delete from storage
 	logrus.Infof("Deleting aggregator instance from storage: %s", req.AggregatorID)
 	if err := instance.DeleteAggregatorInstance(req.AggregatorID); err != nil {

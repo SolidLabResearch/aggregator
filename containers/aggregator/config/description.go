@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -71,10 +72,13 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 }
 
 func checkLoginStatus() bool {
+	// URL-encode the userID for safe use as a query parameter
+	encodedID := url.QueryEscape(model.Owner.UserId)
+
 	url := fmt.Sprintf(
-		"http://token-service.%s.svc.cluster.local:8080/loginstatus/%s",
+		"http://token-service.%s.svc.cluster.local:8080/loginstatus?id=%s",
 		model.Namespace,
-		model.Owner.UserId,
+		encodedID,
 	)
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"ingress-uma/model"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -371,7 +372,13 @@ func getIDToken(userId string) (string, error) {
 		"component": "token_service",
 	})
 
-	url := fmt.Sprintf("http://token-service:8080/token/%s", userId)
+	// URL-encode the userID for safe use as a query parameter
+	encodedID := url.QueryEscape(userId)
+
+	url := fmt.Sprintf(
+		"http://token-service:8080/token?id=%s",
+		encodedID,
+	)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {

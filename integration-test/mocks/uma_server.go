@@ -127,7 +127,7 @@ func NewUMAAuthorizationServer() *UMAAuthorizationServer {
 	mux.HandleFunc("/policies", as.handlePolicyManagement)
 	mux.HandleFunc("/policies/", as.handlePolicyManagement)
 
-	listener, err := net.Listen("tcp", "0.0.0.0:0")
+	listener, err := net.Listen("tcp", "0.0.0.0:4001")
 	if err != nil {
 		panic(fmt.Errorf("failed to listen for mock UMA server: %w", err))
 	}
@@ -136,7 +136,7 @@ func NewUMAAuthorizationServer() *UMAAuthorizationServer {
 	server.Listener = listener
 	server.Start()
 	as.server = server
-	issuerHost := "localhost"
+	issuerHost := "wsl.local"
 
 	_, port, err := net.SplitHostPort(listener.Addr().String())
 	if err != nil {

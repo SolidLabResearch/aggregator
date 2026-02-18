@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -51,8 +52,8 @@ func main() {
 
 	log.Info("Starting token service")
 
-	http.HandleFunc("/token/", tokenHandler)
-	http.HandleFunc("/loginstatus/", authorizedHandler)
+	http.HandleFunc("/token", tokenHandler)
+	http.HandleFunc("/loginstatus", authorizedHandler)
 	http.HandleFunc("/healthz", healthHandler)
 
 	// Listen for SIGTERM
@@ -96,22 +97,22 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func tokenHandler(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Path[len("/token/"):]
 	switch r.Method {
 	case http.MethodPost:
-		handleStore(w, r, userID)
+		handleStore(w, r)
 	case http.MethodPut:
-		handleUpdate(w, r, userID)
+		handleUpdate(w, r)
 	case http.MethodGet:
-		handleGet(w, r, userID)
+		handleGet(w, r)
 	case http.MethodDelete:
-		handleDelete(w, r, userID)
+		handleDelete(w, r)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 
 type StoreRequest struct {
+	UserID       string `json:"user_id"`
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	IDToken      string `json:"id_token"`
@@ -121,14 +122,7 @@ type StoreRequest struct {
 	ClientSecret string `json:"client_secret"`
 }
 
-func handleStore(w http.ResponseWriter, r *http.Request, userID string) {
-	_, exists := store.tokens[userID]
-	if exists {
-		log.WithField("user_id", userID).Warn("Token store requested but existing token found")
-		http.Error(w, "User tokens already exists. Use PUT to update a token", 409)
-		return
-	}
-
+func handleStore(w http.ResponseWriter, r *http.Request) {
 	var req StoreRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.WithError(err).Warn("Invalid store request")
@@ -136,6 +130,13 @@ func handleStore(w http.ResponseWriter, r *http.Request, userID string) {
 		return
 	}
 
+	_, exists := store.tokens[req.UserID]
+	if exists {
+		log.WithField("user_id", req.UserID).Warn("Token store requested but existing token found")
+		http.Error(w, "User tokens already exists. Use PUT to update a token", 409)
+		return
+	}
+
 	provider, err := oidc.NewProvider(ctx, req.Issuer)
 	if err != nil {
 		http.Error(w, err.Error(), 400)
@@ -159,19 +160,12 @@ func handleStore(w http.ResponseWriter, r *http.Request, userID string) {
 		Expiry:       time.Unix(req.Expiry, 0),
 	}
 
-	storeToken(userID, token, req.IDToken, oauthConfig, req.Issuer)
+	storeToken(req.UserID, token, req.IDToken, oauthConfig, req.Issuer)
 
 	w.WriteHeader(http.StatusCreated)
 }
 
-func handleUpdate(w http.ResponseWriter, r *http.Request, userID string) {
-	_, exists := store.tokens[userID]
-	if !exists {
-		log.WithField("user_id", userID).Warn("Token update requested but no existing token found")
-		http.Error(w, "User tokens not found. Use POST to create a token", 404)
-		return
-	}
-
+func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	var req StoreRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.WithError(err).Warn("Invalid update request")
@@ -179,6 +173,13 @@ func handleUpdate(w http.ResponseWriter, r *http.Request, userID string) {
 		return
 	}
 
+	_, exists := store.tokens[req.UserID]
+	if !exists {
+		log.WithField("user_id", req.UserID).Warn("Token update requested but no existing token found")
+		http.Error(w, "User tokens not found. Use POST to create a token", 404)
+		return
+	}
+
 	provider, err := oidc.NewProvider(ctx, req.Issuer)
 	if err != nil {
 		http.Error(w, err.Error(), 400)
@@ -202,7 +203,7 @@ func handleUpdate(w http.ResponseWriter, r *http.Request, userID string) {
 		Expiry:       time.Unix(req.Expiry, 0),
 	}
 
-	storeToken(userID, token, req.IDToken, oauthConfig, req.Issuer)
+	storeToken(req.UserID, token, req.IDToken, oauthConfig, req.Issuer)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -220,7 +221,21 @@ func storeToken(userID string, token *oauth2.Token, idToken string, config *oaut
 	log.WithField("user_id", userID).Info("Stored token")
 }
 
-func handleGet(w http.ResponseWriter, _ *http.Request, userID string) {
+func handleGet(w http.ResponseWriter, r *http.Request) {
+	// Get the userID from the query parameter
+	encodedID := r.URL.Query().Get("id")
+	if encodedID == "" {
+		http.Error(w, "Missing 'id' query parameter", http.StatusBadRequest)
+		return
+	}
+
+	// URL-decode the userID
+	userID, err := url.QueryUnescape(encodedID)
+	if err != nil {
+		http.Error(w, "Invalid 'id' query parameter", http.StatusBadRequest)
+		return
+	}
+
 	entry, err := getEntry(userID)
 	if err != nil {
 		log.WithField("user_id", userID).Warn("Token not found")
@@ -241,7 +256,21 @@ func handleGet(w http.ResponseWriter, _ *http.Request, userID string) {
 	})
 }
 
-func handleDelete(w http.ResponseWriter, _ *http.Request, userID string) {
+func handleDelete(w http.ResponseWriter, r *http.Request) {
+	// Get the userID from the query parameter
+	encodedID := r.URL.Query().Get("id")
+	if encodedID == "" {
+		http.Error(w, "Missing 'id' query parameter", http.StatusBadRequest)
+		return
+	}
+
+	// URL-decode the userID
+	userID, err := url.QueryUnescape(encodedID)
+	if err != nil {
+		http.Error(w, "Invalid 'id' query parameter", http.StatusBadRequest)
+		return
+	}
+
 	store.mu.Lock()
 	delete(store.tokens, userID)
 	store.mu.Unlock()
@@ -256,7 +285,19 @@ func authorizedHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := r.URL.Path[len("/loginstatus/"):]
+	// Get the userID from the query parameter
+	encodedID := r.URL.Query().Get("id")
+	if encodedID == "" {
+		http.Error(w, "Missing 'id' query parameter", http.StatusBadRequest)
+		return
+	}
+
+	// URL-decode the userID
+	userID, err := url.QueryUnescape(encodedID)
+	if err != nil {
+		http.Error(w, "Invalid 'id' query parameter", http.StatusBadRequest)
+		return
+	}
 
 	entry, err := getEntry(userID)
 	if err != nil {

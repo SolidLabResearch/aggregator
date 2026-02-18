@@ -30,6 +30,10 @@ type TestEnvironment struct {
 	cleanupFuncs              []func() error
 	UMAServer                 *mocks.UMAAuthorizationServer
 	OIDCServer                *mocks.OIDCProvider
+	SolidTestClientID         string
+	TestClientID              string
+	TestClientSecret          string
+	TestRedirect              string
 }
 
 type ServiceConfig struct {
@@ -75,8 +79,11 @@ func SetupTestEnvironment(ctx context.Context) (*TestEnvironment, error) {
 		return nil, fmt.Errorf("failed to setup kubernetes client: %w", err)
 	}
 
-	// Ensure aggregator.local & test.local resolve to 127.0.0.1
+	// Ensure aggregator.local & wsl.local resolve to 127.0.0.1
 	if err := env.ensureHostsEntry("aggregator.local"); err != nil {
+		return nil, fmt.Errorf("failed to setup /etc/hosts entry: %w\n\nPlease manually add:\n  127.0.0.1 aggregator.local\nOr run:\n  echo '127.0.0.1 aggregator.local' | sudo tee -a /etc/hosts", err)
+	}
+	if err := env.ensureHostsEntry("wsl.local"); err != nil {
 		return nil, fmt.Errorf("failed to setup /etc/hosts entry: %w\n\nPlease manually add:\n  127.0.0.1 aggregator.local\nOr run:\n  echo '127.0.0.1 aggregator.local' | sudo tee -a /etc/hosts", err)
 	}
 
@@ -142,7 +149,48 @@ func (env *TestEnvironment) ensureClusterConfiguration(ctx context.Context) erro
 	if err := env.ensureTraefikRunning(ctx); err != nil {
 		return fmt.Errorf("Traefik is required but not running: %w\n\nPlease run:\n  make kind-start-traefik", err)
 	}
+	if err := env.ensureWSLCoreDNS(ctx); err != nil {
+		return fmt.Errorf("Failed to configure coreDNS for WSL access: %w", err)
+	}
 
+	return nil
+}
+
+// Ensure wsl.local points to WSL IP
+func (env *TestEnvironment) ensureWSLCoreDNS(ctx context.Context) error {
+	// Path to the user's prepared CoreDNS YAML
+	yamlPath := "config/coredns-wsl.yaml"
+
+	fmt.Println("📄 Applying CoreDNS WSL configuration from", yamlPath)
+
+	// Apply the YAML using kubectl
+	if _, err := run(ctx,
+		"kubectl", "apply", "-f", yamlPath,
+	); err != nil {
+		return fmt.Errorf("failed to apply CoreDNS WSL ConfigMap: %w", err)
+	}
+
+	// Wait for CoreDNS pods to restart
+	fmt.Println("⏳ Waiting for CoreDNS pods to restart...")
+
+	// List CoreDNS pods and delete them to pick up the new config
+	pods, err := env.KubeClient.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{
+		LabelSelector: "k8s-app=kube-dns",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list CoreDNS pods: %w", err)
+	}
+
+	for _, pod := range pods.Items {
+		if err := env.KubeClient.CoreV1().Pods("kube-system").Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil {
+			return fmt.Errorf("failed to delete CoreDNS pod %s: %w", pod.Name, err)
+		}
+	}
+
+	// Optional: simple wait for pods to restart
+	time.Sleep(5 * time.Second)
+
+	fmt.Println("✅ CoreDNS updated with WSL configuration")
 	return nil
 }
 
@@ -300,8 +348,25 @@ func (env *TestEnvironment) ensureMocks() error {
 	if err != nil {
 		return fmt.Errorf("Failed to start OIDC Provider: %w", err)
 	}
+	env.registerClients(oidc)
 	env.OIDCServer = oidc
 	return nil
+}
+
+func (env *TestEnvironment) registerClients(oidc *mocks.OIDCProvider) {
+	// Register test client
+	env.TestClientID = "test-client"
+	env.TestClientSecret = "test-pass"
+	env.TestRedirect = "http://test.example/callback"
+	oidc.RegisterClient("test-client", "test-pass", []string{env.TestRedirect}, []string{
+		"authorization_code",
+	})
+	// Register solid-oidc test client
+	env.SolidTestClientID = oidc.ClientMetadataURL([]string{env.TestRedirect})
+	// Register solid-oidc aggregator-server client
+	oidc.RegisterClient(env.AggregatorServerURL+env.ClientIDPath, "", []string{env.TestRedirect}, []string{
+		"authorization_code",
+	})
 }
 
 func (env *TestEnvironment) Cleanup() error {

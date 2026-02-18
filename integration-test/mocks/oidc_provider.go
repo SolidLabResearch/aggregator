@@ -110,7 +110,7 @@ func NewOIDCProvider() (*OIDCProvider, error) {
 	server.Listener = listener
 	server.Start()
 	provider.server = server
-	issuerHost := "localhost"
+	issuerHost := "wsl.local"
 
 	_, port, err := net.SplitHostPort(listener.Addr().String())
 	if err != nil {
@@ -457,7 +457,7 @@ func (p *OIDCProvider) handleAuthorizationCodeGrant(w http.ResponseWriter, r *ht
 	client, exists := p.clients[clientID]
 	p.mu.RUnlock()
 
-	if !exists || client.ClientSecret != clientSecret {
+	if !exists || (clientSecret != "" && client.ClientSecret != clientSecret) {
 		http.Error(w, "Invalid client credentials", http.StatusUnauthorized)
 		return
 	}
@@ -887,7 +887,7 @@ func extractClientCredentials(r *http.Request, formClientID string) (clientID, c
 	}
 
 	clientSecret = r.FormValue("client_secret")
-	if formClientID != "" && clientSecret != "" {
+	if formClientID != "" {
 		return formClientID, clientSecret, true
 	}
 
