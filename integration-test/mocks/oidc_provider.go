@@ -110,12 +110,7 @@ func NewOIDCProvider() (*OIDCProvider, error) {
 	server.Listener = listener
 	server.Start()
 	provider.server = server
-
-	// issuerHost := strings.TrimSpace(os.Getenv("MOCK_OIDC_HOST"))
-	// if issuerHost == "" {
-	// 	issuerHost = "oidc.local"
-	// }
-	issuerHost := "test.local"
+	issuerHost := "localhost"
 
 	_, port, err := net.SplitHostPort(listener.Addr().String())
 	if err != nil {
@@ -263,10 +258,13 @@ func (p *OIDCProvider) InvalidateRefreshToken(refreshToken string) {
 	delete(p.refreshTokens, refreshToken)
 }
 
-// IssueTokenForWebID creates a valid JWT token for a given WebID (for testing)
-func (p *OIDCProvider) IssueTokenForWebID(webID string) (string, error) {
-	scopes := []string{"openid", "webid"}
-	token, err := p.generateIDToken(webID, "test-client", "")
+// IssueTokenForID creates a valid JWT token for a given ID (for testing)
+func (p *OIDCProvider) IssueTokenForID(ID string, web bool) (string, error) {
+	scopes := []string{"openid"}
+	if web {
+		scopes = append(scopes, "webid")
+	}
+	token, err := p.generateIDToken(ID, "test-client", "", web)
 	if err != nil {
 		return "", err
 	}
@@ -275,7 +273,7 @@ func (p *OIDCProvider) IssueTokenForWebID(webID string) (string, error) {
 	p.mu.Lock()
 	p.tokens[token] = &TokenInfo{
 		AccessToken: token,
-		WebID:       webID,
+		WebID:       ID,
 		ClientID:    "test-client",
 		Scopes:      scopes,
 		ExpiresAt:   time.Now().Add(1 * time.Hour),
@@ -495,7 +493,7 @@ func (p *OIDCProvider) handleAuthorizationCodeGrant(w http.ResponseWriter, r *ht
 	}
 	p.mu.Unlock()
 
-	idToken, err := p.generateIDToken(authCode.WebID, clientID, "")
+	idToken, err := p.generateIDToken(authCode.WebID, clientID, "", true)
 	if err != nil {
 		http.Error(w, "Failed to generate ID token", http.StatusInternalServerError)
 		return
@@ -829,15 +827,18 @@ func (p *OIDCProvider) generateToken(webID, clientID string, scopes []string, ex
 }
 
 // generateIDToken creates a JWT ID token
-func (p *OIDCProvider) generateIDToken(webID, clientID string, nonce string) (string, error) {
+func (p *OIDCProvider) generateIDToken(ID, clientID string, nonce string, web bool) (string, error) {
 	now := time.Now()
 	claims := jwt.MapClaims{
-		"iss":   p.issuer,
-		"sub":   webID,
-		"aud":   clientID,
-		"exp":   now.Add(1 * time.Hour).Unix(),
-		"iat":   now.Unix(),
-		"webid": webID,
+		"iss": p.issuer,
+		"sub": ID,
+		"aud": clientID,
+		"exp": now.Add(1 * time.Hour).Unix(),
+		"iat": now.Unix(),
+	}
+
+	if web {
+		claims["webid"] = ID
 	}
 
 	if nonce != "" {

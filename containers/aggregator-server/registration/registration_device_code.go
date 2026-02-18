@@ -79,9 +79,9 @@ func handleDeviceCodeFlowStart(w http.ResponseWriter, req model.RegistrationRequ
 	state := generateState()
 
 	// Get OIDC configuration
-	oidcConfig, err := fetchOIDCConfig(model.AuthServer)
+	oidcConfig, err := fetchOIDCConfig(model.OIDCServer)
 	if err != nil {
-		logrus.WithError(err).Warnf("Unable to fetch OIDC configuration for %s", model.AuthServer)
+		logrus.WithError(err).Warnf("Unable to fetch OIDC configuration for %s", model.OIDCServer)
 		http.Error(w, "Authorization failed", http.StatusInternalServerError)
 		return
 	}
@@ -93,7 +93,7 @@ func handleDeviceCodeFlowStart(w http.ResponseWriter, req model.RegistrationRequ
 	logrus.Debugf("OIDC Device Authorization Endpoint: %s", oidcConfig.DeviceAuthorizationEndpoint)
 
 	// Request device code
-	data := fmt.Sprintf("client_id=%s&client_secret=%s&scope=openid offline_access", model.ClientId, model.ClientSecret)
+	data := fmt.Sprintf("client_id=%s&client_secret=%s&scope=openid offline_access", model.OIDCClientId, model.OIDCClientSecret)
 	resp, err := model.HttpClient.Post(
 		oidcConfig.DeviceAuthorizationEndpoint,
 		"application/x-www-form-urlencoded",
@@ -175,7 +175,7 @@ func processDeviceCodeFlow(session *DeviceSession, oidcConfig *model.OIDCConfig)
 
 		req, _ := http.NewRequest("POST", oidcConfig.TokenEndpoint, strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.SetBasicAuth(model.ClientId, model.ClientSecret)
+		req.SetBasicAuth(model.OIDCClientId, model.OIDCClientSecret)
 
 		resp, err := model.HttpClient.Do(req)
 		if err != nil {
@@ -226,13 +226,16 @@ func processDeviceCodeFlow(session *DeviceSession, oidcConfig *model.OIDCConfig)
 		}
 
 		baseURL = inst.BaseURL
-		updateTokens(userID, tok)
+		updateTokens(userID, tok, model.OIDCServer, model.OIDCClientId, model.OIDCClientSecret)
 		logrus.Infof("Aggregator tokens updated (device_code flow): %s", session.AggregatorID)
 	} else {
 		// Store tokens in central token service
 		if err := storeTokens(
 			userID,
 			tok,
+			model.OIDCServer,
+			model.OIDCClientId,
+			model.OIDCClientSecret,
 		); err != nil {
 			setSessionError(session, "Failed to store tokens in token service")
 			return
@@ -363,8 +366,8 @@ func validateDeviceToken(tokenString string) (string, error) {
 	}
 
 	// Verify issuer
-	if issStr != model.AuthServer {
-		logrus.Warnf("Token issuer mismatch: expected %s, got %s", model.AuthServer, issStr)
+	if issStr != model.OIDCServer {
+		logrus.Warnf("Token issuer mismatch: expected %s, got %s", model.OIDCServer, issStr)
 		return "", errors.New("token issuer mismatch")
 	}
 
@@ -375,8 +378,8 @@ func validateDeviceToken(tokenString string) (string, error) {
 		return "", errors.New("token missing azp claim")
 	}
 	azpStr, ok := azp.(string)
-	if !ok || azpStr != model.ClientId {
-		logrus.Warnf("Token azp mismatch: expected %s, got %v", model.ClientId, azp)
+	if !ok || azpStr != model.OIDCClientId {
+		logrus.Warnf("Token azp mismatch: expected %s, got %v", model.OIDCClientId, azp)
 		return "", errors.New("token not issued for this client")
 	}
 

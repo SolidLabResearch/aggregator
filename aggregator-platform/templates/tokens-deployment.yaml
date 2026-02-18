@@ -38,12 +38,6 @@ spec:
             timeoutSeconds: {{ .Values.tokenService.readinessProbe.timeoutSeconds }}
             failureThreshold: {{ .Values.tokenService.readinessProbe.failureThreshold }}
           env:
-            - name: CLIENT_ID
-              value: "{{ .Values.auth.clientId }}"
-            - name: CLIENT_SECRET
-              value: "{{ .Values.auth.clientSecret }}"
-            - name: AUTHZ_SERVER
-              value: "{{ .Values.auth.server }}"
             - name: LOG_LEVEL
               value: "{{ .Values.loglevel }}"
       terminationGracePeriodSeconds: {{ .Values.tokenService.terminationGracePeriodSeconds }}

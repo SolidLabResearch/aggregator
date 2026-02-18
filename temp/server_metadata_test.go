@@ -8,7 +8,7 @@ import (
 )
 
 func TestServerDescription(t *testing.T) {
-	resp, err := http.Get(testEnv.AggregatorURL + "/")
+	resp, err := http.Get(testEnv.AggregatorServerURL + "/")
 	if err != nil {
 		t.Fatalf("Failed to get server description: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestServerDescription(t *testing.T) {
 
 func TestClientIdentifierDocument(t *testing.T) {
 	// 1. GET the client_identifier URL from server description
-	resp, err := http.Get(testEnv.AggregatorURL + "/")
+	resp, err := http.Get(testEnv.AggregatorServerURL + "/")
 	if err != nil {
 		t.Fatalf("Failed to get server description: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestClientIdentifierDocument(t *testing.T) {
 
 func TestPublicTransformationCatalog(t *testing.T) {
 	// 1. GET the transformation_catalog URL from server description
-	resp, err := http.Get(testEnv.AggregatorURL + "/")
+	resp, err := http.Get(testEnv.AggregatorServerURL + "/")
 	if err != nil {
 		t.Fatalf("Failed to get server description: %v", err)
 	}

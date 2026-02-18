@@ -167,8 +167,6 @@ func ensureDeployment(
 								{Name: "EXTERNAL_HOST", Value: model.ExternalHost},
 								{Name: "EXTERNAL_HTTP_PORT", Value: model.ExternalHttpPort},
 								{Name: "EXTERNAL_HTTPS_PORT", Value: model.ExternalHttpsPort},
-								{Name: "CLIENT_ID", Value: model.ClientId},
-								{Name: "CLIENT_SECRET", Value: model.ClientSecret},
 								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 								{Name: "ID", Value: aggregatorId},
 								{Name: "NAMESPACE", Value: model.Namespace},

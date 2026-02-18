@@ -47,6 +47,7 @@ func main() {
 		logrus.Warn("Environment variable EXTERNAL_HTTPS_PORT was not set. default=443")
 		model.ExternalHttpsPort = "443"
 	}
+
 	model.TLSSecret = os.Getenv("TLS_SECRET")
 	if model.TLSSecret != "" {
 		logrus.Info("HTTPS enabled!")
@@ -55,17 +56,41 @@ func main() {
 		model.Protocol = "http"
 	}
 
-	// Read Authorization configuration from environment variables
+	// Read Authentication configuration from environment variables
 	missingRequired := make([]string, 0, 3)
 
-	model.ClientId = os.Getenv("CLIENT_ID")
-	if model.ClientId == "" {
-		missingRequired = append(missingRequired, "CLIENT_ID")
+	// Standard OIDC
+	model.OIDCClientId = os.Getenv("OIDC_CLIENT_ID")
+	model.OIDCServer = os.Getenv("OIDC_SERVER")
+	secretBytes, err := os.ReadFile("/etc/secrets/oidcSecret")
+	if err == nil {
+		model.OIDCClientSecret = strings.TrimSpace(string(secretBytes))
 	}
 
-	// Registration Authorization configuration
+	// Solid OIDC
+	solidOIDCEnabled := os.Getenv("SOLID_OIDC") == "true"
+	if solidOIDCEnabled {
+		logrus.Info("Solid-OIDC with Web IDs is supported")
+	}
+
+	// Allowed registration types
 	allowedTypes := parseAllowedRegistrationTypes(os.Getenv("ALLOWED_REGISTRATION_TYPES"))
 	model.AllowedRegistrationTypes = allowedTypes
+
+	if model.OIDCClientId == "" || model.OIDCClientSecret == "" || model.OIDCServer == "" {
+		// Need atleast one OIDC flow
+		if !solidOIDCEnabled {
+			logrus.Fatal("Atleast one OIDC flow (standard/solid) should be configured")
+		}
+		// Device code
+		if hasRegistrationType(allowedTypes, "device_code") {
+			logrus.Fatal("Device code flow needs a configured standard oidc flow")
+		}
+	} else {
+		logrus.Info("Standard OIDC with central IDP is supported")
+	}
+
+	// Provision
 	if hasRegistrationType(allowedTypes, "provision") {
 		model.ProvisionClientID = strings.TrimSpace(os.Getenv("PROVISION_CLIENT_ID"))
 		model.ProvisionClientSecret = strings.TrimSpace(os.Getenv("PROVISION_CLIENT_SECRET"))
@@ -74,37 +99,31 @@ func main() {
 		model.ProvisionAuthorizationServer = strings.TrimSpace(os.Getenv("PROVISION_AUTHORIZATION_SERVER"))
 		model.IDPServerType = strings.ToLower(strings.TrimSpace(os.Getenv("IDP_SERVER_TYPE")))
 		if model.ProvisionClientID == "" {
-			missingRequired = append(missingRequired, "PROVISION_CLIENT_ID (required for provision registration)")
+			missingRequired = append(missingRequired, "auth.provision.ClientId (required for provision registration)")
 		}
 		if model.ProvisionClientSecret == "" {
-			missingRequired = append(missingRequired, "PROVISION_CLIENT_SECRET (required for provision registration)")
+			missingRequired = append(missingRequired, "auth.provision.clientSecret (required for provision registration)")
 		}
 		if model.ProvisionWebID == "" {
-			missingRequired = append(missingRequired, "PROVISION_WEBID (required for provision registration)")
+			missingRequired = append(missingRequired, "auth.provision.webId (required for provision registration)")
 		}
 		if model.ProvisionAuthorizationServer == "" {
-			missingRequired = append(missingRequired, "PROVISION_AUTHORIZATION_SERVER (required for provision registration)")
+			missingRequired = append(missingRequired, "auth.provision.server (required for provision registration)")
 		}
 	}
 
-	model.AuthServer = os.Getenv("AUTH_SERVER")
-	if model.AuthServer == "" {
-		if hasRegistrationType(allowedTypes, "device_code") {
-			missingRequired = append(missingRequired, "AUTH_SERVER (required for device_code registration)")
-		} else {
-			logrus.Info("Only Solid-OIDC with Web IDs is supported (no standard OIDC Authorization Server configured)")
-		}
-	}
-
-	if model.AuthServer != "" || hasRegistrationType(allowedTypes, "client_credentials") {
-		secretBytes, err := os.ReadFile("/etc/secrets/clientSecret")
-		if err != nil {
-			logrus.Fatalf("Failed to read CLIENT_SECRET from mounted secret: %v", err)
+	if !hasRegistrationType(allowedTypes, "client_credentials") && model.OIDCClientSecret == "" {
+		model.ClientCredId = os.Getenv("CLIENT_CRED_ID")
+		if model.ClientCredId == "" {
+			missingRequired = append(missingRequired, "auth.client_credentials.clientId (required for client_credentials registration)")
 		}
 
-		model.ClientSecret = strings.TrimSpace(string(secretBytes))
-		if model.ClientSecret == "" {
-			logrus.Fatal("Mounted CLIENT_SECRET is empty")
+		secretBytes, err := os.ReadFile("/etc/secrets/credSecret")
+		if err == nil {
+			model.ClientCredSecret = strings.TrimSpace(string(secretBytes))
+		}
+		if model.ClientCredSecret == "" {
+			missingRequired = append(missingRequired, "auth.client_credentias.clientSecret (required for client_credentials registration)")
 		}
 	}
 
@@ -113,6 +132,9 @@ func main() {
 		logrus.WithField("missing_variables", missingRequired).
 			Fatal("Missing required environment variables")
 	}
+
+	// Log allowed registration types
+	logrus.Infof("Allowed registration types: %s", allowedTypes)
 
 	// Load in-cluster kubeConfig
 	kubeConfig, err := rest.InClusterConfig()

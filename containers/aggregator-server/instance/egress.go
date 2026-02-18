@@ -90,8 +90,6 @@ func ensureEgressDeployment(aggregatorId string, replicas int32, ownerID string,
 								{ContainerPort: 8080},
 							},
 							Env: []corev1.EnvVar{
-								{Name: "CLIENT_ID", Value: model.ClientId},
-								{Name: "CLIENT_SECRET", Value: model.ClientSecret},
 								{Name: "USER_ID", Value: ownerID},
 								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 							},

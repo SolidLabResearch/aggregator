@@ -13,36 +13,25 @@ type ClientIdentifierDocument struct {
 	ClientID string   `json:"client_id"`
 }
 
-var (
-	clientIdentifierJSON   []byte
-	clientIdentifierJSONLD []byte
-)
+var clientIdentifierJSONLD []byte
 
 func InitClientIdentifier(mux *http.ServeMux) {
 	logrus.Info("Initializing client identifier endpoint")
+	model.SolidClientId = model.ExternalURL() + "/client.jsonld"
 
 	var err error
 
 	// Pre-encode JSON-LD version (with context)
 	clientDocLD := ClientIdentifierDocument{
 		Context:  []string{"https://www.w3.org/ns/solid/oidc-context.jsonld"},
-		ClientID: model.ClientId,
+		ClientID: model.SolidClientId,
 	}
 	clientIdentifierJSONLD, err = json.Marshal(clientDocLD)
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to marshal client identifier JSON-LD document")
 	}
 
-	// Pre-encode JSON version (without context)
-	clientDocJSON := ClientIdentifierDocument{
-		ClientID: model.ClientId,
-	}
-	clientIdentifierJSON, err = json.Marshal(clientDocJSON)
-	if err != nil {
-		logrus.WithError(err).Fatal("Failed to marshal client identifier JSON document")
-	}
-
-	mux.HandleFunc("/client.json", handleClientIdentifier)
+	mux.HandleFunc("/client.jsonld", handleClientIdentifier)
 	logrus.Info("Client identifier endpoint initialization completed")
 }
 
@@ -52,28 +41,13 @@ func handleClientIdentifier(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accept := r.Header.Get("Accept")
-
-	var contentType string
-	var body []byte
-
-	preferredType := negotiateContentType(accept, []string{"application/ld+json", "application/json"})
-
-	if preferredType == "application/json" {
-		contentType = "application/json"
-		body = clientIdentifierJSON
-	} else {
-		contentType = "application/ld+json"
-		body = clientIdentifierJSONLD
-	}
-
-	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Type", "application/ld+json")
 
 	if r.Method == http.MethodHead {
 		return
 	}
 
-	if _, err := w.Write(body); err != nil {
+	if _, err := w.Write(clientIdentifierJSONLD); err != nil {
 		logrus.WithError(err).Error("Failed to write client identifier document")
 	}
 }

@@ -1,0 +1,66 @@
+external:
+  host: aggregator.local
+  httpPort: 5080
+  httpsPort: 5443
+
+spec:
+  service_collection: /services
+  transformation_catalog: /transformations
+  registration: /registration
+
+auth:
+  oidc:
+    clientId: aggregator-server
+    clientSecret: aggregator-server-secret
+    server: http://localhost:4000
+  solidOidc: true
+  allowedRegistrationTypes:
+    - none
+    - device_code
+    - authorization_code
+    - provision
+    - client_credentials
+  provision:
+    clientId: "provision-client-id"    
+    clientSecret: "provision-client-secret" 
+    webId: "https://provision.example/webid#me" 
+    authServer: "https://localhost:4001"
+  client_credentials:
+    clientId: "client-credentials-id"
+    clientSecret: "client-credentials-secret"
+
+ingressClassName: aggregator-traefik
+
+tls:
+  enabled: false
+
+transformations:
+  - name: fetch
+    spec:
+      id: Fetch
+      image: fetch
+      fno: |
+        @prefix fno: <https://w3id.org/function/ontology#> .
+        @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+        @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+        <Fetch>
+          a fno:Function ;
+          fno:expects ( <Source>) ;
+          fno:returns ( <Result> ) .
+        
+        <Source>
+          a fno:Input ;
+          fno:predicate <source> .
+
+        <Result>
+          a fno:Output ;
+          fno:predicate <result> .
+      inputMapping:
+        source: GET_URL
+      outputMapping:
+        result:
+          port: 8080
+          path: /
+
+loglevel: debug

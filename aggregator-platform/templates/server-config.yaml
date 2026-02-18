@@ -10,12 +10,23 @@ metadata:
 data:
   NAMESPACE: {{ .Release.Namespace }}
   LOG_LEVEL: {{ .Values.loglevel }}
+
   EXTERNAL_HOST: {{ .Values.external.host }}
   EXTERNAL_HTTP_PORT: {{ .Values.external.httpPort | quote }}
   EXTERNAL_HTTPS_PORT: {{ .Values.external.httpsPort | quote }}
-  CLIENT_ID: {{ .Values.auth.clientId }}
-  AUTH_SERVER: {{ .Values.auth.server }}
+
   ALLOWED_REGISTRATION_TYPES: {{ join "," .Values.auth.allowedRegistrationTypes | quote }}
+  SOLID_OIDC: {{ .Values.auth.solidOidc | quote }}
+  OIDC_CLIENT_ID: {{ .Values.auth.oidc.clientId }}
+  OIDC_SERVER: {{ .Values.auth.oidc.server }}
+
+  PROVISION_CLIENT_ID: {{ .Values.auth.provision.clientId }}
+  PROVISION_CLIENT_SECRET: {{ .Values.auth.provision.clientSecret }}
+  PROVISION_WEBID: {{ .Values.auth.provision.webId }}
+  PROVISION_AUTHORIZATION_SERVER: {{ .Values.auth.provision.authServer }}
+
+  CLIENT_CRED_ID: {{ .Values.auth.client_credentials.clientId }}
+
   INGRESS_CLASS_NAME: {{ .Values.ingressClassName }}
   {{- if .Values.tls.enabled }}
   TLS_SECRET: {{ .Values.tls.secretName }}

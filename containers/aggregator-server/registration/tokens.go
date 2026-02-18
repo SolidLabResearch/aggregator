@@ -20,17 +20,23 @@ type TokenResponse struct {
 	Scope        string `json:"scope"`
 }
 
+type StoreRequest struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	IDToken      string `json:"id_token"`
+	Issuer       string `json:"issuer"`
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret,omitempty"`
+	Expiry       int64  `json:"expiry"`
+}
+
 func storeTokens(
 	userID string,
 	tok TokenResponse,
+	issuer string,
+	clientID string,
+	clientSecret string,
 ) error {
-
-	type StoreRequest struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		IDToken      string `json:"id_token"`
-		Expiry       int64  `json:"expiry"`
-	}
 
 	expiryUnix := time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second).Unix()
 
@@ -38,6 +44,9 @@ func storeTokens(
 		AccessToken:  tok.AccessToken,
 		RefreshToken: tok.RefreshToken,
 		IDToken:      tok.IDToken,
+		Issuer:       issuer,
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
 		Expiry:       expiryUnix,
 	}
 
@@ -78,15 +87,10 @@ func storeTokens(
 func updateTokens(
 	userID string,
 	tok TokenResponse,
+	issuer string,
+	clientID string,
+	clientSecret string,
 ) error {
-
-	type StoreRequest struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		IDToken      string `json:"id_token"`
-		Expiry       int64  `json:"expiry"`
-	}
-
 	expiryUnix := time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second).Unix()
 
 	reqBody := StoreRequest{
@@ -94,6 +98,9 @@ func updateTokens(
 		RefreshToken: tok.RefreshToken,
 		IDToken:      tok.IDToken,
 		Expiry:       expiryUnix,
+		Issuer:       issuer,
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
 	}
 
 	data, err := json.Marshal(reqBody)

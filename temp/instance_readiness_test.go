@@ -23,9 +23,7 @@ func TestInstanceDescription_ReturnsServiceUnavailableWhileStarting(t *testing.T
 
 	aggregatorID := createAggregatorViaNone(t, authToken)
 	defer deleteAggregator(t, aggregatorID, authToken)
-
-	namespace := waitForAggregatorNamespace(t, ownerWebID)
-	baseURL := fmt.Sprintf("%s/config/%s", testEnv.AggregatorURL, namespace)
+	baseURL := fmt.Sprintf("%s/%s", testEnv.AggregatorServerURL, aggregatorID)
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	deadline := time.Now().Add(20 * time.Second)

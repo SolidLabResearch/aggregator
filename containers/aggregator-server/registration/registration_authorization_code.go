@@ -58,15 +58,6 @@ func handleAuthorizationCodeStart(w http.ResponseWriter, req model.RegistrationR
 		return
 	}
 
-	// Step 1: Dereference WebID to discover IDP
-	// The WebID should contain a solid:oidcIssuer claim pointing to the IDP
-	// idpIssuer, err := discoverIDPFromWebID(ownerWebID)
-	// if err != nil {
-	// 	logrus.WithError(err).Errorf("Failed to discover IDP from WebID: %s", ownerWebID)
-	// 	http.Error(w, "Failed to discover IDP from WebID", http.StatusInternalServerError)
-	// 	return
-	// }
-
 	// Step 2: Fetch OIDC configuration
 	oidcConfig, err := fetchOIDCConfig(issuer)
 	if err != nil {
@@ -107,9 +98,16 @@ func handleAuthorizationCodeStart(w http.ResponseWriter, req model.RegistrationR
 
 	logrus.Infof("Authorization code flow started for ID %s (state=%s)", id, state)
 
+	var clientId string
+	if mode == "solid-oidc" {
+		clientId = model.SolidClientId
+	} else {
+		clientId = model.OIDCClientId
+	}
+
 	// Step 6: Return public parameters to client
 	response := model.AuthorizationCodeStartResponse{
-		AggregatorClientID:  model.ClientId,
+		AggregatorClientID:  clientId,
 		CodeChallenge:       codeChallenge,
 		CodeChallengeMethod: "S256",
 		State:               state,
@@ -173,13 +171,24 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 	}
 
 	// Exchange authorization code for tokens
-	data := url.Values{
-		"grant_type":    {"authorization_code"},
-		"code":          {req.Code},
-		"redirect_uri":  {req.RedirectURI},
-		"client_id":     {model.ClientId},
-		"client_secret": {model.ClientSecret},
-		"code_verifier": {storedData.CodeVerifier},
+	var data url.Values
+	if mode == "solid-oidc" {
+		data = url.Values{
+			"grant_type":    {"authorization_code"},
+			"code":          {req.Code},
+			"redirect_uri":  {req.RedirectURI},
+			"client_id":     {model.SolidClientId},
+			"code_verifier": {storedData.CodeVerifier},
+		}
+	} else {
+		data = url.Values{
+			"grant_type":    {"authorization_code"},
+			"code":          {req.Code},
+			"redirect_uri":  {req.RedirectURI},
+			"client_id":     {model.OIDCClientId},
+			"client_secret": {model.OIDCClientSecret},
+			"code_verifier": {storedData.CodeVerifier},
+		}
 	}
 
 	resp, err := model.HttpClient.PostForm(storedData.TokenEndpoint, data)
@@ -225,11 +234,24 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 			return
 		}
 
-		updateTokens(id, tokenResp)
+		if mode == "solid-oidc" {
+			err = updateTokens(id, tokenResp, storedData.IDPIssuer, model.SolidClientId, "")
+		} else {
+			err = updateTokens(id, tokenResp, model.OIDCServer, model.OIDCClientId, model.OIDCClientSecret)
+		}
+		if err != nil {
+			logrus.WithError(err).Error("Failed to update user tokens")
+			http.Error(w, "Failed to update user tokens", http.StatusInternalServerError)
+			return
+		}
 		logrus.Infof("Aggregator tokens updated: %s", storedData.AggregatorID)
 	} else {
 		// Store user tokens
-		err = storeTokens(id, tokenResp)
+		if mode == "solid-oidc" {
+			err = storeTokens(id, tokenResp, storedData.IDPIssuer, model.SolidClientId, "")
+		} else {
+			err = storeTokens(id, tokenResp, model.OIDCServer, model.OIDCClientId, model.OIDCClientSecret)
+		}
 		if err != nil {
 			logrus.WithError(err).Error("Failed to store user tokens")
 			http.Error(w, "Failed to store user tokens", http.StatusInternalServerError)

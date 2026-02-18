@@ -64,8 +64,7 @@ func DeleteAggregator(aggregatorId string, ctx context.Context) error {
 	}
 
 	labelSelector := fmt.Sprintf(
-		"app.kubernetes.io/name=aggregator-instance,agg.knows.idlab.ugent.be/managed-by=%s,agg.knows.idlab.ugent.be/id=%s",
-		model.Namespace,
+		"app.kubernetes.io/name=aggregator-instance,agg.knows.idlab.ugent.be/id=%s",
 		aggregatorId,
 	)
 	deletePolicy := metav1.DeletePropagationForeground

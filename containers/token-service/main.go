@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/coreos/go-oidc"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/oauth2"
 )
@@ -22,9 +22,11 @@ import (
 const refreshBuffer = 2 * time.Minute
 
 type TokenEntry struct {
-	Token   *oauth2.Token
-	IDToken string
-	mu      sync.Mutex
+	Token       *oauth2.Token
+	IDToken     string
+	OAuthConfig *oauth2.Config
+	Issuer      string
+	mu          sync.Mutex
 }
 
 type TokenStore struct {
@@ -33,11 +35,8 @@ type TokenStore struct {
 }
 
 var (
-	store        = &TokenStore{tokens: make(map[string]*TokenEntry)}
-	oauthConfig  *oauth2.Config
-	authzServer  string
-	startupError error
-	HttpClient   = &http.Client{
+	store      = &TokenStore{tokens: make(map[string]*TokenEntry)}
+	HttpClient = &http.Client{
 		Transport: &localRedirectTransport{
 			rt: http.DefaultTransport,
 		},
@@ -50,31 +49,7 @@ var (
 func main() {
 	setupLogger()
 
-	clientID := os.Getenv("CLIENT_ID")
-	clientSecret := os.Getenv("CLIENT_SECRET")
-	authzServer = os.Getenv("AUTHZ_SERVER")
-
-	if clientID == "" || clientSecret == "" || authzServer == "" {
-		log.Fatal("CLIENT_ID, CLIENT_SECRET and AUTHZ_SERVER must be set")
-	}
-
-	log.WithFields(logrus.Fields{
-		"authz_server": authzServer,
-	}).Info("Starting token service")
-
-	provider, err := oidc.NewProvider(ctx, authzServer)
-	if err != nil {
-		startupError = err
-		log.WithError(err).Error("OIDC discovery failed")
-	} else {
-		oauthConfig = &oauth2.Config{
-			ClientID:     clientID,
-			ClientSecret: clientSecret,
-			Endpoint:     provider.Endpoint(),
-			Scopes:       []string{"openid", "offline_access"},
-		}
-		log.Info("OIDC discovery successful")
-	}
+	log.Info("Starting token service")
 
 	http.HandleFunc("/token/", tokenHandler)
 	http.HandleFunc("/loginstatus/", authorizedHandler)
@@ -116,26 +91,6 @@ func setupLogger() {
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
-	if startupError != nil {
-		log.WithError(startupError).Warn("Health check failed: discovery error")
-		http.Error(w, "OIDC discovery failed", http.StatusServiceUnavailable)
-		return
-	}
-
-	if oauthConfig == nil {
-		log.Warn("Health check failed: OAuth config nil")
-		http.Error(w, "OAuth config not initialized", http.StatusServiceUnavailable)
-		return
-	}
-
-	req, _ := http.NewRequest(http.MethodHead, authzServer, nil)
-	resp, err := HttpClient.Do(req)
-	if err != nil || resp.StatusCode >= 500 {
-		log.WithError(err).Warn("Auth server unreachable during health check")
-		http.Error(w, "Auth server unreachable", http.StatusServiceUnavailable)
-		return
-	}
-
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("ok"))
 }
@@ -161,6 +116,9 @@ type StoreRequest struct {
 	RefreshToken string `json:"refresh_token"`
 	IDToken      string `json:"id_token"`
 	Expiry       int64  `json:"expiry"`
+	Issuer       string `json:"issuer"`
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
 }
 
 func handleStore(w http.ResponseWriter, r *http.Request, userID string) {
@@ -178,6 +136,22 @@ func handleStore(w http.ResponseWriter, r *http.Request, userID string) {
 		return
 	}
 
+	provider, err := oidc.NewProvider(ctx, req.Issuer)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	oauthConfig := &oauth2.Config{
+		ClientID: req.ClientID,
+		Endpoint: provider.Endpoint(),
+		Scopes:   []string{"openid", "offline_access"},
+	}
+
+	if req.ClientSecret != "" {
+		oauthConfig.ClientSecret = req.ClientSecret
+	}
+
 	token := &oauth2.Token{
 		AccessToken:  req.AccessToken,
 		RefreshToken: req.RefreshToken,
@@ -185,7 +159,7 @@ func handleStore(w http.ResponseWriter, r *http.Request, userID string) {
 		Expiry:       time.Unix(req.Expiry, 0),
 	}
 
-	storeToken(userID, token, req.IDToken)
+	storeToken(userID, token, req.IDToken, oauthConfig, req.Issuer)
 
 	w.WriteHeader(http.StatusCreated)
 }
@@ -205,6 +179,22 @@ func handleUpdate(w http.ResponseWriter, r *http.Request, userID string) {
 		return
 	}
 
+	provider, err := oidc.NewProvider(ctx, req.Issuer)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	oauthConfig := &oauth2.Config{
+		ClientID: req.ClientID,
+		Endpoint: provider.Endpoint(),
+		Scopes:   []string{"openid", "offline_access"},
+	}
+
+	if req.ClientSecret != "" {
+		oauthConfig.ClientSecret = req.ClientSecret
+	}
+
 	token := &oauth2.Token{
 		AccessToken:  req.AccessToken,
 		RefreshToken: req.RefreshToken,
@@ -212,16 +202,18 @@ func handleUpdate(w http.ResponseWriter, r *http.Request, userID string) {
 		Expiry:       time.Unix(req.Expiry, 0),
 	}
 
-	storeToken(userID, token, req.IDToken)
+	storeToken(userID, token, req.IDToken, oauthConfig, req.Issuer)
 
 	w.WriteHeader(http.StatusOK)
 }
 
-func storeToken(userID string, token *oauth2.Token, idToken string) {
+func storeToken(userID string, token *oauth2.Token, idToken string, config *oauth2.Config, url string) {
 	store.mu.Lock()
 	store.tokens[userID] = &TokenEntry{
-		Token:   token,
-		IDToken: idToken,
+		Token:       token,
+		IDToken:     idToken,
+		OAuthConfig: config,
+		Issuer:      url,
 	}
 	store.mu.Unlock()
 
@@ -319,7 +311,12 @@ func ensureValidToken(entry *TokenEntry, userID string) (*oauth2.Token, string, 
 
 	log.WithField("user_id", userID).Info("Refreshing token using refresh token")
 
-	ts := oauthConfig.TokenSource(ctx, entry.Token)
+	if entry.OAuthConfig.ClientSecret == "" {
+		// TODO: allow public client refresh (e.g. Solid-OIDC / DPoP support)
+		return nil, "", errors.New("token expired and refresh not supported for public clients")
+	}
+
+	ts := entry.OAuthConfig.TokenSource(ctx, entry.Token)
 	newToken, err := ts.Token()
 	if err != nil {
 		return nil, "", err

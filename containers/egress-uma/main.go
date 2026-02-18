@@ -12,9 +12,7 @@ import (
 )
 
 var (
-	UserId       string
-	ClientId     string
-	ClientSecret string
+	UserId string
 )
 
 func main() {
@@ -28,14 +26,9 @@ func main() {
 
 	// Read environment variables
 	UserId = os.Getenv("USER_ID")
-	ClientId = os.Getenv("CLIENT_ID")
-	ClientSecret = os.Getenv("CLIENT_SECRET")
 
 	if UserId == "" {
 		logrus.Fatal("USER_ID is not set")
-	}
-	if ClientId == "" {
-		logrus.Fatal("CLIENT_ID is not set")
 	}
 
 	// Check if the user has valid tokens at startup

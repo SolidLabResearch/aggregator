@@ -34,9 +34,9 @@ spec:
                 name: server-config
             - configMapRef:
                 name: spec-config
-          {{- if .Values.auth.clientSecret }}
+          {{- if or .Values.auth.oidc.clientSecret .Values.auth.client_credentials.clientSecret }}
           volumeMounts:
-            - name: client-secret
+            - name: client-secrets
               mountPath: /etc/secrets
               readOnly: true
           {{- end }}
@@ -48,9 +48,9 @@ spec:
             periodSeconds: {{ .Values.server.readinessProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.server.readinessProbe.timeoutSeconds }}
             failureThreshold: {{ .Values.server.readinessProbe.failureThreshold }}
-      {{- if .Values.auth.clientSecret }}
+      {{- if or .Values.auth.oidc.clientSecret .Values.auth.client_credentials.clientSecret }}
       volumes:
-        - name: client-secret
+        - name: client-secrets
           secret:
             secretName: aggregator-server-secret
       {{- end }}

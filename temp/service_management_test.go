@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -170,7 +169,6 @@ func TestServiceCollection_Post_ExecutionUsesQueryAndSources(t *testing.T) {
 
 	desc := fetchAggregatorDescription(t, instance.baseURL, instance.authToken)
 
-	query := "SELECT * WHERE { ?s ?p ?o }"
 	source := "http://example.com"
 
 	// Build FnO Turtle description
@@ -178,19 +176,27 @@ func TestServiceCollection_Post_ExecutionUsesQueryAndSources(t *testing.T) {
 	transformationsCatalog := serverDesc["transformation_catalog"].(string)
 
 	turtleBody := fmt.Sprintf(`@prefix config: <%s> .
+@prefix agg: <%s> .
 @prefix fno: <https://w3id.org/function/ontology#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 
-_:execution a fno:Execution ;
-    fno:executes config:SPARQLEvaluation ;
-    config:sources ( "%s"^^xsd:string ) ;
-    config:queryString "%s" .`, transformationsCatalog, source, query)
+agg:test-service a fno:Execution ;
+    fno:executes config:Fetch ;
+    config:source "%s"^^xsd:string .`,
+		instance.baseURL, transformationsCatalog, source)
 
 	resp, bodyBytes := doWithUMA(t, http.MethodPost, desc.ServiceCollection, instance.authToken, []byte(turtleBody), "text/turtle")
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusCreated {
 		t.Fatalf("Expected 201/202 for execution creation, got %d: %s", resp.StatusCode, string(bodyBytes))
 	}
+
+	serviceCtx, serviceCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer serviceCancel()
+	deployment := waitForDeploymentExists(t, serviceCtx, map[string]string{
+		"app.kubernetes.io/name":      "aggregator-service",
+		"agg.knows.idlab.ugent.be/id": "test-service",
+	})
 
 	var service serviceRepresentation
 	if err := json.Unmarshal(bodyBytes, &service); err != nil {
@@ -202,13 +208,12 @@ _:execution a fno:Execution ;
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	// Extract service ID from URL for deployment lookup
-	parts := strings.Split(service.ID, "/")
-	shortID := parts[len(parts)-1]
-	deployment := waitForDeploymentExists(t, ctx, instance.namespace, shortID)
+	deployment = waitForDeploymentExists(t, ctx, map[string]string{
+		"app.kubernetes.io/name":      "aggregator-service",
+		"agg.knows.idlab.ugent.be/id": service.ID,
+	})
 
-	assertEnvValue(t, deployment.Spec.Template.Spec.Containers[0].Env, "QUERY", query)
-	assertEnvValue(t, deployment.Spec.Template.Spec.Containers[0].Env, "SOURCES", source)
+	assertEnvValue(t, deployment.Spec.Template.Spec.Containers[0].Env, "GET_URL", source)
 }
 
 func TestServiceCreation_UMAProtectsServiceEndpoints(t *testing.T) {

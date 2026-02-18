@@ -42,8 +42,6 @@ var Namespace string
 var ServiceCollection string
 var TransformationCatalog string
 
-var ClientId string
-
 var Clientset kubernetes.Interface
 var DynamicClient *dynamic.DynamicClient
 

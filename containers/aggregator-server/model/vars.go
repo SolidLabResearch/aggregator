@@ -30,11 +30,14 @@ func ExternalURL() string {
 }
 
 var AllowedRegistrationTypes []string
-var ClientId string
 
-// Standard OIDC Authorization Server configuration
-var AuthServer string
-var ClientSecret string
+// Standard OIDC Authentication configuration
+var OIDCClientId string
+var OIDCClientSecret string
+var OIDCServer string
+
+// Solid OIDC Authentication configuration
+var SolidClientId string
 
 // Provision flow configuration
 var ProvisionClientID string
@@ -43,6 +46,10 @@ var ProvisionWebID string
 var ProvisionIDP string
 var ProvisionAuthorizationServer string
 var IDPServerType string
+
+// Client credentials
+var ClientCredId string
+var ClientCredSecret string
 
 // Kubernetes
 var Namespace string

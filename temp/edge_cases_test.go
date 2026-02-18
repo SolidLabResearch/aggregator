@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"aggregator-integration-test/mocks"
+
 	"github.com/google/uuid"
 )
 
@@ -90,21 +91,21 @@ func TestSpecVersion_Compatibility(t *testing.T) {
 
 func TestInstance_NamespaceNotFound(t *testing.T) {
 	namespace := "missing-" + uuid.NewString()
-	url := fmt.Sprintf("%s/config/%s", testEnv.AggregatorURL, namespace)
+	url := fmt.Sprintf("%s/config/%s", testEnv.AggregatorServerURL, namespace)
 
 	assertNotFoundOrUnauthorized(t, url)
 }
 
 func TestInstance_Transformations_NamespaceNotFound(t *testing.T) {
 	namespace := "missing-" + uuid.NewString()
-	url := fmt.Sprintf("%s/config/%s/transformations", testEnv.AggregatorURL, namespace)
+	url := fmt.Sprintf("%s/config/%s/transformations", testEnv.AggregatorServerURL, namespace)
 
 	assertNotFoundOrUnauthorized(t, url)
 }
 
 func TestInstance_Services_NamespaceNotFound(t *testing.T) {
 	namespace := "missing-" + uuid.NewString()
-	url := fmt.Sprintf("%s/config/%s/services", testEnv.AggregatorURL, namespace)
+	url := fmt.Sprintf("%s/config/%s/services", testEnv.AggregatorServerURL, namespace)
 
 	assertNotFoundOrUnauthorized(t, url)
 }
@@ -123,7 +124,7 @@ func TestRegistration_Update_NonexistentAggregator(t *testing.T) {
 	}
 	payload, _ := json.Marshal(body)
 
-	req, err := http.NewRequest("POST", testEnv.AggregatorURL+"/registration", bytes.NewBuffer(payload))
+	req, err := http.NewRequest("POST", testEnv.AggregatorServerURL+"/registration", bytes.NewBuffer(payload))
 	if err != nil {
 		t.Fatalf("Failed to create update request: %v", err)
 	}
@@ -154,7 +155,7 @@ func TestRegistration_Delete_NonexistentAggregator(t *testing.T) {
 	}
 	payload, _ := json.Marshal(body)
 
-	req, err := http.NewRequest("DELETE", testEnv.AggregatorURL+"/registration", bytes.NewBuffer(payload))
+	req, err := http.NewRequest("DELETE", testEnv.AggregatorServerURL+"/registration", bytes.NewBuffer(payload))
 	if err != nil {
 		t.Fatalf("Failed to create delete request: %v", err)
 	}
@@ -175,7 +176,7 @@ func TestRegistration_Delete_NonexistentAggregator(t *testing.T) {
 func assertNotFoundOrUnauthorized(t *testing.T, url string) {
 	t.Helper()
 
-	resp, err := model.HttpClient.Get(url)
+	resp, err := http.Get(url)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}

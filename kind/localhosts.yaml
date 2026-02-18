@@ -14,8 +14,6 @@ data:
         hosts {
           172.22.254.95 wsl.local
           172.22.254.95 test.local
-          172.19.0.1 rs.local
-          172.19.0.1 as.local
           fallthrough
         }
         kubernetes cluster.local in-addr.arpa ip6.arpa {

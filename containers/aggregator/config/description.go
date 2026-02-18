@@ -72,7 +72,7 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 
 func checkLoginStatus() bool {
 	url := fmt.Sprintf(
-		"http://token-service.%s.svc.cluster.local/loginstatus/%s",
+		"http://token-service.%s.svc.cluster.local:8080/loginstatus/%s",
 		model.Namespace,
 		model.Owner.UserId,
 	)

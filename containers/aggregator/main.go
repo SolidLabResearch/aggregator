@@ -50,12 +50,6 @@ func main() {
 		logrus.Fatal("Environment variables PROTOCOL must be either http or https")
 	}
 
-	// Read Authorization configuration from environment variables
-	model.ClientId = os.Getenv("CLIENT_ID")
-	if model.ClientId == "" {
-		logrus.Fatal("Environment variable CLIENT_ID must be set")
-	}
-
 	// Read Aggregator Identity
 	model.ID = os.Getenv("ID")
 	if model.ID == "" {

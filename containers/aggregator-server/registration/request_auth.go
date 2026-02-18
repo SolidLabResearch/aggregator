@@ -79,7 +79,14 @@ func authenticateRequest(r *http.Request) (issuer string, id string, mode string
 		return "", "", "", err
 	}
 
-	if model.AuthServer != "" && model.AuthServer == issStr {
+	// Solid-OIDC mode: extract WebID from token
+	if webidClaim, ok := verifiedToken.Get("webid"); ok {
+		if webidStr, ok := webidClaim.(string); ok {
+			return issStr, webidStr, "solid-oidc", nil
+		}
+	}
+
+	if model.OIDCServer != "" && model.OIDCServer == issStr {
 		// Standard OIDC Auth Server mode: extract subject as ID
 		if sub, ok := verifiedToken.Get("sub"); ok {
 			if subStr, ok := sub.(string); ok {
@@ -90,14 +97,7 @@ func authenticateRequest(r *http.Request) (issuer string, id string, mode string
 		return "", "", "", errors.New("token missing subject claim")
 	}
 
-	// Solid-OIDC mode: extract WebID from token
-	if webidClaim, ok := verifiedToken.Get("webid"); ok {
-		if webidStr, ok := webidClaim.(string); ok {
-			return issStr, webidStr, "solid-oidc", nil
-		}
-	}
-
-	// Fallback to subject claim
+	// Fallback to solid-oidc with subject claim
 	if sub, ok := verifiedToken.Get("sub"); ok {
 		if subStr, ok := sub.(string); ok {
 			return issStr, subStr, "solid-oidc", nil

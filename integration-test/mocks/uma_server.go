@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -137,8 +136,7 @@ func NewUMAAuthorizationServer() *UMAAuthorizationServer {
 	server.Listener = listener
 	server.Start()
 	as.server = server
-
-	issuerHost := "test.local"
+	issuerHost := "localhost"
 
 	_, port, err := net.SplitHostPort(listener.Addr().String())
 	if err != nil {

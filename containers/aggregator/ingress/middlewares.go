@@ -31,6 +31,7 @@ func UMAAuthMiddleware() Middleware {
 			// No authenticaton needed if no authorization server is provided
 			if model.Owner.AuthzServerURL == "" {
 				next.ServeHTTP(w, r)
+				return
 			}
 
 			// Build resource ID for UMA lookup

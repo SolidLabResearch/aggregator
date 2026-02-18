@@ -20,22 +20,22 @@ func TestCORS_Preflight_AllEndpoints(t *testing.T) {
 	}{
 		{
 			name:    "server-description",
-			url:     testEnv.AggregatorURL + "/",
+			url:     testEnv.AggregatorServerURL + "/",
 			methods: []string{http.MethodGet},
 		},
 		{
 			name:    "client-identifier",
-			url:     testEnv.AggregatorURL + "/client.json",
+			url:     testEnv.AggregatorServerURL + "/client.jsonld",
 			methods: []string{http.MethodGet},
 		},
 		{
 			name:    "server-transformations",
-			url:     testEnv.AggregatorURL + "/config/transformations",
+			url:     testEnv.AggregatorServerURL + "/config/transformations",
 			methods: []string{http.MethodHead, http.MethodGet},
 		},
 		{
 			name:    "registration",
-			url:     testEnv.AggregatorURL + "/registration",
+			url:     testEnv.AggregatorServerURL + "/registration",
 			methods: []string{http.MethodPost, http.MethodDelete},
 		},
 		{
@@ -152,17 +152,17 @@ func TestCORS_ResponseHeaders_PublicEndpoints(t *testing.T) {
 	}{
 		{
 			name:   "server-description",
-			url:    testEnv.AggregatorURL + "/",
+			url:    testEnv.AggregatorServerURL + "/",
 			method: http.MethodGet,
 		},
 		{
 			name:   "client-identifier",
-			url:    testEnv.AggregatorURL + "/client.json",
+			url:    testEnv.AggregatorServerURL + "/client.jsonld",
 			method: http.MethodGet,
 		},
 		{
 			name:   "server-transformations",
-			url:    testEnv.AggregatorURL + "/config/transformations",
+			url:    testEnv.AggregatorServerURL + "/config/transformations",
 			method: http.MethodGet,
 			headers: map[string]string{
 				"Accept": "text/turtle",

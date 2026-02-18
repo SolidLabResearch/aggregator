@@ -73,13 +73,10 @@ func TestHandleAuthorizationCodeFinish_AllowsMissingOptionalTokenFields(t *testi
 	}))
 	defer tokenServer.Close()
 
-	originalClientID := model.ClientId
-	originalClientSecret := model.ClientSecret
-	model.ClientId = "http://aggregator.local/client.json"
-	model.ClientSecret = "test-secret"
+	originalClientID := model.SolidClientId
+	model.SolidClientId = "http://aggregator.local/client.jsonld"
 	t.Cleanup(func() {
-		model.ClientId = originalClientID
-		model.ClientSecret = originalClientSecret
+		model.SolidClientId = originalClientID
 	})
 
 	inst := instance.CreateAggregatorInstanceRecord(
@@ -148,13 +145,10 @@ func TestHandleAuthorizationCodeFinish_UsesStoredClientIDForRedirectValidation(t
 	}))
 	defer tokenServer.Close()
 
-	originalClientID := model.ClientId
-	originalClientSecret := model.ClientSecret
-	model.ClientId = otherClientServer.URL
-	model.ClientSecret = "test-secret"
+	originalClientID := model.SolidClientId
+	model.SolidClientId = otherClientServer.URL
 	t.Cleanup(func() {
-		model.ClientId = originalClientID
-		model.ClientSecret = originalClientSecret
+		model.SolidClientId = originalClientID
 	})
 
 	inst := instance.CreateAggregatorInstanceRecord(
