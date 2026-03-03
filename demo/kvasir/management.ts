@@ -101,7 +101,7 @@ export class KvasirManagement {
         method: "GET",
         headers: {
           "Content-Type": "text/turtle",
-          "Authorization": assigner,
+          "Authorization": `Bearer ${await this.auth.getAccessToken()}`,
         },
       });
 

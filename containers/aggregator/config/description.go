@@ -58,7 +58,7 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 
 	// TODO: semantic representations need to be added at some point
 	desc := AggregatorDescription{
-		ID:                    model.ID,
+		ID:                    model.ExternalBaseURL(),
 		CreatedAt:             createdAt,
 		LoginStatus:           loginStatus,
 		TransformationCatalog: model.ExternalBaseURL() + model.TransformationCatalog,

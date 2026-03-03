@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"aggregator-integration-test/mocks"
 	"context"
 	"fmt"
 	"os/exec"
@@ -14,26 +13,23 @@ import (
 )
 
 type TestEnvironment struct {
-	KubeClient                *kubernetes.Clientset
+	KubeClient   *kubernetes.Clientset
+	ClusterName  string
+	Namespace    string
+	cleanupFuncs []func() error
+	// spec
 	AggregatorServerURL       string
 	TransformationCatalogPath string
 	RegistrationPath          string
 	ServiceCollectionPath     string
 	ClientIDPath              string
-	ResourceServerUrl         string
-	ClusterName               string
-	Namespace                 string
-	ClientID                  string
-	ClientSecret              string
-	ProvisionClientID         string
-	ProvisionClientSecret     string
-	cleanupFuncs              []func() error
-	UMAServer                 *mocks.UMAAuthorizationServer
-	OIDCServer                *mocks.OIDCProvider
-	SolidTestClientID         string
-	TestClientID              string
-	TestClientSecret          string
-	TestRedirect              string
+	// mocks
+	ResourceServerUrl string
+	// auth credentials
+	ClientID              string
+	ClientSecret          string
+	ProvisionClientID     string
+	ProvisionClientSecret string
 }
 
 type ServiceConfig struct {
@@ -95,11 +91,6 @@ func SetupTestEnvironment(ctx context.Context) (*TestEnvironment, error) {
 	// Ensure aggregator is deployed with test config
 	if err := env.ensureTestDeployment(ctx); err != nil {
 		return nil, fmt.Errorf("failed to ensure test deployment: %w", err)
-	}
-
-	// Ensure mocks are running
-	if err := env.ensureMocks(); err != nil {
-		return nil, err
 	}
 
 	return env, nil
@@ -342,41 +333,10 @@ func (env *TestEnvironment) ensureTestDeployment(ctx context.Context) error {
 	return nil
 }
 
-func (env *TestEnvironment) ensureMocks() error {
-	env.UMAServer = mocks.NewUMAAuthorizationServer()
-	oidc, err := mocks.NewOIDCProvider()
-	if err != nil {
-		return fmt.Errorf("Failed to start OIDC Provider: %w", err)
-	}
-	env.registerClients(oidc)
-	env.OIDCServer = oidc
-	return nil
-}
-
-func (env *TestEnvironment) registerClients(oidc *mocks.OIDCProvider) {
-	// Register test client
-	env.TestClientID = "test-client"
-	env.TestClientSecret = "test-pass"
-	env.TestRedirect = "http://test.example/callback"
-	oidc.RegisterClient("test-client", "test-pass", []string{env.TestRedirect}, []string{
-		"authorization_code",
-	})
-	// Register solid-oidc test client
-	env.SolidTestClientID = oidc.ClientMetadataURL([]string{env.TestRedirect})
-	// Register solid-oidc aggregator-server client
-	oidc.RegisterClient(env.AggregatorServerURL+env.ClientIDPath, "", []string{env.TestRedirect}, []string{
-		"authorization_code",
-	})
-}
-
 func (env *TestEnvironment) Cleanup() error {
 	fmt.Println("Cleaning up test environment...")
 
 	var errors []error
-
-	// Stop the mock services
-	env.UMAServer.Close()
-	env.OIDCServer.Close()
 
 	_, err := run(context.Background(), "helm", "uninstall", env.Namespace, "-n", env.Namespace)
 	if err != nil {

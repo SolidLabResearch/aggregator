@@ -22,7 +22,8 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 	var inst *instance.AggregatorInstance
 	if isUpdate {
 		// Check if aggregator exists and user is authorized to update it
-		inst, err := instance.GetAggregatorInstance(req.AggregatorID)
+		var err error
+		inst, err = instance.GetAggregatorInstance(req.AggregatorID)
 		if err != nil {
 			logrus.WithError(err).Errorf("Failed to retrieve aggregator %s for update", req.AggregatorID)
 			http.Error(w, "Aggregator not found for update", http.StatusNotFound)
@@ -40,10 +41,6 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 	// Validate required fields
 	if req.AuthorizationServer == "" {
 		http.Error(w, "authorization_server is required", http.StatusBadRequest)
-		return
-	}
-	if req.WebID == "" {
-		http.Error(w, "webid is required", http.StatusBadRequest)
 		return
 	}
 	if req.ClientID == "" {
@@ -70,7 +67,9 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 	}
 
 	// Some IDPs support a webid parameter to specify which WebID to act as
-	tokenData.Set("webid", req.WebID)
+	if req.WebID != "" {
+		tokenData.Set("webid", req.WebID)
+	}
 
 	resp, err := doTokenRequest(
 		oidcConfig.TokenEndpoint,
@@ -133,7 +132,7 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 
 		// Deploy aggregator resources
 		aggregatorId, err := instance.DeployAggregator(
-			req.WebID,
+			id,
 			req.AuthorizationServer,
 			"",
 			ctx,
@@ -152,7 +151,11 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 			aggregatorId,
 		)
 
-		logrus.Infof("Aggregator created (client_credentials): %s for ID %s (acting as %s)", inst.AggregatorID, id, req.WebID)
+		if req.WebID != "" {
+			logrus.Infof("Aggregator created (client_credentials): %s for ID %s (acting as %s)", inst.AggregatorID, id, req.WebID)
+		} else {
+			logrus.Infof("Aggregator created (client_credentials): %s for ID %s", inst.AggregatorID, id)
+		}
 	}
 
 	// Return response

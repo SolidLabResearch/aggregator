@@ -14,7 +14,8 @@
     "stream-service-demo": "tsc && node dist/stream-service-demo.js",
     "kv-create-pod": "tsc && node dist/kvasir/create-pod.js",
     "kv-delete-pod": "tsc && node dist/kvasir/delete-pod.js",
-    "kv-setup-pod": "tsc && node dist/kvasir/setup-pod.js"
+    "kv-setup-pod": "tsc && node dist/kvasir/setup-pod.js",
+    "kv-test-pod": "tsc && node dist/kvasir/test-pod.js"
   },
   "dependencies": {
     "@inrupt/solid-client-authn-core": "^3.1.0",

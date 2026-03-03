@@ -404,7 +404,6 @@ export class KeycloakOIDCAuth {
      */
     createUMAFetch() {
         return async (url: string, init: RequestInit = {}): Promise<Response> => {
-
             // First attempt with no token
             const noTokenResponse = await fetch(url, init);
 
@@ -425,17 +424,17 @@ export class KeycloakOIDCAuth {
             const claimToken = await this.getAccessToken();
             
             // UMA token exchange request
-            const umaRequestBody = {
+            const umaRequestBody = new URLSearchParams({
                 grant_type: "urn:ietf:params:oauth:grant-type:uma-ticket",
                 ticket,
                 claim_token: claimToken,
                 claim_token_format: "http://openid.net/specs/openid-connect-core-1_0.html#IDToken"
-            };
+            });
 
             const umaResponse = await fetch(tokenEndpoint, {
                 method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify(umaRequestBody)
+                headers: { "content-type": "application/x-www-form-urlencoded" },
+                body: umaRequestBody.toString()
             });
 
             if (!umaResponse.ok) {

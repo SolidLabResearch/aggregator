@@ -7,9 +7,9 @@ const IDP = "http://localhost:8280";
 const REALM = "quarkus";
 const CLIENT_ID = "demo-client";
 const CLIENT_UMA_ID = `http://example.com/id/${CLIENT_ID}`;
-const CLIENT_SECRET = "0XAqVqleHW96DIPzvSzsyfSUOqWv8n2y";
+const CLIENT_SECRET = "SsIyMNGjbKrbcJPHr8gWwc36DdqMGvvd";
 
-const USER_ID = "ed9ee96a-2572-4353-905f-e2495ee601c1";
+const USER_ID = "3744e254-9865-4c42-a1f0-ee03f866c186";
 const USER_UMA_ID = `http://example.com/id/${USER_ID}`;
 const USERNAME = "alice@example.com";
 const PASSWORD = "alice";
@@ -70,20 +70,20 @@ async function main() {
     console.log("▶ Delegating pod access control to UMA");
     await kvasir.delegatePodToUMA();
 
-    console.log("▶ Creating pod-management policy for owner…");
+    console.log("▶ Creating slice-management policy for owner…");
     // enable owner to create slices
     const {
       turtle: ownerPolicyTurtle,
       ids: ownerPolicyIds,
     } = await createPolicies([
       {
-        name: "owner_pod_management",
+        name: "owner_slice_management",
         assignee: USER_UMA_ID,
         assigner: USER_UMA_ID,
         scopes: ["read", "write", "delete"],
         target: POD_URL + "/",
-        containerName: "pod",
         client: CLIENT_UMA_ID,
+        container: true
       },
     ]);
 
@@ -144,14 +144,13 @@ async function main() {
     await kvasir.addData(slice, CONTEXT, "obs", generateObservation());
 
     console.log("▶ Setup complete.");
-    console.log("▶ Waiting for termination signal (Ctrl+C)…\n");
-
-    // Wait for SIGINT or SIGTERM
-    await waitForExitSignal();
-
   } catch (err) {
     console.error("❌ Error during setup:", err);
   } finally {
+    // Wait for SIGINT or SIGTERM
+    console.log("▶ Waiting for termination signal (Ctrl+C)…\n");
+    await waitForExitSignal();
+
     console.log("\n⏳ Cleaning up setup…");
 
     // delete slices

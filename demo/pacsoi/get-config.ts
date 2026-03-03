@@ -1,13 +1,16 @@
 import { KeycloakOIDCAuth } from "../util.js";
 
-const IDP = "https://pacsoi-idp.faqir.org";
-const REALM = "kvasir";
-const USERNAME = "patient0@example.com";
-const PASSWORD = "1234";
-const CLIENT_ID = "moveup-backend";
-const CLIENT_SECRET = "GD7VyY29Eeim5BWfdTAFJ8FTDW7SeU2g";
-const AGGREGATOR = "https://aggregator.local/18739d56-85ab-4837-a60c-e07df93d6fff";
-const PATH = "/services"; // "", "/services", "/transformations"
+// Authz configuration
+const USERNAME = "alice";
+const PASSWORD = "alice";
+const CLIENT_ID = "demo-client";
+const CLIENT_SECRET = "SsIyMNGjbKrbcJPHr8gWwc36DdqMGvvd";
+const IDP = "http://localhost:8280";
+const REALM = "quarkus";
+
+// Aggregator
+const AGGREGATOR = "https://aggregator.local:5443/419d851a-a6ab-4273-815d-0e59b6b44db4";
+const PATH = "/transformations"; // "", "/services", "/transformations"
 
 async function main() {
   console.log("=== Initializing Keycloak Authentication ===");

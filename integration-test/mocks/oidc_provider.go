@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"aggregator-integration-test/utils"
+
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -73,7 +75,7 @@ type RefreshTokenInfo struct {
 }
 
 // NewOIDCProvider creates a new mock OIDC provider
-func NewOIDCProvider() (*OIDCProvider, error) {
+func NewOIDCProvider(env *utils.TestEnvironment) (*OIDCProvider, error) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate RSA key: %w", err)
@@ -124,6 +126,17 @@ func NewOIDCProvider() (*OIDCProvider, error) {
 		return nil, err
 	}
 	provider.issuer = issuer
+
+	// Register solid-oidc server client
+	provider.RegisterClient(env.AggregatorServerURL+env.ClientIDPath, "", []string{"http://test.example/callback"}, []string{
+		"authorization_code",
+	})
+	// Register std oidc server client
+	provider.RegisterClient(env.ClientID, env.ClientSecret, []string{"http://test.example/callback"}, []string{
+		"authorization_code",
+		"device_code",
+	})
+	// TODO register provision client ?
 
 	return provider, nil
 }

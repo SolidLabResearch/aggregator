@@ -9,7 +9,7 @@ interface PolicyOptions {
   assigner: string;
   target: string;
   scopes?: string[];
-  containerName?: string;
+  container?: boolean;
   client?: string;
 }
 
@@ -44,12 +44,12 @@ export async function createPolicies(policies: PolicyOptions[]): Promise<{ turtl
 }
 
 export function createPolicy(store: Store, options: PolicyOptions): string {
-  const { name, assignee, assigner, scopes = ["read"], target, containerName, client } = options;
+  const { name, assignee, assigner, scopes = ["read"], target, container, client } = options;
   const uuid = randomUUID();
   const baseIRI = `http://example.com/${uuid}#`;
 
   const policyNode = namedNode(`${baseIRI}${name}Policy`);
-  const permissionNode = blankNode();
+  const permissionNode = namedNode(`${baseIRI}${name}Permission`);
 
   // Policy triples
   store.addQuad(policyNode, namedNode("rdf:type"), namedNode("odrl:Agreement"));
@@ -65,23 +65,20 @@ export function createPolicy(store: Store, options: PolicyOptions): string {
   store.addQuad(permissionNode, namedNode("odrl:assigner"), namedNode(assigner));
 
   // Target triples
-  if (containerName) {
-    const containerNode = namedNode(`${baseIRI}${containerName}`);
+  if (container) {
+    const containerNode = namedNode(`collection:${target}:http://www.w3.org/ns/ldp#contains`);
     store.addQuad(permissionNode, namedNode("odrl:target"), containerNode);
-    store.addQuad(containerNode, namedNode("rdf:type"), namedNode("odrl:AssetCollection"));
-    store.addQuad(containerNode, namedNode("odrl:source"), namedNode(target));
-    store.addQuad(containerNode, namedNode("odrl_p:relation"), namedNode("ldp:contains"));
   } else {
     store.addQuad(permissionNode, namedNode("odrl:target"), namedNode(target));
   }
 
   // Client triples
   if (client) {
-    const constraintNode = blankNode();
+    const constraintNode = namedNode(`${baseIRI}${name}ClientConstraint`);
     store.addQuad(permissionNode, namedNode("odrl:constraint"), constraintNode);
     store.addQuad(constraintNode, namedNode("odrl:leftOperand"), namedNode("odrl:purpose"));
     store.addQuad(constraintNode, namedNode("odrl:operator"), namedNode("odrl:eq"));
-    store.addQuad(constraintNode, namedNode("odrl:rightOperand"), namedNode(`ex:${client}`));
+    store.addQuad(constraintNode, namedNode("odrl:rightOperand"), namedNode(`${client}`));
   }
 
   return policyNode.value;

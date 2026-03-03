@@ -3,12 +3,9 @@ module aggregator-integration-test
 go 1.25.0
 
 require (
-	aggregator-integration-test/mocks v0.0.0
 	k8s.io/apimachinery v0.35.1
 	k8s.io/client-go v0.35.1
 )
-
-replace aggregator-integration-test/mocks => ./mocks
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect

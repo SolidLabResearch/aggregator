@@ -51,7 +51,7 @@ func deleteAggregator(t *testing.T, aggregatorID string, authToken string) {
 	}
 	deleteJSON, _ := json.Marshal(deleteBody)
 
-	deleteReq, err := http.NewRequest("DELETE", Env.AggregatorServerURL+Env.RegistrationPath, bytes.NewBuffer(deleteJSON))
+	deleteReq, err := http.NewRequest("DELETE", testEnv.AggregatorServerURL+testEnv.RegistrationPath, bytes.NewBuffer(deleteJSON))
 	if err != nil {
 		t.Fatalf("Failed to create delete request: %v", err)
 	}
@@ -91,7 +91,7 @@ func createAggregatorViaClientCredentials(t *testing.T, oidcProvider *mocks.OIDC
 	}
 	body, _ := json.Marshal(createBody)
 
-	req, err := http.NewRequest("POST", Env.AggregatorServerURL+"/registration", bytes.NewBuffer(body))
+	req, err := http.NewRequest("POST", testEnv.AggregatorServerURL+"/registration", bytes.NewBuffer(body))
 	if err != nil {
 		t.Fatalf("Failed to create client_credentials request: %v", err)
 	}
@@ -147,9 +147,9 @@ func waitForDeploymentReady(
 			)
 
 		case <-ticker.C:
-			deployments, err := Env.KubeClient.
+			deployments, err := testEnv.KubeClient.
 				AppsV1().
-				Deployments(Env.Namespace).
+				Deployments(testEnv.Namespace).
 				List(ctx, metav1.ListOptions{
 					LabelSelector: labelSelector,
 				})
@@ -225,9 +225,9 @@ func waitForDeploymentExists(
 			)
 
 		case <-ticker.C:
-			list, err := Env.KubeClient.
+			list, err := testEnv.KubeClient.
 				AppsV1().
-				Deployments(Env.Namespace).
+				Deployments(testEnv.Namespace).
 				List(ctx, metav1.ListOptions{
 					LabelSelector: labelSelector,
 				})
@@ -252,7 +252,7 @@ func waitForDeploymentExists(
 }
 
 func deploymentByLabel(ctx context.Context, namespace, labelSelector string) (*appsv1.Deployment, error) {
-	list, err := Env.KubeClient.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
+	list, err := testEnv.KubeClient.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list deployments with %s: %w", labelSelector, err)
 	}
@@ -266,7 +266,7 @@ func deploymentByLabel(ctx context.Context, namespace, labelSelector string) (*a
 }
 
 func summarizePods(ctx context.Context, namespace, labelSelector string) string {
-	pods, err := Env.KubeClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
+	pods, err := testEnv.KubeClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
 	if err != nil {
 		return "failed to list pods: " + err.Error()
 	}
@@ -323,10 +323,20 @@ type aggregatorInstance struct {
 func setupAggregatorInstance(t *testing.T) aggregatorInstance {
 	t.Helper()
 
-	ownerWebID := Env.OIDCServer.URL() + "/webid#me"
-	authToken := createAuthToken(t, Env.OIDCServer, ownerWebID, true)
+	oidcProvider, err := mocks.NewOIDCProvider(testEnv)
+	if err != nil {
+		t.Fatalf("Failed to create OIDC provider: %v", err)
+	}
 
-	aggregatorID := createAggregatorViaClientCredentials(t, Env.OIDCServer, authToken, Env.UMAServer.URL())
+	ownerWebID := "https://test.client_credentials.setup/webid#me"
+	authToken := createAuthToken(t, oidcProvider, ownerWebID, true)
+	oidcProvider.RegisterClient("test-client", "test-pass", []string{}, []string{
+		"client_credentials",
+	})
+
+	umaServer := mocks.NewUMAAuthorizationServer()
+
+	aggregatorID := createAggregatorViaClientCredentials(t, oidcProvider, authToken, umaServer.URL())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -335,14 +345,16 @@ func setupAggregatorInstance(t *testing.T) aggregatorInstance {
 		"app.kubernetes.io/name":      "aggregator-instance",
 		"agg.knows.idlab.ugent.be/id": aggregatorID,
 	})
-	waitForAggregatorDescriptionReady(t, Env.AggregatorServerURL+"/"+aggregatorID, authToken, 60*time.Second)
+	waitForAggregatorDescriptionReady(t, testEnv.AggregatorServerURL+"/"+aggregatorID, authToken, 60*time.Second)
 
 	cleanup := func() {
 		deleteAggregator(t, aggregatorID, authToken)
+		umaServer.Close()
+		oidcProvider.Close()
 	}
 
 	return aggregatorInstance{
-		baseURL:   Env.AggregatorServerURL + "/" + aggregatorID,
+		baseURL:   testEnv.AggregatorServerURL + "/" + aggregatorID,
 		ID:        aggregatorID,
 		authToken: authToken,
 		cleanup:   cleanup,
@@ -360,14 +372,14 @@ func setupAggregatorInstanceNone(t *testing.T) aggregatorInstance {
 		"app.kubernetes.io/name":      "aggregator-instance",
 		"agg.knows.idlab.ugent.be/id": aggregatorID,
 	})
-	waitForAggregatorDescriptionReady(t, Env.AggregatorServerURL+"/"+aggregatorID, "", 60*time.Second)
+	waitForAggregatorDescriptionReady(t, testEnv.AggregatorServerURL+"/"+aggregatorID, "", 60*time.Second)
 
 	cleanup := func() {
 		deleteAggregator(t, aggregatorID, "")
 	}
 
 	return aggregatorInstance{
-		baseURL:   Env.AggregatorServerURL + "/" + aggregatorID,
+		baseURL:   testEnv.AggregatorServerURL + "/" + aggregatorID,
 		ID:        aggregatorID,
 		authToken: "",
 		cleanup:   cleanup,
@@ -726,7 +738,7 @@ func createAggregatorViaNone(t *testing.T) string {
 	}
 	body, _ := json.Marshal(createBody)
 
-	req, err := http.NewRequest("POST", Env.AggregatorServerURL+Env.RegistrationPath, bytes.NewBuffer(body))
+	req, err := http.NewRequest("POST", testEnv.AggregatorServerURL+testEnv.RegistrationPath, bytes.NewBuffer(body))
 	if err != nil {
 		t.Fatalf("Failed to create none request: %v", err)
 	}
@@ -759,14 +771,7 @@ func createAggregatorViaNone(t *testing.T) string {
 func createAggregatorViaAuthorizationCode(t *testing.T, oidcProvider *mocks.OIDCProvider, authToken string, umaServerURL string) string {
 	t.Helper()
 
-	redirectURI := "https://app.example/callback"
-	oidcProvider.RegisterClient(
-		Env.AggregatorServerURL+Env.ClientIDPath,
-		Env.ClientSecret,
-		[]string{redirectURI},
-		[]string{"authorization_code"},
-	)
-	appClientID := oidcProvider.ClientMetadataURL([]string{redirectURI})
+	appClientID := oidcProvider.ClientMetadataURL([]string{"http://test.example/callback"})
 
 	startBody := map[string]interface{}{
 		"registration_type":    "authorization_code",
@@ -776,7 +781,7 @@ func createAggregatorViaAuthorizationCode(t *testing.T, oidcProvider *mocks.OIDC
 	startJSON, _ := json.Marshal(startBody)
 
 	client := &http.Client{}
-	startReq, err := http.NewRequest("POST", Env.AggregatorServerURL+"/registration", bytes.NewBuffer(startJSON))
+	startReq, err := http.NewRequest("POST", testEnv.AggregatorServerURL+"/registration", bytes.NewBuffer(startJSON))
 	if err != nil {
 		t.Fatalf("Failed to create authorization_code start request: %v", err)
 	}
@@ -801,7 +806,7 @@ func createAggregatorViaAuthorizationCode(t *testing.T, oidcProvider *mocks.OIDC
 	q := authReq.URL.Query()
 	q.Set("response_type", "code")
 	q.Set("client_id", startClientID)
-	q.Set("redirect_uri", redirectURI)
+	q.Set("redirect_uri", "http://test.example/callback")
 	q.Set("scope", "openid webid offline_access")
 	q.Set("code_challenge", codeChallenge)
 	q.Set("code_challenge_method", "S256")
@@ -842,12 +847,12 @@ func createAggregatorViaAuthorizationCode(t *testing.T, oidcProvider *mocks.OIDC
 	finishBody := map[string]interface{}{
 		"registration_type": "authorization_code",
 		"code":              code,
-		"redirect_uri":      redirectURI,
+		"redirect_uri":      "http://test.example/callback",
 		"state":             state,
 	}
 	finishJSON, _ := json.Marshal(finishBody)
 
-	finishReq, err := http.NewRequest("POST", Env.AggregatorServerURL+"/registration", bytes.NewBuffer(finishJSON))
+	finishReq, err := http.NewRequest("POST", testEnv.AggregatorServerURL+"/registration", bytes.NewBuffer(finishJSON))
 	if err != nil {
 		t.Fatalf("Failed to create finish request: %v", err)
 	}
@@ -924,7 +929,7 @@ func updateProvisionConfig(t *testing.T, clientID, clientSecret, webID, idpIssue
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	configMap, err := Env.KubeClient.CoreV1().ConfigMaps("aggregator-app").Get(ctx, "aggregator-config", metav1.GetOptions{})
+	configMap, err := testEnv.KubeClient.CoreV1().ConfigMaps("aggregator-app").Get(ctx, "aggregator-config", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to fetch aggregator configmap: %v", err)
 	}
@@ -938,11 +943,11 @@ func updateProvisionConfig(t *testing.T, clientID, clientSecret, webID, idpIssue
 	configMap.Data["provision_idp"] = idpIssuer
 	configMap.Data["provision_authorization_server"] = authorizationServer
 
-	if _, err := Env.KubeClient.CoreV1().ConfigMaps("aggregator-app").Update(ctx, configMap, metav1.UpdateOptions{}); err != nil {
+	if _, err := testEnv.KubeClient.CoreV1().ConfigMaps("aggregator-app").Update(ctx, configMap, metav1.UpdateOptions{}); err != nil {
 		t.Fatalf("Failed to update aggregator configmap: %v", err)
 	}
 
-	secretClient := Env.KubeClient.CoreV1().Secrets("aggregator-app")
+	secretClient := testEnv.KubeClient.CoreV1().Secrets("aggregator-app")
 	secret, err := secretClient.Get(ctx, "aggregator-provision-uma", metav1.GetOptions{})
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
@@ -973,7 +978,7 @@ func updateProvisionConfig(t *testing.T, clientID, clientSecret, webID, idpIssue
 		}
 	}
 
-	deployment, err := Env.KubeClient.AppsV1().Deployments("aggregator-app").Get(ctx, "aggregator-server", metav1.GetOptions{})
+	deployment, err := testEnv.KubeClient.AppsV1().Deployments("aggregator-app").Get(ctx, "aggregator-server", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to fetch aggregator deployment: %v", err)
 	}
@@ -983,14 +988,14 @@ func updateProvisionConfig(t *testing.T, clientID, clientSecret, webID, idpIssue
 	}
 	deployment.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"] = time.Now().Format(time.RFC3339Nano)
 
-	if _, err := Env.KubeClient.AppsV1().Deployments("aggregator-app").Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
+	if _, err := testEnv.KubeClient.AppsV1().Deployments("aggregator-app").Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
 		t.Fatalf("Failed to restart aggregator deployment: %v", err)
 	}
 
 	waitForDeploymentReady(t, ctx, map[string]string{
 		"app.kubernetes.io/component": "server",
 	})
-	waitForAggregatorServerReady(t, ctx, Env.AggregatorServerURL+"/")
+	waitForAggregatorServerReady(t, ctx, testEnv.AggregatorServerURL+"/")
 }
 
 func waitForAggregatorServerReady(t *testing.T, ctx context.Context, url string) {
@@ -1027,9 +1032,9 @@ func createAggregatorViaProvision(t *testing.T, oidcProvider *mocks.OIDCProvider
 	t.Helper()
 
 	targetWebID := oidcProvider.URL() + "/webid#me"
-	oidcProvider.RegisterClient(Env.ProvisionClientID, Env.ProvisionClientSecret, []string{}, []string{"client_credentials"})
+	oidcProvider.RegisterClient(testEnv.ProvisionClientID, testEnv.ProvisionClientSecret, []string{}, []string{"client_credentials"})
 	oidcProvider.RegisterUser(targetWebID, "provision-user", "provision-pass")
-	updateProvisionConfig(t, Env.ProvisionClientID, Env.ProvisionClientSecret, targetWebID, oidcProvider.URL(), umaServerURL)
+	updateProvisionConfig(t, testEnv.ProvisionClientID, testEnv.ProvisionClientSecret, targetWebID, oidcProvider.URL(), umaServerURL)
 
 	createBody := map[string]interface{}{
 		"registration_type":    "provision",
@@ -1037,7 +1042,7 @@ func createAggregatorViaProvision(t *testing.T, oidcProvider *mocks.OIDCProvider
 	}
 	body, _ := json.Marshal(createBody)
 
-	req, err := http.NewRequest("POST", Env.AggregatorServerURL+"/registration", bytes.NewBuffer(body))
+	req, err := http.NewRequest("POST", testEnv.AggregatorServerURL+"/registration", bytes.NewBuffer(body))
 	if err != nil {
 		t.Fatalf("Failed to create provision request: %v", err)
 	}
@@ -1071,7 +1076,7 @@ func createAggregatorViaProvision(t *testing.T, oidcProvider *mocks.OIDCProvider
 func fetchAggregatorServerDescription(t *testing.T) map[string]interface{} {
 	t.Helper()
 
-	resp, err := http.Get(Env.AggregatorServerURL)
+	resp, err := http.Get(testEnv.AggregatorServerURL)
 	if err != nil {
 		t.Fatalf("Failed to fetch aggregator server description: %v", err)
 	}
@@ -1160,8 +1165,8 @@ func waitForServiceReady(t *testing.T, serviceURL string, authToken string, time
 
 func buildFnOExecution(query string, source string) string {
 	baseURL := "http://aggregator.local:5000"
-	if Env != nil && strings.TrimSpace(Env.AggregatorServerURL) != "" {
-		baseURL = strings.TrimRight(Env.AggregatorServerURL, "/")
+	if testEnv != nil && strings.TrimSpace(testEnv.AggregatorServerURL) != "" {
+		baseURL = strings.TrimRight(testEnv.AggregatorServerURL, "/")
 	}
 	return fmt.Sprintf(`@base <%s/config/transformations#> .
 @prefix fno: <https://w3id.org/function/ontology#> .

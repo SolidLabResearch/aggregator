@@ -1,5 +1,10 @@
 loglevel: info
 
+auth:
+  oidc: {}
+  client_credentials: {}
+  provision: {}
+
 spec:
   service_collection: /services
   transformation_catalog: /transformations

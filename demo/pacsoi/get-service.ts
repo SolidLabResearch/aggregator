@@ -1,13 +1,15 @@
 import { KeycloakOIDCAuth } from "../util.js";
 
-const IDP = "http://localhost:8280";
-const REALM = "quarkus";
-const USERNAME = "alice@example.com";
+// Authz configuration
+const USERNAME = "alice";
 const PASSWORD = "alice";
 const CLIENT_ID = "demo-client";
-const CLIENT_SECRET = "0XAqVqleHW96DIPzvSzsyfSUOqWv8n2y";
+const CLIENT_SECRET = "SsIyMNGjbKrbcJPHr8gWwc36DdqMGvvd";
+const IDP = "http://localhost:8280";
+const REALM = "quarkus";
 
-const AGGREGATOR = "https://aggregator.local:5443/693819fa-2ef1-447f-8eea-64c2e7789825"
+// Aggregator configuration
+const AGGREGATOR = "https://aggregator.local:5443/419d851a-a6ab-4273-815d-0e59b6b44db4"
 const SERVICE_ENDPOINT = `${AGGREGATOR}/pacsoi-svc`;
 const OUTPUT_ENDPOINT = `${SERVICE_ENDPOINT}/w-distribution`;
 
