@@ -6,7 +6,8 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"time"
+
+	"egress-uma/model"
 
 	"github.com/sirupsen/logrus"
 )
@@ -16,7 +17,6 @@ var (
 )
 
 func main() {
-	// Initialize logging
 	logLevel, err := logrus.ParseLevel(os.Getenv("LOG_LEVEL"))
 	if err != nil {
 		logLevel = logrus.InfoLevel
@@ -24,14 +24,11 @@ func main() {
 	logrus.SetLevel(logLevel)
 	logrus.SetOutput(os.Stdout)
 
-	// Read environment variables
 	UserId = os.Getenv("USER_ID")
-
 	if UserId == "" {
 		logrus.Fatal("USER_ID is not set")
 	}
 
-	// Check if the user has valid tokens at startup
 	_, err = getAccessToken()
 	if err != nil {
 		logrus.WithError(err).Error("Failed to obtain initial access token")
@@ -39,9 +36,9 @@ func main() {
 		logrus.Info("Successfully obtained initial access token")
 	}
 
-	// Start HTTP server
 	http.HandleFunc("/", handleHTTPRequest)
 	http.HandleFunc("/fetch", handleFetchRequest)
+
 	logrus.Infof("UMA Proxy starting on port %d...", 8080)
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		logrus.Fatalf("Server failed: %v", err)
@@ -49,53 +46,55 @@ func main() {
 }
 
 func handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
-	// Do UMA flow
-	resp, err := RequestWithUMA(&http.Client{Timeout: 10 * time.Second}, r)
+	resp, err := RequestWithUMA(model.HttpClient, r)
 	if err != nil {
 		http.Error(w, "UMA request failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
 
-	// Copy response headers and body
-	for key, values := range resp.Header {
-		for _, value := range values {
-			w.Header().Add(key, value)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
-	logrus.WithFields(logrus.Fields{"url": resp.Request.URL, "status": resp.Status}).Info("UMA request completed")
 }
 
 func handleFetchRequest(w http.ResponseWriter, r *http.Request) {
-	logrus.Info("Received /fetch request")
+	logrus.WithFields(logrus.Fields{
+		"method": r.Method,
+		"url":    r.URL.String(),
+	}).Info("Received /fetch request")
+
+	// Log incoming request headers
+	model.LogHeaders("Incoming request headers", r.Header)
 
 	if r.Method != http.MethodPost {
+		logrus.Warn("Invalid method for /fetch")
 		http.Error(w, "Only POST is allowed for /fetch", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Parse JSON payload
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
+		logrus.WithError(err).Error("Failed to read request body")
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
 
+	logrus.WithField("body_size", len(bodyBytes)).Debug("Read incoming request body")
+
 	var payload struct {
-		TargetURL    string `json:"target_url"`
-		TargetMethod string `json:"target_method"`
-		TargetBody   string `json:"target_body"`
+		TargetURL     string                 `json:"url"`
+		TargetMethod  string                 `json:"method"`
+		TargetHeaders map[string]interface{} `json:"headers"`
+		TargetBody    string                 `json:"body"`
 	}
 
 	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+		logrus.WithError(err).Error("Invalid JSON body")
 		http.Error(w, "Invalid JSON body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	if payload.TargetURL == "" {
+		logrus.Warn("Missing target_url in payload")
 		http.Error(w, "target_url is required", http.StatusBadRequest)
 		return
 	}
@@ -104,49 +103,80 @@ func handleFetchRequest(w http.ResponseWriter, r *http.Request) {
 		payload.TargetMethod = http.MethodGet
 	}
 
-	// Build outbound request
-	var outboundBody io.Reader = nil
+	logrus.WithFields(logrus.Fields{
+		"target_url":    payload.TargetURL,
+		"target_method": payload.TargetMethod,
+	}).Info("Preparing outbound request")
+
+	var outboundBody io.Reader
 	if payload.TargetBody != "" {
 		outboundBody = bytes.NewReader([]byte(payload.TargetBody))
+		logrus.WithField("target_body_size", len(payload.TargetBody)).Debug("Prepared outbound body")
 	}
 
-	outReq, err := http.NewRequest(
-		payload.TargetMethod,
-		payload.TargetURL,
-		outboundBody,
-	)
+	outReq, err := http.NewRequest(payload.TargetMethod, payload.TargetURL, outboundBody)
 	if err != nil {
+		logrus.WithError(err).Error("Failed to build outbound request")
 		http.Error(w, "Failed to build target request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Forward client headers except Host, Content-Length, etc.
-	copySafeHeaders(outReq.Header, r.Header)
+	outReq.Header = model.NormalizeHeaders(payload.TargetHeaders)
 
-	logrus.WithFields(logrus.Fields{
-		"target_url":    payload.TargetURL,
-		"target_method": payload.TargetMethod,
-	}).Info("Executing UMA-protected fetch request")
+	// Log outbound request headers
+	model.LogHeaders("Outbound request headers", outReq.Header)
 
-	client := &http.Client{Timeout: 10 * time.Second}
-
-	resp, err := RequestWithUMA(client, outReq)
+	// Send request using UMA proxy
+	resp, err := RequestWithUMA(model.HttpClient, outReq)
 	if err != nil {
+		logrus.WithError(err).Error("UMA fetch failed")
 		http.Error(w, "UMA fetch failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
-	// Copy response back
-	for key, vals := range resp.Header {
-		for _, v := range vals {
-			w.Header().Add(key, v)
+	logrus.WithField("status", resp.StatusCode).Info("Received response from upstream")
+
+	// Log upstream response headers
+	model.LogHeaders("Upstream response headers", resp.Header)
+
+	// --- Forward upstream headers to downstream
+	for k, v := range resp.Header {
+		for _, vv := range v {
+			w.Header().Add(k, vv)
 		}
 	}
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
 
-	logrus.WithFields(logrus.Fields{
-		"status": resp.StatusCode,
-	}).Info("/fetch completed")
+	// Ensure SSE headers are present if upstream sent text/event-stream
+	if resp.Header.Get("Content-Type") == "text/event-stream" {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+	}
+
+	w.WriteHeader(resp.StatusCode)
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		logrus.Error("ResponseWriter does not implement Flusher")
+		return
+	}
+
+	buf := make([]byte, 1024)
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				logrus.WithError(writeErr).Error("Failed writing to downstream")
+				return
+			}
+			flusher.Flush()
+		}
+		if err != nil {
+			if err != io.EOF {
+				logrus.WithError(err).Error("Error reading upstream SSE")
+			}
+			break
+		}
+	}
 }

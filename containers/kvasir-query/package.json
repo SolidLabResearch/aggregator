@@ -1,0 +1,24 @@
+{
+  "name": "kvasir-query",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@incremunica/query-sparql-incremental": "^2.3.3",
+    "@incremunica/user-tools": "^2.3.0",
+    "async-mutex": "^0.5.0",
+    "fastify": "^5.8.2"
+  }
+}

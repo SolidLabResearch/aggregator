@@ -27,14 +27,22 @@ type TokenResponse struct {
 
 // RequestWithUMA performs the UMA flow for a request to an external URL
 func RequestWithUMA(client *http.Client, r *http.Request) (*http.Response, error) {
-	// --- Incoming request ---
 	logrus.WithFields(logrus.Fields{
-		"url":     r.URL.String(),
-		"method":  r.Method,
-		"headers": r.Header,
-	}).Info("Incoming request received for UMA enforcement")
+		"method": r.Method,
+		"url":    r.URL.String(),
+	}).Info("Starting UMA request flow")
 
-	// --- Step 1: Build destination URL ---
+	var bodyBytes []byte
+	if r.Body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(r.Body)
+		if err != nil {
+			logrus.WithError(err).Error("Failed to read request body")
+			return nil, err
+		}
+		logrus.WithField("body_size", len(bodyBytes)).Debug("Read request body")
+	}
+
 	dest := &url.URL{
 		Scheme:   requestScheme(r),
 		Host:     requestHost(r),
@@ -42,89 +50,85 @@ func RequestWithUMA(client *http.Client, r *http.Request) (*http.Response, error
 		RawQuery: r.URL.RawQuery,
 	}
 
-	logrus.WithFields(logrus.Fields{
-		"dest_url": dest.String(),
-	}).Info("Constructed upstream destination URL")
+	logrus.WithField("target_url", dest.String()).Info("Preparing initial request")
 
-	// --- Step 1a: First request with NO Authorization ---
-	ticketlessReq, err := http.NewRequest(r.Method, dest.String(), r.Body)
+	// --- Initial request (no UMA ticket)
+	ticketlessReq, err := http.NewRequest(r.Method, dest.String(), bytes.NewReader(bodyBytes))
 	if err != nil {
-		logrus.WithError(err).Error("Failed to build ticketless upstream request")
+		logrus.WithError(err).Error("Failed to create initial request")
 		return nil, err
 	}
+	ticketlessReq.Header = r.Header.Clone()
 
-	copySafeHeaders(ticketlessReq.Header, r.Header)
-
-	logrus.WithFields(logrus.Fields{
-		"method":  ticketlessReq.Method,
-		"url":     ticketlessReq.URL.String(),
-		"headers": ticketlessReq.Header,
-	}).Info("Sending ticketless request to upstream UMA resource server")
+	model.LogHeaders("Initial request headers", ticketlessReq.Header)
 
 	resp, err := client.Do(ticketlessReq)
 	if err != nil {
-		logrus.WithError(err).Error("Upstream request failed (ticketless)")
+		logrus.WithError(err).Error("Initial request failed")
 		return nil, err
 	}
 
-	logrus.WithFields(logrus.Fields{
-		"status": resp.StatusCode,
-	}).Info("Received response from upstream (ticketless request)")
+	logrus.WithField("status", resp.StatusCode).Info("Initial response received")
 
-	// --- Step 1b: Success without UMA ---
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		logrus.Info("UMA not required: upstream accepted request without Authorization")
+		logrus.Info("Request succeeded without UMA")
 		return resp, nil
 	}
 	defer resp.Body.Close()
 
-	// --- Step 2: Check UMA Challenge ---
 	wwwAuth := resp.Header.Get("WWW-Authenticate")
 	if wwwAuth == "" {
-		logrus.Warn("Upstream rejected request but did NOT provide WWW-Authenticate header. Cannot perform UMA.")
+		logrus.Warn("No WWW-Authenticate header present; returning original response")
 		return resp, nil
 	}
 
-	logrus.WithFields(logrus.Fields{
-		"header": wwwAuth,
-	}).Info("Received WWW-Authenticate challenge")
+	logrus.Debug("Parsing WWW-Authenticate header")
 
 	tokenEndpoint, ticket, err := parseAuthenticateHeader(wwwAuth)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to parse UMA WWW-Authenticate header")
+		logrus.WithError(err).Error("Failed to parse WWW-Authenticate header")
 		return nil, err
 	}
 
 	logrus.WithFields(logrus.Fields{
 		"token_endpoint": tokenEndpoint,
 		"ticket":         ticket,
-	}).Info("Parsed UMA challenge: obtained ticket and token endpoint")
+	}).Debug("Parsed UMA challenge")
 
-	// --- Step 3: Create claim token ---
+	// --- Get claim token
 	claimToken, err := getAccessToken()
 	if err != nil {
-		logrus.WithError(err).Error("Failed to create claim token for UMA")
+		logrus.WithError(err).Error("Failed to get claim token")
 		return nil, err
 	}
 
-	logrus.Info("Successfully created OIDC claim token for UMA")
+	logrus.Debug("Obtained claim token")
 
-	// --- Step 4: Request UMA token (RPT) ---
+	// --- UMA token request
 	umaRequest := map[string]string{
 		"grant_type":         "urn:ietf:params:oauth:grant-type:uma-ticket",
 		"ticket":             ticket,
 		"claim_token":        claimToken,
 		"claim_token_format": "http://openid.net/specs/openid-connect-core-1_0.html#IDToken",
 	}
-	umaBody, _ := json.Marshal(umaRequest)
 
-	umaReq, _ := http.NewRequest("POST", tokenEndpoint, bytes.NewReader(umaBody))
+	umaBody, err := json.Marshal(umaRequest)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to marshal UMA request body")
+		return nil, err
+	}
+
+	logrus.WithField("endpoint", tokenEndpoint).Info("Requesting UMA token")
+
+	umaReq, err := http.NewRequest("POST", tokenEndpoint, bytes.NewReader(umaBody))
+	if err != nil {
+		logrus.WithError(err).Error("Failed to create UMA token request")
+		return nil, err
+	}
+	umaReq.Header = make(http.Header)
 	umaReq.Header.Set("Content-Type", "application/json")
 
-	logrus.WithFields(logrus.Fields{
-		"url":     tokenEndpoint,
-		"payload": string(umaBody),
-	}).Info("Requesting UMA RPT token")
+	model.LogHeaders("UMA token request headers", umaReq.Header)
 
 	umaResp, err := client.Do(umaReq)
 	if err != nil {
@@ -133,45 +137,48 @@ func RequestWithUMA(client *http.Client, r *http.Request) (*http.Response, error
 	}
 	defer umaResp.Body.Close()
 
-	logrus.WithFields(logrus.Fields{
-		"status": umaResp.StatusCode,
-	}).Info("Received UMA token endpoint response")
+	logrus.WithField("status", umaResp.StatusCode).Info("UMA token response received")
 
 	if umaResp.StatusCode < 200 || umaResp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(umaResp.Body)
 		logrus.WithFields(logrus.Fields{
 			"status": umaResp.StatusCode,
 			"body":   string(bodyBytes),
-		}).Error("UMA token request failed: upstream AS returned error")
-
-		return nil, errors.New("UMA token request failed: " + string(bodyBytes))
+		}).Error("UMA token request returned error")
+		return nil, errors.New(string(bodyBytes))
 	}
 
 	var rpt TokenResponse
 	if err := json.NewDecoder(umaResp.Body).Decode(&rpt); err != nil {
-		logrus.WithError(err).Error("Failed to decode UMA token endpoint response")
+		logrus.WithError(err).Error("Failed to decode UMA token response")
 		return nil, err
 	}
 
-	logrus.WithFields(logrus.Fields{
-		"token_type": rpt.TokenType,
-	}).Info("Successfully obtained UMA RPT")
+	logrus.Debug("Successfully decoded UMA token")
 
-	// --- Step 5: Retry the request with the RPT token ---
-	ticketedReq, err := http.NewRequest(r.Method, dest.String(), r.Body)
+	// --- Final request with UMA token
+	ticketedReq, err := http.NewRequest(r.Method, dest.String(), bytes.NewReader(bodyBytes))
 	if err != nil {
-		logrus.WithError(err).Error("Failed to create ticketed upstream request")
+		logrus.WithError(err).Error("Failed to create ticketed request")
 		return nil, err
 	}
-	copySafeHeaders(ticketedReq.Header, r.Header)
+
+	ticketedReq.Header = r.Header.Clone()
 	ticketedReq.Header.Set("Authorization", rpt.TokenType+" "+rpt.AccessToken)
 
-	logrus.WithFields(logrus.Fields{
-		"url":     ticketedReq.URL.String(),
-		"headers": ticketedReq.Header,
-	}).Info("Retrying request with UMA RPT token")
+	model.LogHeaders("Final request headers", ticketedReq.Header)
 
-	return client.Do(ticketedReq)
+	logrus.Info("Retrying request with UMA token")
+
+	finalResp, err := client.Do(ticketedReq)
+	if err != nil {
+		logrus.WithError(err).Error("Final request with UMA token failed")
+		return nil, err
+	}
+
+	logrus.WithField("status", finalResp.StatusCode).Info("Final response received")
+
+	return finalResp, nil
 }
 
 func requestScheme(r *http.Request) string {
@@ -245,26 +252,4 @@ func getUMAConfig(asURI string) (UMAConfig, error) {
 	}
 
 	return config, nil
-}
-
-func copySafeHeaders(dst, src http.Header) {
-	hopByHop := map[string]bool{
-		"Connection":          true,
-		"Keep-Alive":          true,
-		"Proxy-Authenticate":  true,
-		"Proxy-Authorization": true,
-		"Te":                  true,
-		"Trailers":            true,
-		"Transfer-Encoding":   true,
-		"Upgrade":             true,
-	}
-
-	for k, vv := range src {
-		if hopByHop[http.CanonicalHeaderKey(k)] {
-			continue
-		}
-		for _, v := range vv {
-			dst.Add(k, v)
-		}
-	}
 }

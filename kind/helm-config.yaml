@@ -7,7 +7,7 @@ auth:
   oidc:
     clientId: aggregator-server
     server: http://localhost:8280/realms/quarkus
-    clientSecret: 9G2FZQQdRkLU5cYTBKwDeJktRVgBix5t
+    clientSecret: pd3DwvaoxvAcR12SA0s6Q2kv0kxH5vC2
   allowedRegistrationTypes:
     - device_code
 
@@ -22,27 +22,55 @@ tls:
     key: aggregator.key
 
 transformations:
-  - name: pacsoi
+  - name: kvasir-query
     spec:
-      id: Pacsoi
-      image: pacsoi-mock-service
+      id: KvasirQuery
+      image: kvasir-query
       fno: |
         @prefix fno: <https://w3id.org/function/ontology#> .
         @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
         @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 
-        <Pacsoi>
+        <KvasirQuery>
           a fno:Function ;
-          fno:expects ( ) ;
-          fno:returns ( <WeightDistribution> ) .
+          fno:expects ( <Query> <Sources> <Schema> <Context> ) ;
+          fno:returns ( <QueryResult> ) .
 
-        <WeightDistribution>
+        <Query>
+          a fno:Parameter ;
+          fno:type xsd:string ;
+          fno:predicate <query> ;
+          fno:required "true"^^xsd:boolean .
+        
+        <Sources>
+          a fno:Parameter ;
+          fno:type xsd:string ;
+          fno:predicate <sources> ;
+          fno:required "true"^^xsd:boolean .
+        
+        <Schema>
+          a fno:Parameter ;
+          fno:type xsd:string ;
+          fno:predicate <schema> ;
+          fno:required "true"^^xsd:boolean .
+        
+        <Context>
+          a fno:Parameter ;
+          fno:type xsd:string ;
+          fno:predicate <context> ;
+          fno:required "true"^^xsd:boolean .
+        
+        <QueryResult>
           a fno:Output ;
-          fno:predicate <w-distribution> .
-      inputMapping: {}
+          fno:predicate <result> .
+      inputMapping:
+        query: QUERY
+        sources: SOURCES
+        schema: SCHEMA
+        context: CONTEXT
       outputMapping:
-        w-distribution:
-          port: 8000
-          path: /report
+        result:
+          port: 3000
+          path: /
 
 loglevel: debug

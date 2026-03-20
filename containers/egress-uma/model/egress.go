@@ -10,20 +10,23 @@ import (
 
 var HttpClient = &http.Client{
 	Transport: &localRedirectTransport{
-		rt: http.DefaultTransport,
+		rt: &http.Transport{
+			DisableCompression:  true,
+			ForceAttemptHTTP2:   false,
+			MaxIdleConns:        100,
+			IdleConnTimeout:     90 * time.Second,
+			TLSHandshakeTimeout: 10 * time.Second,
+		},
 	},
-	Timeout: 5 * time.Second,
+	Timeout: 0,
 }
 
-// localRedirectTransport rewrites requests to localhost -> host.docker.internal
 type localRedirectTransport struct {
 	rt http.RoundTripper
 }
 
 func (t *localRedirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Rewrite localhost hostnames
 	if strings.HasPrefix(req.URL.Host, "localhost") || strings.HasPrefix(req.URL.Host, "127.0.0.1") {
-		// Keep the port if present
 		host, port, _ := net.SplitHostPort(req.URL.Host)
 		if host == "" {
 			host = req.URL.Host
@@ -35,7 +38,6 @@ func (t *localRedirectTransport) RoundTrip(req *http.Request) (*http.Response, e
 		}
 	}
 
-	// Optional: update the Host header so server sees correct host
 	if req.Host == "" || req.Host == "localhost" || req.Host == "127.0.0.1" {
 		req.Host = strings.Split(req.URL.Host, ":")[0]
 	}
