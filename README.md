@@ -4,17 +4,6 @@
 
 An aggregator using uma: https://github.com/SolidLabResearch/user-managed-access as the authorization server.
 
-## Requirements
-
-- helm
-
-### Local setup
-
-- kubectl
-- kind (Kubernetes in Docker)
-- make
-- mkcert
-
 ## Quick Start
 
 If you already have a cluster you can use the helm chart to deploy the aggregator-platform. For the full Helm configuration details see the [documentation](/aggregator-platform/README.md).
@@ -26,6 +15,8 @@ helm upgrade --install aggregator-platform ./aggregator-platform \
   --set auth.allowedRegistrationTypes={none} \
   --set ingressClassName=<ingress-class-name> #traefik, nginx, ..
 ```
+
+To start with a local setup, follow the instruction in the [Local Setup Guide](/docs/local-setup.md).
 
 ## API
 
@@ -47,6 +38,8 @@ Default endpoint:
 POST http(s)://<host>/registration
 ```
 
+More on registration flows in the [documentation](/docs/deploying-aggregators.md)
+
 ---
 ### Transformation Catalog
 
@@ -56,6 +49,8 @@ Default endpoint:
 ```
 GET http(s)://<host>/transformations
 ```
+
+More on transformations in the [documentation](/docs/creating-services.md)
 
 ---
 ### Aggregator Description
@@ -76,12 +71,14 @@ Default endpoint:
 GET http(s)://<host>/<aggregator-id>/services
 ```
 
-Create services within an aggregator instance.
+Deploy services within an aggregator instance.
 
 Default endpoint:
 ```
 POST http(s)://<host>/<aggregator-id>/services
 ```
+
+More on deploying services in the [documentation](/docs/deploying-services.md)
 
 ---
 ### Aggregator Service
@@ -98,128 +95,7 @@ Retrieve the service outputs with corresponding output predicate:
 GET http(s)://<host>/<aggregator-id>/<service-id>/<out-pred>
 ```
 
-## Local Setup
-
-### 1. Install Dependencies
-
-**make**
-```bash
-sudo apt update
-sudo apt install make
-```
-
-**kind:**
-```bash
-curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
-chmod +x ./kind
-sudo mv ./kind /usr/local/bin/kind
-```
-
-**kubectl:**
-```bash
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-chmod +x kubectl
-sudo mv kubectl /usr/local/bin/
-```
-
-**helm:**
-```bash
-curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-```
-
-**mkcert**
-```bash
-sudo apt update
-sudo apt install mkcert libnss3-tools
-```
-
-### 2. Local cluster setup
-
-#### 2.1 Create platform certificates
-
-Run:
-```bash
-mkcert -install
-mkcert aggregator.local
-```
-
-Node.js does not automatically trust the local Certificate Authority created by mkcert.
-Set the `NODE_EXTRA_CA_CERTS` environment variable so Node (and fetch) trusts certificates signed by your mkcert CA.
-```bash
-export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"
-```
-
-#### 2.2 Create and Configure Kind Cluster
-
-Run:
-```bash
-make kind-init
-```
-
-This will:
-- Create local kind cluster
-- Load containers into cluster
-- Generate certificates and keys
-- Start traefik ingress controller
-
-#### 2.2 Configure Cluster DNS
-
-Run:
-```bash
-make configure-coredns
-```
-This updates the cluster’s CoreDNS configuration.
-
-When the aggregator runs inside the Kubernetes cluster, `localhost` refers to the container itself, not your machine. If the aggregator needs to call services running on your local machine (e.g. a UMA server), you must expose your host via custom DNS entries.
-
-Example mappings:
-```bash
-<docker bridge ip> aggregator.host.local
-<wsl ip> aggregator.wsl.local # If you are using WSL
-```
-
-#### Add or Modify DNS Entries
-Edit [/kind/localhosts.yaml](/kind/localhosts.yaml) and apply:
-```bash
-make configure-coredns
-```
-
-#### Update Your Local Machine
-For your local environment to resolve the same hostnames, you must also update `/etc/hosts`.
-
-You can do this manually, or run:
-```bash
-make configure-etc-hosts HOSTS="aggregator.local aggregator.host.local aggregator.wsl.local"
-```
-If you use `make kind-deploy` / `make kind-undeploy`, update the `HOSTS` variable in the [makefile](/makefile) so this step runs automatically during deployment.
-
-### 3. Deploy Aggregator Platform with Local Configuration
-
-```bash
-make kind-deploy
-```
-
-This will deploy the aggregator platform inside the local kind cluster using the [local setup helm values](kind/helm-config.yaml).
-
-### 4. Stop/Clean-up
-
-**Remove aggregator platform**
-```bash
-make kind-undeploy
-```
-**Start/stop cluster for resource saving**
-```bash
-make kind-stop        # Pause the cluster
-make kind-start       # Start the paused cluster
-```
-**Remove cluster**
-```bash
-make kind-delete      # Delete cluster and host configuration
-```
-
-### 5. Interacting with the aggregator-platform
-
-See [guide](/docs/demo.md) tailored to your local setup.
+More on accessing services in the [documentation](/docs/deploying-services.md)
 
 ## Makefile Commands
 
@@ -273,21 +149,6 @@ make containers-load CONTAINER=aggregator-server
 make (kind-)undeploy
 make (kind-)deploy
 ```
-
-## Architecture
-
-- **Kind Cluster**: Local Kubernetes cluster in Docker
-- **Traefik**: Ingress controller (HTTP port 80)
-- **Aggregator Server**: Registration and metadata service
-- **Aggregator Cleaner**: Auto-cleanup controller for service namespaces
-- **Dynamic Services**: Created per user in separate namespaces
-
-## Ports
-
-- **Port 80**: HTTP traffic to aggregator (via Traefik)
-- **Port 443**: HTTPS traffic (available but not configured)
-
-Access: `http://aggregator.local`
 
 ## Tests
 
