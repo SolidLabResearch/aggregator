@@ -15,45 +15,74 @@ type MonthStats = {
 export class WeightDistribution {
   private patients = new Map<string, PatientData>();
   private monthly = new Map<number, MonthStats>();
+  private preProcedureBuffer = new Map<string, WeightObservation[]>();
 
   // ================================
   // Public API
   // ================================
 
   addPatientProcedure(patientID: string, timestamp: Date) {
+    console.log(`[addPatientProcedure] Adding procedure for patient ${patientID} at ${timestamp.toISOString()}`);
     const existing = this.patients.get(patientID);
 
-    if (existing && timestamp <= existing.procedureTs) {
+    if (!existing || timestamp <= existing.procedureTs) {
       this.patients.set(patientID, {
         procedureTs: timestamp,
         observations: [],
       });
+
+      // Flush any buffered observations
+      const buffered = this.preProcedureBuffer.get(patientID);
+      if (buffered) {
+        console.log(`[addPatientProcedure] Flushing ${buffered.length} buffered observations for patient ${patientID}`);
+        for (const obs of buffered) {
+          this.addWeightObservation(patientID, obs.value, obs.timestamp);
+        }
+        this.preProcedureBuffer.delete(patientID);
+      }
+    } else {
+      console.log(`[addPatientProcedure] Procedure not added, existing procedure is earlier.`);
     }
   }
 
   addWeightObservation(patientID: string, value: number, timestamp: Date) {
     const patient = this.patients.get(patientID);
-    if (!patient) return;
 
-    if (timestamp < patient.procedureTs) return;
+    if (!patient) {
+      console.log(`[addWeightObservation] No procedure yet for patient ${patientID}. Buffering observation ${value} at ${timestamp.toISOString()}`);
+      if (!this.preProcedureBuffer.has(patientID)) {
+        this.preProcedureBuffer.set(patientID, []);
+      }
+      this.preProcedureBuffer.get(patientID)!.push({ value, timestamp });
+      return;
+    }
+
+    if (timestamp < patient.procedureTs) {
+      console.log(`[addWeightObservation] Observation ${value} at ${timestamp.toISOString()} ignored, before procedure for patient ${patientID}`);
+      return;
+    }
 
     const month = this.monthsSince(patient.procedureTs, timestamp);
-
     const obs = { value, timestamp };
     patient.observations.push(obs);
 
     if (!this.monthly.has(month)) {
       this.monthly.set(month, { values: [] });
     }
-
     this.monthly.get(month)!.values.push(value);
+
+    console.log(`[addWeightObservation] Added observation ${value} at ${timestamp.toISOString()} for patient ${patientID}, month ${month}`);
   }
 
   removePatient(patientID: string) {
+    console.log(`[removePatient] Removing patient ${patientID}`);
     const patient = this.patients.get(patientID);
-    if (!patient) return;
+    if (!patient) {
+      console.log(`[removePatient] Patient ${patientID} not found`);
+      this.preProcedureBuffer.delete(patientID);
+      return;
+    }
 
-    // Remove their contributions from monthly stats
     for (const obs of patient.observations) {
       const month = this.monthsSince(patient.procedureTs, obs.timestamp);
       const bucket = this.monthly.get(month);
@@ -64,6 +93,8 @@ export class WeightDistribution {
     }
 
     this.patients.delete(patientID);
+    this.preProcedureBuffer.delete(patientID);
+    console.log(`[removePatient] Patient ${patientID} removed`);
   }
 
   // ================================
@@ -87,6 +118,7 @@ export class WeightDistribution {
       };
     }
 
+    console.log(`[getStats] Computed stats for ${Object.keys(result).length} months`);
     return result;
   }
 
@@ -103,6 +135,7 @@ export class WeightDistribution {
       );
     }
 
+    console.log(`[toCSV] Generated CSV with ${lines.length - 1} data rows`);
     return lines.join("\n");
   }
 

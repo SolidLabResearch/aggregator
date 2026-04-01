@@ -2,7 +2,6 @@ package model
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/sirupsen/logrus"
 	"k8s.io/client-go/dynamic"
@@ -53,7 +52,8 @@ var HttpClient = &http.Client{
 		base: &http.Transport{
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
-			IdleConnTimeout:     90 * time.Second,
+			IdleConnTimeout:     0,
 		},
 	},
+	Timeout: 0,
 }

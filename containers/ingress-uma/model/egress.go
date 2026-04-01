@@ -5,14 +5,13 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"time"
 )
 
 var HttpClient = &http.Client{
 	Transport: &localRedirectTransport{
 		rt: http.DefaultTransport,
 	},
-	Timeout: 5 * time.Second,
+	Timeout: 0,
 }
 
 // localRedirectTransport rewrites requests to localhost -> host.docker.internal

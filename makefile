@@ -137,7 +137,7 @@ containers-build:
 	@if [ -n "$(CONTAINER)" ]; then \
 		dir="containers/$(CONTAINER)"; \
 		if [ -d "$$dir" ]; then \
-			docker build "$$dir" -t "$(CONTAINER):latest"; \
+			docker build --no-cache "$$dir" -t "$(CONTAINER):latest"; \
 		else \
 			echo "❌ Container $(CONTAINER) does not exist!"; exit 1; \
 		fi \

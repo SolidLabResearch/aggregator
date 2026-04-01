@@ -5,9 +5,9 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-# Install deps
+# Install deps (STRICT lockfile)
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 
 # Copy source
 COPY . .
@@ -23,18 +23,15 @@ FROM node:22-alpine
 
 WORKDIR /app
 
-# Only install production deps
+# Install production deps (STRICT lockfile)
 COPY package*.json ./
-RUN npm install --omit=dev
+RUN npm ci --omit=dev
 
 # Copy built files
 COPY --from=builder /app/dist ./dist
 
-# Environment variable (can be overridden)
 ENV NODE_ENV=production
 
-# Expose port
 EXPOSE 3000
 
-# Start server
 CMD ["node", "dist/index.js"]

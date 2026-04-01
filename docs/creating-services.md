@@ -22,11 +22,13 @@ Content-Type: application/json
 {
   target_url: "http://example.com/kvasir/query",
   target_method: "POST",
-  target_body: "query { resources { id } }"
+  target_headers: { "Content-Type": "application/json" },
+  target_body: {
+    "@context": {},
+    query: "query { resources { id } }"
+  }
 }
 ```
-
-All safe headers present in the request will be copied and send with the outgoing request.
 
 ## Creating a Transformation Description
 
@@ -47,39 +49,52 @@ Transformations are added in the Aggregator Server helm file using the `transfor
 
 ```yaml
 transformations:
-  - name: incrementalQuery
+  - name: incremental-kvasir
     spec:
-      id: IncrementalQuery
-      image: incremunica
+      id: IncrementalKvasir
+      image: incremunica-kvasir
       fno: |
         @prefix fno: <https://w3id.org/function/ontology#> .
         @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
         @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 
-        <IncrementalQuery>
+        <IncrementalKvasir>
           a fno:Function ;
-          fno:expects ( <Query> <Sources> ) ;
+          fno:expects ( <Query> <Sources> <Schema> <Context> ) ;
           fno:returns ( <QueryResult> ) .
-        
+
         <Query>
           a fno:Parameter ;
           fno:type xsd:string ;
           fno:predicate <query> ;
           fno:required "true"^^xsd:boolean .
-
+        
         <Sources>
           a fno:Parameter ;
           fno:type xsd:string ;
-          fno:container rdf:List ;
           fno:predicate <sources> ;
           fno:required "true"^^xsd:boolean .
-
+        
+        <Schema>
+          a fno:Parameter ;
+          fno:type xsd:string ;
+          fno:predicate <schema> ;
+          fno:required "true"^^xsd:boolean .
+        
+        <Context>
+          a fno:Parameter ;
+          fno:type xsd:string ;
+          fno:predicate <context> ;
+          fno:required "true"^^xsd:boolean .
+        
         <QueryResult>
           a fno:Output ;
           fno:predicate <result> .
       inputMapping:
         query: QUERY
         sources: SOURCES
+        schema: SCHEMA
+        context: CONTEXT
       outputMapping:
         result:
           port: 3000

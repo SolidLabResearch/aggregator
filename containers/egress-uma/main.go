@@ -174,7 +174,7 @@ func handleFetchRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			if err != io.EOF {
-				logrus.WithError(err).Error("Error reading upstream SSE")
+				logrus.WithError(err).Error("Error reading upstream")
 			}
 			break
 		}

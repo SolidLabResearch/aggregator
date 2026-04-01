@@ -2,7 +2,6 @@ package model
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/sirupsen/logrus"
 	"k8s.io/client-go/dynamic"
@@ -67,7 +66,7 @@ var HttpClient = &http.Client{
 	Transport: &localRedirectTransport{
 		rt: http.DefaultTransport,
 	},
-	Timeout: 5 * time.Second,
+	Timeout: 0,
 }
 
 var LogLevel logrus.Level

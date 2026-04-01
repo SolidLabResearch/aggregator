@@ -41,7 +41,7 @@ var (
 		Transport: &localRedirectTransport{
 			rt: http.DefaultTransport,
 		},
-		Timeout: 5 * time.Second,
+		Timeout: 0,
 	}
 	ctx = context.WithValue(context.Background(), oauth2.HTTPClient, HttpClient)
 	log = logrus.New()

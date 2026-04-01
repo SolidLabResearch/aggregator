@@ -29,9 +29,9 @@ func scopeToAction(scope Scope) rdfgo.INamedNode {
 	case Read:
 		return rdfgo.NewNamedNode(OdrlPrefix + "read")
 	case Write:
-		return rdfgo.NewNamedNode(OdrlPrefix + "modify")
+		return rdfgo.NewNamedNode(OdrlPrefix + "write")
 	case Create:
-		return rdfgo.NewNamedNode(OdrlPrefix + "modify")
+		return rdfgo.NewNamedNode(OdrlPrefix + "create")
 	case Delete:
 		return rdfgo.NewNamedNode(OdrlPrefix + "delete")
 	default:
@@ -41,9 +41,15 @@ func scopeToAction(scope Scope) rdfgo.INamedNode {
 
 func determineScopes(method string) ([]Scope, error) {
 	switch method {
-	case "POST", "PUT", "DELETE":
-		logrus.WithFields(logrus.Fields{"method": method}).Debug("🔧 Requesting 'modify' permissions")
+	case "POST":
+		logrus.WithFields(logrus.Fields{"method": method}).Debug("🔧 Requesting 'create' permissions")
+		return []Scope{Create}, nil
+	case "PUT":
+		logrus.WithFields(logrus.Fields{"method": method}).Debug("🔧 Requesting 'write' permissions")
 		return []Scope{Write}, nil
+	case "DELETE":
+		logrus.WithFields(logrus.Fields{"method": method}).Debug("🔧 Requesting 'delete' permissions")
+		return []Scope{Delete}, nil
 	case "GET", "HEAD":
 		logrus.WithFields(logrus.Fields{"method": method}).Debug("📖 Requesting 'read' permissions")
 		return []Scope{Read}, nil
