@@ -6,74 +6,24 @@ const df = new DataFactory();
 
 // Aggregator configuration
 const AGGREGATOR_SERVER = "https://aggregator.local:5443";
-const AGGREGATOR = "https://aggregator.local:5443/54337f85-02a7-4e04-8f29-a7d46c63ce03";
+const AGGREGATOR = "https://aggregator.local:5443/7d540608-6e27-47d4-9bf7-0ac66205c78f";
 const TF = "/transformations";
 const SVC = "/services";
 
 // Transformation configuration
-const SVC_NAME = "kvasir-query-svc";
-const TF_ID = "KvasirQuery";
+const SVC_NAME = "pacsoi-svc";
+const TF_ID = "Pacsoi";
 const PARAMS = {
-  query: `
-  PREFIX ex: <http://example.org/>
-  SELECT ?pat ?value ?unit ?timestamp 
-  WHERE {
-    ?pat ex:hasObservation ?obs .
-    ?obs ex:value ?value ;
-        ex:unit ?unit ;
-        ex:timestamp ?timestamp .
-  }`,
-  sources: "http://localhost:8080/alice/slices/AggregatorDemoSlice/query",
-  schema: `
-  type Query {
-    observations: [ex_Observation]!
-    observation(id: ID!): ex_Observation
-  }
-
-  type ex_Patient {
-    id: ID!
-  }
-
-  type ex_Observation {
-    id: ID!
-    ex_value: Int!
-    ex_unit: String!
-    ex_timestamp: DateTime!
-    forPatient: ex_Patient! @predicate(iri: "ex:hasObservation", reverse: true)
-  }
-
-  type Subscription {
-    observationAdded: ex_Observation!
-  }
-
-  type Mutation {
-    add(obs: PatientObservationInput!): ID!
-  }
-
-  input ObservationInput @class(iri: "ex:Observation") {
-    id: ID!
-    ex_value: Int!
-    ex_unit: String!
-    ex_timestamp: DateTime!
-  }
-
-  input PatientObservationInput @class(iri: "ex:Patient") {
-    id: ID!
-    ex_hasObservation: ObservationInput!
-  }
-  `,
-  context: JSON.stringify({
-    kss: "https://kvasir.discover.ilabt.imec.be/vocab#",
-    schema: "http://schema.org/",
-    ex: "http://example.org/",
-  })
+  "sources": "http://localhost:8080/doctor/slices/Patients",
+  "weight-slice": "Weights",
+  "procedure-slice": "Procedures"
 };
 
 // Authz configuration
-const USERNAME = "alice";
-const PASSWORD = "alice";
+const USERNAME = "doctor";
+const PASSWORD = "doctor";
 const CLIENT_ID = "demo-client";
-const CLIENT_SECRET = "oI6T6JNZR8ezbnWJafRIQtQrNIXCBqOh";
+const CLIENT_SECRET = "9GYhQo9FVtj5RMy4cteto8GgYtvdlvp1";
 const IDP = "http://localhost:8280";
 const REALM = "quarkus";
 

@@ -4,12 +4,14 @@ import (
 	"aggregator/model"
 	"context"
 	"fmt"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes"
 )
 
 func ensureDeployment(
@@ -183,6 +185,18 @@ func ensureDeployment(
 									ReadOnly:  true,
 								},
 							},
+							ReadinessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/healthz",
+										Port: intstr.FromInt(5000),
+									},
+								},
+								InitialDelaySeconds: 1,
+								PeriodSeconds:       2,
+								TimeoutSeconds:      5,
+								FailureThreshold:    5,
+							},
 						},
 					},
 					Volumes: []corev1.Volume{
@@ -206,5 +220,36 @@ func ensureDeployment(
 	if err != nil {
 		return fmt.Errorf("failed to create deployment: %w", err)
 	}
+
+	err = waitForDeploymentReady(model.Clientset, model.Namespace, deployment.Name, 2*time.Minute)
+	if err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func waitForDeploymentReady(client kubernetes.Interface, namespace, name string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+
+	for {
+		dep, err := client.AppsV1().
+			Deployments(namespace).
+			Get(context.TODO(), name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+
+		// Check if desired replicas are ready
+		if dep.Status.ReadyReplicas == *dep.Spec.Replicas &&
+			dep.Status.AvailableReplicas == *dep.Spec.Replicas {
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timeout waiting for deployment to be ready")
+		}
+
+		time.Sleep(2 * time.Second)
+	}
 }

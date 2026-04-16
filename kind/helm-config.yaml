@@ -7,7 +7,7 @@ auth:
   oidc:
     clientId: aggregator-server
     server: http://localhost:8280/realms/quarkus
-    clientSecret: pd3DwvaoxvAcR12SA0s6Q2kv0kxH5vC2
+    clientSecret: IoozU33LivpUanKSvNTJXycTynxnGY0W
   allowedRegistrationTypes:
     - device_code
 
@@ -22,16 +22,16 @@ tls:
     key: aggregator.key
 
 transformations:
-  - name: kvasir-query
+  - name: incremental-kvasir
     spec:
-      id: KvasirQuery
-      image: kvasir-query
+      id: IncrementalKvasir
+      image: incremunica-kvasir
       fno: |
         @prefix fno: <https://w3id.org/function/ontology#> .
         @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
         @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 
-        <KvasirQuery>
+        <IncrementalKvasir>
           a fno:Function ;
           fno:expects ( <Query> <Sources> <Schema> <Context> ) ;
           fno:returns ( <QueryResult> ) .
@@ -72,5 +72,48 @@ transformations:
         result:
           port: 3000
           path: /
+  - name: pacsoi
+    spec:
+      id: Pacsoi
+      image: pacsoi-service
+      fno: |
+        @prefix fno: <https://w3id.org/function/ontology#> .
+        @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+        @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+        <Pacsoi>
+          a fno:Function ;
+          fno:expects ( <Sources> <WeightSlice> <ProcedureSlice> ) ;
+          fno:returns ( <WeightDistribution> ) .
+        
+        <Sources>
+          a fno:Parameter ;
+          fno:type xsd:string ;
+          fno:predicate <sources> ;
+          fno:required "true"^^xsd:boolean .
+        
+        <WeightSlice>
+          a fno:Parameter ;
+          fno:type xsd:string ;
+          fno:predicate <weight-slice> ;
+          fno:required "true"^^xsd:boolean .
+        
+        <ProcedureSlice>
+          a fno:Parameter ;
+          fno:type xsd:string ;
+          fno:predicate <procedure-slice> ;
+          fno:required "true"^^xsd:boolean .
+        
+        <WeightDistribution>
+          a fno:Output ;
+          fno:predicate <w-dist> .
+      inputMapping:
+        sources: SOURCES
+        weight-slice: WEIGHT_SLICE
+        procedure-slice: PROCEDURE_SLICE
+      outputMapping:
+        w-dist:
+          port: 3000
+          path: /w-dist
 
 loglevel: debug

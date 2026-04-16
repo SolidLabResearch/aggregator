@@ -16,9 +16,10 @@ import (
 
 // AggregatorDescription represents the aggregator instance description
 type AggregatorDescription struct {
-	ID                    string `json:"id,omitempty"`
+	ID                    string `json:"id"`
 	CreatedAt             string `json:"created_at"`
 	LoginStatus           bool   `json:"login_status"`
+	TokenExpiry           string `json:"token_expiry,omitempty"`
 	TransformationCatalog string `json:"transformation_catalog"`
 	ServiceCollection     string `json:"service_collection"`
 }
@@ -49,7 +50,7 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loginStatus := checkLoginStatus()
+	loginStatus, tokenExpiry := checkTokenStatus()
 
 	createdAt, err := fetchCreatedAt()
 	if err != nil || createdAt == "" {
@@ -61,6 +62,7 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 		ID:                    model.ExternalBaseURL(),
 		CreatedAt:             createdAt,
 		LoginStatus:           loginStatus,
+		TokenExpiry:           tokenExpiry,
 		TransformationCatalog: model.ExternalBaseURL() + model.TransformationCatalog,
 		ServiceCollection:     model.ExternalBaseURL() + model.ServiceCollection,
 	}
@@ -71,7 +73,7 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func checkLoginStatus() bool {
+func checkTokenStatus() (bool, string) {
 	// URL-encode the userID for safe use as a query parameter
 	encodedID := url.QueryEscape(model.Owner.UserId)
 
@@ -84,32 +86,33 @@ func checkLoginStatus() bool {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		logrus.WithError(err).Debug("Failed to create login status check request")
-		return false
+		return false, ""
 	}
 
 	resp, err := model.HttpClient.Do(req)
 	if err != nil {
 		logrus.WithError(err).Debug("Failed to check login status")
-		return false
+		return false, ""
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		logrus.WithField("status_code", resp.StatusCode).
 			Debug("Login status check returned non-OK status")
-		return false
+		return false, ""
 	}
 
 	var result struct {
-		LoginStatus bool `json:"login_status"`
+		LoginStatus bool   `json:"login_status"`
+		TokenExpiry string `json:"token_expiry"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		logrus.WithError(err).Debug("Failed to decode login status response")
-		return false
+		return false, ""
 	}
 
-	return result.LoginStatus
+	return result.LoginStatus, result.TokenExpiry
 }
 
 // fetchCreatedAt reads the "created_at" key from the mounted ConfigMap

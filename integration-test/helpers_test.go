@@ -77,10 +77,10 @@ func createAggregatorViaClientCredentials(t *testing.T, oidcProvider *mocks.OIDC
 	t.Helper()
 
 	targetWebID := oidcProvider.URL() + "/webid#me"
-	targetClientID := "delete-client-id"
-	targetClientSecret := "delete-client-secret"
+	targetClientID := "test-client-id"
+	targetClientSecret := "test-client-secret"
 	oidcProvider.RegisterClient(targetClientID, targetClientSecret, []string{}, []string{"client_credentials"})
-	oidcProvider.RegisterUser(targetWebID, "delete-user", "delete-pass")
+	oidcProvider.RegisterUser(targetWebID, "test-user", "test-pass")
 
 	createBody := map[string]interface{}{
 		"registration_type":    "client_credentials",
@@ -338,15 +338,6 @@ func setupAggregatorInstance(t *testing.T) aggregatorInstance {
 
 	aggregatorID := createAggregatorViaClientCredentials(t, oidcProvider, authToken, umaServer.URL())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	waitForDeploymentReady(t, ctx, map[string]string{
-		"app.kubernetes.io/name":      "aggregator-instance",
-		"agg.knows.idlab.ugent.be/id": aggregatorID,
-	})
-	waitForAggregatorDescriptionReady(t, testEnv.AggregatorServerURL+"/"+aggregatorID, authToken, 60*time.Second)
-
 	cleanup := func() {
 		deleteAggregator(t, aggregatorID, authToken)
 		umaServer.Close()
@@ -366,14 +357,6 @@ func setupAggregatorInstanceNone(t *testing.T) aggregatorInstance {
 
 	aggregatorID := createAggregatorViaNone(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	waitForDeploymentReady(t, ctx, map[string]string{
-		"app.kubernetes.io/name":      "aggregator-instance",
-		"agg.knows.idlab.ugent.be/id": aggregatorID,
-	})
-	waitForAggregatorDescriptionReady(t, testEnv.AggregatorServerURL+"/"+aggregatorID, "", 60*time.Second)
-
 	cleanup := func() {
 		deleteAggregator(t, aggregatorID, "")
 	}
@@ -388,8 +371,6 @@ func setupAggregatorInstanceNone(t *testing.T) aggregatorInstance {
 
 func fetchAggregatorDescription(t *testing.T, baseURL string, authToken string) aggregatorDescription {
 	t.Helper()
-
-	waitForAggregatorDescriptionReady(t, baseURL, authToken, 60*time.Second)
 
 	resp, bodyBytes := getWithUMA(t, strings.TrimRight(baseURL, "/"), authToken)
 	if resp.StatusCode != http.StatusOK {
@@ -418,24 +399,6 @@ func fetchAggregatorDescription(t *testing.T, baseURL string, authToken string) 
 	}
 
 	return desc
-}
-
-func waitForAggregatorDescriptionReady(t *testing.T, baseUrl string, authToken string, timeout time.Duration) {
-	t.Helper()
-
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, bodyBytes := getWithUMA(t, strings.TrimRight(baseUrl, "/"), authToken)
-		if resp.StatusCode == http.StatusOK {
-			return
-		}
-		if resp.StatusCode != http.StatusServiceUnavailable {
-			t.Fatalf("Expected 200 OK or 503 while waiting for description, got %d: %s", resp.StatusCode, string(bodyBytes))
-		}
-		time.Sleep(2 * time.Second)
-	}
-
-	t.Fatalf("Timed out waiting for aggregator description at %s", baseUrl)
 }
 
 func getWithUMA(t *testing.T, url string, claimToken string) (*http.Response, []byte) {

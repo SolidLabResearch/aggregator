@@ -150,14 +150,12 @@ export class KeycloakOIDCAuth {
             const noTokenResponse = await fetch(url, init);
 
             if (noTokenResponse.status >= 200 && noTokenResponse.status < 300) {
-                console.log("No Authorization token was required.");
                 return noTokenResponse;
             }
 
             // Parse the UMA authenticate header
             const wwwAuthenticateHeader = noTokenResponse.headers.get("WWW-Authenticate");
             if (!wwwAuthenticateHeader) {
-                console.log("No WWW-Authenticate header was provided.");
                 return noTokenResponse;
             }
             const { issuer, tokenEndpoint, ticket } = await parseAuthenticateHeader(wwwAuthenticateHeader);

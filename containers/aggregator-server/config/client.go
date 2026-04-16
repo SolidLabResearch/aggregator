@@ -3,6 +3,7 @@ package config
 import (
 	"aggregator/model"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/sirupsen/logrus"
@@ -13,14 +14,17 @@ type ClientIdentifierDocument struct {
 	ClientID string   `json:"client_id"`
 }
 
-var clientIdentifierJSONLD []byte
+var (
+	clientIdentifierJSON   []byte
+	clientIdentifierJSONLD []byte
+)
 
 func InitClientIdentifier(mux *http.ServeMux) {
 	logrus.Info("Initializing client identifier endpoint")
-	model.SolidClientId = model.ExternalURL() + "/client.jsonld"
+
+	model.SolidClientId = fmt.Sprintf("%s/id", model.ExternalURL())
 
 	var err error
-
 	// Pre-encode JSON-LD version (with context)
 	clientDocLD := ClientIdentifierDocument{
 		Context:  []string{"https://www.w3.org/ns/solid/oidc-context.jsonld"},
@@ -31,7 +35,16 @@ func InitClientIdentifier(mux *http.ServeMux) {
 		logrus.WithError(err).Fatal("Failed to marshal client identifier JSON-LD document")
 	}
 
-	mux.HandleFunc("/client.jsonld", handleClientIdentifier)
+	// Pre-encode JSON version (without context)
+	clientDocJSON := ClientIdentifierDocument{
+		ClientID: model.SolidClientId,
+	}
+	clientIdentifierJSON, err = json.Marshal(clientDocJSON)
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to marshal client identifier JSON document")
+	}
+
+	mux.HandleFunc("/id", handleClientIdentifier)
 	logrus.Info("Client identifier endpoint initialization completed")
 }
 
@@ -41,13 +54,28 @@ func handleClientIdentifier(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/ld+json")
+	accept := r.Header.Get("Accept")
+
+	var contentType string
+	var body []byte
+
+	preferredType := negotiateContentType(accept, []string{"application/ld+json", "application/json"})
+
+	if preferredType == "application/json" {
+		contentType = "application/json"
+		body = clientIdentifierJSON
+	} else {
+		contentType = "application/ld+json"
+		body = clientIdentifierJSONLD
+	}
+
+	w.Header().Set("Content-Type", contentType)
 
 	if r.Method == http.MethodHead {
 		return
 	}
 
-	if _, err := w.Write(clientIdentifierJSONLD); err != nil {
+	if _, err := w.Write(body); err != nil {
 		logrus.WithError(err).Error("Failed to write client identifier document")
 	}
 }

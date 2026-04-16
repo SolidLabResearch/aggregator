@@ -310,14 +310,14 @@ func authorizedHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, _, err = ensureValidToken(entry, userID)
+	token, _, err := ensureValidToken(entry, userID)
 	if err != nil {
 		log.WithError(err).
 			WithField("user_id", userID).
 			Warn("Authorization check failed: refresh failed")
 
 		json.NewEncoder(w).Encode(map[string]bool{
-			"authorized": false,
+			"login_status": false,
 		})
 		return
 	}
@@ -325,8 +325,9 @@ func authorizedHandler(w http.ResponseWriter, r *http.Request) {
 	log.WithField("user_id", userID).
 		Debug("Authorization check successful")
 
-	json.NewEncoder(w).Encode(map[string]bool{
-		"authorized": true,
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"login_status": true,
+		"token_expiry": token.Expiry.Format(time.RFC3339),
 	})
 }
 

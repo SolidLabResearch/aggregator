@@ -156,6 +156,8 @@ func handleFetchRequest(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(resp.StatusCode)
 
+	logrus.Debug("Starting to stream response body to downstream")
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		logrus.Error("ResponseWriter does not implement Flusher")

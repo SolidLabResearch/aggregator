@@ -20,7 +20,8 @@
     "@inrupt/solid-client-authn-core": "^3.1.0",
     "eventsource-parser": "^3.0.6",
     "n3": "^1.26.0",
-    "rdf-data-factory": "^2.0.2"
+    "rdf-data-factory": "^2.0.2",
+    "@comunica-graphql/sparql2graphql-converter": "^1.1.2"
   },
   "devDependencies": {
     "@types/n3": "^1.26.1",

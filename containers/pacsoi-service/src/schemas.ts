@@ -1,93 +1,113 @@
-export const HCP_SLICE_CONTEXT = {};
-export const HCP_SLICE_SCHEMA = "";
-export const HCP_QUERY = "";
-
-export const WEIGHT_SLICE = "/Read-PoC2-Weight-Atomic-02";
-export const WEIGHT_SLICE_CONTEXT = {
-  "foaf": "https://sparontologies.github.io/foaf/current/",
-  "kss": "https://kvasir.discover.ilabt.imec.be/vocab#",
-  "openEHR": "https://ckm.openehr.org/ckm/",
-  "rdfs": "https://www.w3.org/TR/rdf-schema/",
-  "saref": "https://saref.etsi.org/core/",
-  "schema": "http://schema.org/",
-  "snomed": "https://browser.ihtsdotools.org/?perspective=full&conceptId1=404684003&edition=MAIN/2026-02-01&release=&languages=en",
-  "ucum": "https://unitsofmeasure.org/",
-  "moveUp": "https://moveup.care/",
-  "faqir": "https://faqir.org/"
+export const HCP_SLICE_CONTEXT = {
+    "kss": "https://kvasir.discover.ilabt.imec.be/vocab#",
+    "faqir": "https://faqir.org/",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#"
 };
+export const HCP_SLICE_SCHEMA = `
+type Query {
+  patients: [faqir_Patient!]!
+}
 
-export const WEIGHT_SLICE_SCHEMA = `
-type Query { 
-  weightValues: [WeightValue!]! 
-} 
-  
-type WeightProperty @class(iri: "saref:Property"){ 
-  id: ID! 
-  saref_isMeasuredIn: ID! @predicate(iri: "saref:isMeasuredIn") 
-  rdfs_label: ID! @predicate(iri: "rdfs:label") @filter(if: "it=='snomed:27113001'") 
-  ofSubject: ID! @predicate(iri: "saref:hasProperty", reverse: true) 
-} 
+type Mutation {
+  add(patient: [PatientInput!]!): ID!
+}
 
-type WeightValue @class(iri: "saref:PropertyValue") { 
-  id: ID! 
-  saref_isValueOfProperty: WeightProperty! @predicate(iri: "saref:isValueOfProperty") 
-  saref_hasValue: Float! @predicate(iri: "saref:hasValue") 
-  saref_hasTimestamp: DateTime! @predicate(iri: "saref:hasTimestamp") 
-} 
+type PatientInput @class(iri: "faqir:Patient") {
+  id: ID!
+  faqir_podId: String!
+}
+
+type faqir_Patient {
+  id: ID!
+  faqir_podId: String!
+}
   
-type Subscription { 
-  onWeightValueAdded: WeightValue! 
-  onWeightValueDeleted: WeightValue! 
+type Subscription {
+  onPatientAdded: faqir_Patient!
+}`;
+export const HCP_QUERY = `
+PREFIX faqir: <https://faqir.org/>
+SELECT ?id ?pod WHERE {
+  ?id faqir:podId ?pod .
 }`;
 
+export const WEIGHT_SLICE_CONTEXT = {
+    "kss": "https://kvasir.discover.ilabt.imec.be/vocab#",
+    "moveUp": "http://moveUp.care/",
+    "sosa": "http://www.w3.org/ns/sosa/",
+    "saref": "https://saref.etsi.org/core/",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#"
+};
+export const WEIGHT_SLICE_SCHEMA = `
+type Query { 
+    weightValues: [WeightValue!]!
+} 
+
+type WeightProperty @class(iri: "saref:Property"){
+    id: ID!
+    ofSubject: ID!
+        @predicate(iri: "saref:hasProperty", reverse: true)  
+}
+
+type WeightValue @class(iri: "saref:PropertyValue") {
+    id: ID!
+    saref_isValueOfProperty: WeightProperty!
+        @predicate(iri: "saref:isValueOfProperty")    
+    saref_hasValue: Float!
+        @predicate(iri: "saref:hasValue")
+    saref_hasTimestamp: DateTime!
+        @predicate(iri: "saref:hasTimestamp")
+}
+
+type Subscription {
+    onWeightValueAdded: WeightValue!
+}`;
 export const WEIGHT_QUERY = `
+  PREFIX saref: <https://saref.etsi.org/core/>
   SELECT ?value ?timestamp ?patient WHERE {
     ?weightValue a saref:PropertyValue ;
-      saref:hasValue ?value
+      saref:hasValue ?value ;
       saref:hasTimestamp ?timestamp ;
       saref:isValueOfProperty ?prop .
     ?patient saref:hasProperty ?prop .
   }
 `;
 
-export const PROCEDURE_SLICE = "/Read-PoC2-Procedure-BariatricAtomic-01";
 export const PROCEDURE_SLICE_CONTEXT = {
-  "foaf": "https://sparontologies.github.io/foaf/current/",
-  "kss": "https://kvasir.discover.ilabt.imec.be/vocab#",
-  "openEHR": "https://ckm.openehr.org/ckm/",
-  "rdfs": "https://www.w3.org/TR/rdf-schema/",
-  "saref": "https://saref.etsi.org/core/",
-  "schema": "http://schema.org/",
-  "snomed": "https://browser.ihtsdotools.org/?perspective=full&conceptId1=404684003&edition=MAIN/2026-02-01&release=&languages=en",
-  "ucum": "https://unitsofmeasure.org/",
-  "moveUp": "https://moveup.care/",
-  "faqir": "https://faqir.org/"
+    "kss": "https://kvasir.discover.ilabt.imec.be/vocab#",
+    "moveUp": "http://moveUp.care/",
+    "snomed": "http://snomed.info/sct/",
+    "foaf": "http://xmlns.com/foaf/0.1/",
+    "dct": "http://purl.org/dc/terms/",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#"
 };
-
 export const PROCEDURE_SLICE_SCHEMA = `
-type Query { 
-  bariatricProcedures: [moveUp_Procedure!] 
-} 
-
-type moveUp_Procedure @class(iri: "moveUp:Procedure") { 
-  id: ID! @predicate(iri: "moveUp:identity") 
-  moveUp_code: ID! @predicate(iri: "moveUp:code") @filter(if: "it=in=('snomed:442338001', 'snomed:427074001')") 
-  moveUp_performedDateTime: DateTime! @predicate(iri: "moveUp:performedDateTime") 
-  moveUp_subject: ID! @predicate(iri: "moveUp:subject") 
+type Query {
+    procedures: [Procedure!]
 }
-  
-type Subscription { 
-  onBariatricProcedureAdded: moveUp_Procedure! 
-}`;
 
+type Procedure @class(iri: "moveUp:Procedure") {
+    id: ID!
+    moveUp_code: Code!
+        @predicate(iri: "moveUp:code")
+    moveUp_performedDateTime: DateTime
+        @predicate(iri: "moveUp:performedDateTime")
+    moveUp_subject: ID!
+        @predicate(iri: "moveUp:subject")
+}
+
+type Code @class(iri: "moveUp:Code") {
+    dct_description: String
+    moveUp_coding: ID!
+}
+
+type Subscription {
+    onProcedureAdded: Procedure!
+}`;
 export const PROCEDURE_QUERY = `
+PREFIX moveUp: <http://moveUp.care/>
 SELECT ?patient ?timestamp WHERE {
   ?proc a moveUp:Procedure ;
     moveUp:performedDateTime ?timestamp ;
     moveUp:subject ?patient .
 }`;
-
-export const QR_SLICE = "Read-PoC2-Questionnaire-Oxford-Atomic-02";
-export const QR_SLICE_CONTEXT = {};
-export const QR_SLICE_SCHEMA = "";
-export const QR_QUERY = "";

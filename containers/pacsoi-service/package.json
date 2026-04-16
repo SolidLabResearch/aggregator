@@ -16,7 +16,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@incremunica/query-sparql-incremental": "^2.3.1",
+    "@incremunica/query-sparql-incremental": "^2.3.4",
     "@incremunica/user-tools": "^2.3.0",
     "async-mutex": "^0.5.0",
     "fastify": "^5.8.2"

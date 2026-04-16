@@ -34,6 +34,12 @@ func UMAAuthMiddleware() Middleware {
 				return
 			}
 
+			// Healthz endpoint should be accessible without authentication
+			if strings.HasSuffix(r.URL.Path, "/healthz") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			// Build resource ID for UMA lookup
 			host := r.Host
 			path := r.URL.Path
@@ -115,6 +121,11 @@ func StripPrefixMiddleware(prefix string) Middleware {
 func LoggingMiddleware() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/healthz" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			start := time.Now()
 
 			// Call the next handler

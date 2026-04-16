@@ -100,6 +100,12 @@ func main() {
 	// Configure HTTP server
 	serverMux := http.NewServeMux()
 
+	logrus.WithFields(logrus.Fields{
+		"id":                 model.ID,
+		"owner_user_id":      model.Owner.UserId,
+		"owner_authz_server": model.Owner.AuthzServerURL,
+	}).Info("Setting up aggregator with configuration")
+
 	// Initialize Aggregator Description
 	if err := config.InitAggregatorDescription(serverMux); err != nil {
 		logrus.WithError(err).Fatalf("Failed to set up aggregator description endpoint")

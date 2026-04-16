@@ -12,7 +12,7 @@ type AggregatorServerDescription struct {
 	RegistrationEndpoint       string   `json:"registration_endpoint"`
 	SupportedRegistrationTypes []string `json:"supported_registration_types"`
 	Version                    string   `json:"version"`
-	ClientIdentifier           string   `json:"client_identifier"`
+	ClientIdentifier           string   `json:"client_identifier,omitempty"`
 	TransformationCatalog      string   `json:"transformation_catalog"`
 }
 
@@ -33,15 +33,12 @@ func handleServerDescription(w http.ResponseWriter, r *http.Request) {
 
 	// TODO: semantic representations need to be added at some point
 	supported := model.AllowedRegistrationTypes
-	if len(supported) == 0 {
-		supported = []string{"authorization_code"}
-	}
 
 	desc := AggregatorServerDescription{
 		RegistrationEndpoint:       fmt.Sprintf("%s%s", model.ExternalURL(), model.RegistrationEndpoint),
 		SupportedRegistrationTypes: supported,
 		Version:                    "1.0.0",
-		ClientIdentifier:           fmt.Sprintf("%s/client.jsonld", model.ExternalURL()),
+		ClientIdentifier:           model.SolidClientId,
 		TransformationCatalog:      fmt.Sprintf("%s%s", model.ExternalURL(), model.TransformationCatalog),
 	}
 

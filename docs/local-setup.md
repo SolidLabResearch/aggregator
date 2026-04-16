@@ -73,7 +73,7 @@ tls:
 Node.js does not automatically trust mkcert certificates. Set:
 
 ```bash
-export NODE_EXTRA_CA_CERTS="\$(mkcert -CAROOT)/rootCA.pem"
+export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"
 ```
 
 ---

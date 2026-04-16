@@ -101,7 +101,7 @@ More on accessing services in the [documentation](/docs/deploying-services.md)
 
 ### Cluster Management
 ```bash
-make init          # Create cluster, build & load containers, start cleaner
+make kind-init          # Create cluster, build & load containers, start cleaner
 make kind-start         # Create/start Kind cluster only
 make kind-stop          # Pause Kind cluster
 make kind-delete        # Delete Kind Cluster
@@ -164,12 +164,11 @@ sudo apt install -y golang-go
 
 ### Integration Tests
 
-Integration tests use the existing Kind cluster created by `make init`.
+Integration tests use the existing Kind cluster created by `make kind-init`.
 
 ```bash
 # First-time setup
-make init
-make deploy
+make kind-init
 
 # Run tests (uses existing cluster)
 make integration-test

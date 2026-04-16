@@ -88,7 +88,7 @@ func SetupTestEnvironment(ctx context.Context) (*TestEnvironment, error) {
 		return nil, fmt.Errorf("failed to ensure cluster configuration: %w", err)
 	}
 
-	// Ensure aggregator is deployed with test config
+	// Ensure aggregator server is deployed with test config
 	if err := env.ensureTestDeployment(ctx); err != nil {
 		return nil, fmt.Errorf("failed to ensure test deployment: %w", err)
 	}

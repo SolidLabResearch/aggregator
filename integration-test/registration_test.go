@@ -1259,6 +1259,7 @@ func TestRegistration_Delete_Unauthorized(t *testing.T) {
 	defer umaServer.Close()
 
 	aggregatorID := createAggregatorViaClientCredentials(t, oidcProvider, ownerToken, umaServer.URL())
+	defer deleteAggregator(t, aggregatorID, ownerToken)
 
 	otherToken := createAuthToken(t, oidcProvider, "https://other.example/webid#me", true)
 
