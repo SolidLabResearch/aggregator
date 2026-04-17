@@ -36,8 +36,8 @@ export async function querySources(
         value: b.get('pod').value + "/slices/" + procedureSlice + "/query",
         type: "graphql",
         context: {
-          schema: Schemas.PROCEDURE_SLICE_SCHEMA,
-          context: Schemas.PROCEDURE_SLICE_CONTEXT
+          schema: Schemas.BAR_PROCEDURE_SLICE_SCHEMA,
+          context: Schemas.BAR_PROCEDURE_SLICE_CONTEXT
         }
       }
 
@@ -111,7 +111,7 @@ export async function queryProcedures(sourceIterater: QuerySourceIterator, dist:
   const engine = new QueryEngine();
   console.log('[queryProcedures] Starting procedure query');
 
-  const bindingsStream = await engine.queryBindings(Schemas.PROCEDURE_QUERY, {
+  const bindingsStream = await engine.queryBindings(Schemas.BAR_PROCEDURE_QUERY, {
     sources: [{
       value: sourceIterater,
       type: "stream-graphql"

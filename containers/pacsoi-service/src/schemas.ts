@@ -73,7 +73,7 @@ export const WEIGHT_QUERY = `
   }
 `;
 
-export const PROCEDURE_SLICE_CONTEXT = {
+export const BAR_PROCEDURE_SLICE_CONTEXT = {
     "kss": "https://kvasir.discover.ilabt.imec.be/vocab#",
     "moveUp": "http://moveUp.care/",
     "snomed": "http://snomed.info/sct/",
@@ -81,12 +81,12 @@ export const PROCEDURE_SLICE_CONTEXT = {
     "dct": "http://purl.org/dc/terms/",
     "rdfs": "http://www.w3.org/2000/01/rdf-schema#"
 };
-export const PROCEDURE_SLICE_SCHEMA = `
+export const BAR_PROCEDURE_SLICE_SCHEMA = `
 type Query {
-    procedures: [Procedure!]
+    bariatricProcedures: [moveUp_Procedure!]
 }
 
-type Procedure @class(iri: "moveUp:Procedure") {
+type moveUp_Procedure @class(iri: "moveUp:Procedure") {
     id: ID!
     moveUp_code: Code!
         @predicate(iri: "moveUp:code")
@@ -97,17 +97,20 @@ type Procedure @class(iri: "moveUp:Procedure") {
 }
 
 type Code @class(iri: "moveUp:Code") {
+    id: ID!
     dct_description: String
     moveUp_coding: ID!
+        @filter(if: "it==snomed:442338001", "snomed:427074001", "snomed:7183004")
 }
 
 type Subscription {
-    onProcedureAdded: Procedure!
+    onBariatricProcedureAdded: moveUp_Procedure!
 }`;
-export const PROCEDURE_QUERY = `
+export const BAR_PROCEDURE_QUERY = `
 PREFIX moveUp: <http://moveUp.care/>
 SELECT ?patient ?timestamp WHERE {
   ?proc a moveUp:Procedure ;
     moveUp:performedDateTime ?timestamp ;
     moveUp:subject ?patient .
+    moveUp:code ?code .
 }`;
