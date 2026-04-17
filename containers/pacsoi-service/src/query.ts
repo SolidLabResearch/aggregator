@@ -31,7 +31,7 @@ export async function querySources(
   });
 
   bindingsStream.on('data', async (b) => {
-    if (b.has('pod') && b.has('id')) {
+    if (b.has('pod')) {
       const procedureSource = {
         value: b.get('pod').value + "/slices/" + procedureSlice + "/query",
         type: "graphql",
@@ -58,7 +58,7 @@ export async function querySources(
         console.log('[querySources] Received deletion:', b.toString());
         procedureSourceIterator.removeSource(procedureSource);
         weightSourceIterator.removeSource(weightSource);
-        await mutex.runExclusive(() => dist.removePatient(b.get('id').value));
+        // await mutex.runExclusive(() => dist.removePatient(b.get('id').value));
       }
     }
   });

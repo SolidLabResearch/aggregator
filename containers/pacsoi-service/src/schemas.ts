@@ -8,27 +8,20 @@ type Query {
   patients: [faqir_Patient!]!
 }
 
-type Mutation {
-  add(patient: [PatientInput!]!): ID!
-}
-
-type PatientInput @class(iri: "faqir:Patient") {
-  id: ID!
-  faqir_podId: String!
-}
-
 type faqir_Patient {
-  id: ID!
   faqir_podId: String!
+  faqir_pt_hcp: [ID!]
 }
   
 type Subscription {
-  onPatientAdded: faqir_Patient!
+  onPatientToHCPRelationAdded: faqir_Patient!
+    @trigger(type: INSERT, predicate: ["https://faqir.org/pt_hcp"], object: [])
 }`;
 export const HCP_QUERY = `
 PREFIX faqir: <https://faqir.org/>
-SELECT ?id ?pod WHERE {
-  ?id faqir:podId ?pod .
+SELECT ?pod WHERE {
+  ?patient faqir:podId ?pod ;
+    faqir:pt_hcp ?doctor .
 }`;
 
 export const WEIGHT_SLICE_CONTEXT = {
@@ -100,7 +93,7 @@ type Code @class(iri: "moveUp:Code") {
     id: ID!
     dct_description: String
     moveUp_coding: ID!
-        @filter(if: "it==snomed:442338001", "snomed:427074001", "snomed:7183004")
+        @filter(if: "it=='snomed:442338001', 'snomed:427074001', 'snomed:7183004'")
 }
 
 type Subscription {
