@@ -128,6 +128,14 @@ Show the currently active aggregator and its registered services.
 agg get-active
 ```
 
+#### `agg reset`
+
+Remove all aggregators and services from the config. Use when you removed the aggregator server.
+
+```bash
+agg reset
+```
+
 ---
 
 ### Service management
@@ -181,6 +189,31 @@ agg get-output --svc my-svc --agg <id>  # specific service and aggregator
 | Option | Description |
 |---|---|
 | `--outputs <outputs>` | Comma-separated subset of outputs to fetch |
+| `--svc <name>` | Service name (overrides active) |
+| `--agg <id>` | Aggregator ID to use instead of the active one |
+
+#### `agg delete-service`
+
+Delete a service from the active aggregator.
+
+```bash
+agg delete-service
+agg delete-service --svc my-svc                              # specific service
+agg delete-service --agg https://aggregator.example.org/id   # specific aggregator
+```
+
+| Option | Description |
+|---|---|
+| `--svc <name>` | Service name (overrides active) |
+| `--agg <id>` | Aggregator ID to use instead of the active one |
+
+---
+agg get-service --svc my-svc                              # specific service
+agg get-service --agg https://aggregator.example.org/id  # specific aggregator
+```
+
+| Option | Description |
+|---|---|
 | `--svc <name>` | Service name (overrides active) |
 | `--agg <id>` | Aggregator ID to use instead of the active one |
 

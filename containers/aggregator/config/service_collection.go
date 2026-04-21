@@ -279,7 +279,13 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 func (collec *ServiceCollection) deleteService(w http.ResponseWriter, _ *http.Request, service model.Service) {
 	logrus.WithFields(logrus.Fields{"service_id": service.InstanceID}).Info("Request to delete service")
 
-	service.Stop()
+	err := service.Stop()
+	if err != nil {
+		logrus.WithError(err).Error("Failed to stop service")
+		http.Error(w, "Failed to stop service", http.StatusInternalServerError)
+		return
+	}
+
 	delete(collec.services, service.InstanceID)
 
 	collec.etagServices++

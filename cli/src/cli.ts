@@ -77,6 +77,16 @@ program
   });
 
 program
+  .command("delete-service")
+  .description("Delete a service on the aggregator")
+  .option("--agg <id>",   "Aggregator ID to use instead of active")
+  .option("--svc <name>", "Service name to use instead of active")
+  .action(async (opts) => {
+    const { main } = await import("./delete-service.js");
+    await main({ agg: opts.agg, svc: opts.svc });
+  });
+
+program
   .command("get-output")
   .description("Fetch service outputs")
   .option("--outputs <outputs>", "Comma-separated subset of outputs")
@@ -97,6 +107,14 @@ program
     copyFileSync(src, dest);
 
     console.log(`✅ Config loaded from ${file}`);
+  });
+
+program
+  .command("reset")
+  .description("Remove all aggregators and unset the active aggregator")
+  .action(() => {
+    updateConfig({ aggregators: {}, activeAggregator: null });
+    console.log("✅ All aggregators removed and active aggregator unset.");
   });
 
 program
