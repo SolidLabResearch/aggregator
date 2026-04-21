@@ -5,16 +5,16 @@ export const HCP_SLICE_CONTEXT = {
 };
 export const HCP_SLICE_SCHEMA = `
 type Query {
-  patients: [faqir_Patient!]!
+  patients: [faqir_patient!]!
 }
 
-type faqir_Patient {
+type faqir_patient {
   faqir_podId: String!
   faqir_pt_hcp: [ID!]
 }
   
 type Subscription {
-  onPatientToHCPRelationAdded: faqir_Patient!
+  onPatientToHCPRelationAdded: faqir_patient!
     @trigger(type: INSERT, predicate: ["https://faqir.org/pt_hcp"], object: [])
 }`;
 export const HCP_QUERY = `
@@ -104,6 +104,6 @@ PREFIX moveUp: <http://moveUp.care/>
 SELECT ?patient ?timestamp WHERE {
   ?proc a moveUp:Procedure ;
     moveUp:performedDateTime ?timestamp ;
-    moveUp:subject ?patient .
+    moveUp:subject ?patient ;
     moveUp:code ?code .
 }`;

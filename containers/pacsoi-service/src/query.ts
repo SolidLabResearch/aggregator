@@ -19,7 +19,7 @@ export async function querySources(
   const bindingsStream = await engine.queryBindings(Schemas.HCP_QUERY, {
     sources: [
       {
-        value: endpoint + "/query",
+        value: endpoint,
         type: "graphql",
         context: {
           schema: Schemas.HCP_SLICE_SCHEMA,
@@ -139,65 +139,85 @@ async function umaProxyFetch(input: RequestInfo | URL, init?: RequestInit): Prom
 
   console.log(`[FETCH] Requesting: ${originalUrl}`);
 
-  if (!process.env.HTTP_PROXY && !process.env.http_proxy) {
-    console.log("[FETCH] No proxy configured, direct request");
-    return fetch(input, init);
-  }
-  console.log("[FETCH] Using proxy");
-  target = (process.env.HTTP_PROXY || process.env.http_proxy) + "/fetch";
+  const BASE_DELAY_MS = 1000;
+  const MAX_DELAY_MS = 300000;
+  const BACKOFF_FACTOR = 2;
 
-  // Prepare headers for the proxy payload
-  const bodyHeaders: Record<string, string> = {};
-  if (init?.headers) {
-    // Copy all headers from init
-    if (init.headers instanceof Headers) {
-      init.headers.forEach((v, k) => (bodyHeaders[k] = v));
-    } else if (Array.isArray(init.headers)) {
-      init.headers.forEach(([k, v]) => (bodyHeaders[k] = v));
-    } else {
-      Object.assign(bodyHeaders, init.headers);
+  for (let attempt = 0; ; attempt++) {
+    const delay = Math.min(BASE_DELAY_MS * BACKOFF_FACTOR ** attempt, MAX_DELAY_MS);
+
+    try {
+      let response: Response;
+
+      if (!process.env.HTTP_PROXY && !process.env.http_proxy) {
+        console.log("[FETCH] No proxy configured, direct request");
+        response = await fetch(input, init);
+      } else {
+        console.log("[FETCH] Using proxy");
+        target = (process.env.HTTP_PROXY || process.env.http_proxy) + "/fetch";
+
+        const bodyHeaders: Record<string, string> = {};
+        if (init?.headers) {
+          if (init.headers instanceof Headers) {
+            init.headers.forEach((v, k) => (bodyHeaders[k] = v));
+          } else if (Array.isArray(init.headers)) {
+            init.headers.forEach(([k, v]) => (bodyHeaders[k] = v));
+          } else {
+            Object.assign(bodyHeaders, init.headers);
+          }
+        }
+
+        const acceptHeader = init?.headers instanceof Headers
+          ? init.headers.get("Accept")
+          : typeof init?.headers === "object"
+            ? (init.headers as Record<string, string>)["Accept"]
+            : undefined;
+
+        if (acceptHeader === "text/event-stream") {
+          console.log("[FETCH] SSE detected, adding streaming headers to payload");
+          bodyHeaders["Accept"] = "text/event-stream";
+          bodyHeaders["Cache-Control"] = "no-cache";
+          bodyHeaders["Connection"] = "keep-alive";
+        }
+
+        const fetchRequest = {
+          url: originalUrl,
+          method: init?.method || "GET",
+          headers: bodyHeaders,
+          body: init?.body ? init.body.toString() : "",
+        };
+
+        console.log("[FETCH] Proxy request payload prepared");
+
+        response = await fetch(target, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(fetchRequest),
+        });
+
+        console.log(`[FETCH] Proxy response received (status: ${response.status})`);
+
+        Object.defineProperty(response, "url", {
+          value: originalUrl,
+          writable: false,
+          enumerable: true,
+          configurable: false,
+        });
+      }
+
+      if (!response.ok) {
+        throw new Error(`Response not ok: ${response.status} ${response.statusText}`);
+      }
+
+      if (attempt > 0) {
+        console.log(`[FETCH] Succeeded on attempt ${attempt + 1}`);
+      }
+
+      return response;
+
+    } catch (error) {
+      console.warn(`[FETCH] Attempt ${attempt + 1} failed: ${(error as Error).message}. Retrying in ${delay}ms...`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
-
-  // If SSE, ensure necessary headers
-  const acceptHeader = init?.headers instanceof Headers
-    ? init.headers.get("Accept")
-    : typeof init?.headers === "object"
-      ? (init.headers as Record<string, string>)["Accept"]
-      : undefined;
-
-  if (acceptHeader === "text/event-stream") {
-    console.log("[FETCH] SSE detected, adding streaming headers to payload");
-    bodyHeaders["Accept"] = "text/event-stream";
-    bodyHeaders["Cache-Control"] = "no-cache";
-    bodyHeaders["Connection"] = "keep-alive";
-  }
-
-  const fetchRequest = {
-    url: originalUrl,
-    method: init?.method || 'GET',
-    headers: bodyHeaders,
-    body: init?.body ? init.body.toString() : ''
-  };
-
-  console.log("[FETCH] Proxy request payload prepared");
-
-  const response = await fetch(target, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(fetchRequest)
-  });
-
-  console.log(`[FETCH] Proxy response received (status: ${response.status})`);
-
-  Object.defineProperty(response, 'url', {
-    value: originalUrl,
-    writable: false,
-    enumerable: true,
-    configurable: false
-  });
-
-  return response;
 }

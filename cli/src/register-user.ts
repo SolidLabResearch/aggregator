@@ -1,18 +1,33 @@
-const REGISTRATION = "https://aggregator.local:5443/registration";
-const AS_URL = "http://localhost:4000/uma";
+import { config, updateConfig } from "./config.js";
+
+type DeviceCodeStart = {
+  state: string,
+  interval: number,
+  verification_uri: string,
+  verification_uri_complete: string,
+  user_code: string
+}
+
+type RegisterdResponse = {
+  aggregator: string,
+  subject: string
+}
+
+const REGISTRATION = config.server.host + config.server.reg;
+console.log(`Register user at Server "${REGISTRATION}"`);
 
 function wait(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function main() {
+export async function main(opts: { setActive?: boolean } = {}) {
   // 1️⃣ Start device flow
   const startResp = await fetch(REGISTRATION, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       registration_type: "device_code",
-      authorization_server: AS_URL,
+      authorization_server: config.auth.uma,
     }),
   });
 
@@ -20,7 +35,7 @@ async function main() {
     throw new Error(`Device flow start failed: ${startResp.statusText}`);
   }
 
-  const startData = await startResp.json();
+  const startData = (await startResp.json()) as DeviceCodeStart;
 
   const {
     state,
@@ -62,9 +77,22 @@ async function main() {
     }
 
     if (finishResp.status === 201) {
-      const data = await finishResp.json();
-      console.log("\n✅ Aggregator ready:");
-      console.log(data);
+      const data = (await finishResp.json()) as RegisterdResponse;
+      const aggId: string = data.aggregator;
+      console.log("\n✅ Aggregator ready:", aggId);
+
+      const aggregators = { ...config.aggregators };
+      if (!aggregators[aggId]) {
+        aggregators[aggId] = { id: aggId, services: {} };
+      }
+
+      updateConfig({
+        aggregators,
+        ...(opts.setActive ? { activeAggregator: aggId } : {}),
+      });
+
+      console.log(`✅ Aggregator "${aggId}" added to config.`);
+      if (opts.setActive) console.log(`✅ Set as active aggregator.`);
       break;
     }
 
@@ -76,9 +104,3 @@ async function main() {
     throw new Error(`Unexpected response: ${finishResp.status}`);
   }
 }
-
-await main().catch(err => {
-  console.error("\n❌ Error:", err.message);
-});
-
-export {};

@@ -41,7 +41,7 @@ kind-undeploy:
 # Local cluster setup
 # ------------------------
 
-kind-init: kind-start containers-all kind-generate-keys kind-start-traefik
+kind-init: kind-start containers-all kind-start-traefik
 	@echo "✅ Local Kind cluster and environment initialized!"
 
 kind-delete:

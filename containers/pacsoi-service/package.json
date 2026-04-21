@@ -20,5 +20,8 @@
     "@incremunica/user-tools": "^2.3.0",
     "async-mutex": "^0.5.0",
     "fastify": "^5.8.2"
+  },
+  "overrides": {
+    "@comunica-graphql/sparql2graphql-converter": "1.1.4"
   }
 }

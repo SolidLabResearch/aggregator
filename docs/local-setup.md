@@ -186,6 +186,7 @@ Your Aggregator Server should now be running locally.
 
 You can continue with:
 
+- [Interacting with the server using the CLI](../cli/README.md)
 - [Deploying aggregators](/docs/deploying-aggregators.md)
 - [Deploying services](/docs/deploying-services.md)
 - [Running a full example setup](/docs/pacsoi-example.md)

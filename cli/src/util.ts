@@ -1,17 +1,36 @@
-export async function getUMAConfig(as_uri: string) {
+type UMAConfig = {
+  token_endpoint: string;
+  issuer?: string;
+};
+
+type OpenIDConfig = {
+  token_endpoint: string;
+  authorization_endpoint?: string;
+  issuer?: string;
+};
+
+type RPT = {
+    token_type: string;
+    access_token: string;
+}
+
+
+export async function getUMAConfig(as_uri: string): Promise<UMAConfig> {
     const config_uri = `${as_uri}/.well-known/uma2-configuration`;
 
     const response = await fetch(config_uri, {
         method: "GET",
-        headers: { "Accept": "application/json" }
+        headers: { "Accept": "application/json" },
     });
 
     if (!response.ok) {
         throw new Error(`Failed to fetch UMA config: ${response.status} ${response.statusText}`);
     }
 
+    
     const config = await response.json();
-    return config;
+
+    return config as UMAConfig;
 }
 
 async function parseAuthenticateHeader(wwwAuthenticateHeader: string): Promise<{ issuer: string, tokenEndpoint: string; ticket: string }> {
@@ -48,21 +67,21 @@ export class KeycloakOIDCAuth {
     private clientId!: string;
     private clientSecret!: string;
 
-    async init(idpHost: string, realm: string) {
-        const configEndpoint = `${idpHost}/realms/${realm}/.well-known/openid-configuration`
+    async init(idp: string) {
+        const configEndpoint = `${idp}/.well-known/openid-configuration`
 
         const response = await fetch(configEndpoint, {
             method: "GET",
-            headers: { "content-type": "application/json" }
+            headers: { "content-type": "application/json" },
         });
 
         if (!response.ok) {
             throw new Error(`Error fetching keycloak config: ${response.status} ${response.statusText} ${await response.text()}`);
         }
 
-        const data = await response.json();
+        const config = (await response.json()) as OpenIDConfig;
 
-        this.tokenEndpoint = data.token_endpoint;
+        this.tokenEndpoint = config.token_endpoint;
     }
 
     /**
@@ -90,7 +109,7 @@ export class KeycloakOIDCAuth {
         const response = await fetch(this.tokenEndpoint, {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: params.toString()
+            body: params.toString(),
         });
 
         if (!response.ok) {
@@ -147,7 +166,9 @@ export class KeycloakOIDCAuth {
     createUMAFetch() {
         return async (url: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
             // First attempt with no token
-            const noTokenResponse = await fetch(url, init);
+            const noTokenResponse = await fetch(url, {
+                ...init,
+            });
 
             if (noTokenResponse.status >= 200 && noTokenResponse.status < 300) {
                 return noTokenResponse;
@@ -174,14 +195,14 @@ export class KeycloakOIDCAuth {
             const umaResponse = await fetch(tokenEndpoint, {
                 method: "POST",
                 headers: { "content-type": "application/x-www-form-urlencoded" },
-                body: umaRequestBody.toString()
+                body: umaRequestBody.toString(),
             });
 
             if (!umaResponse.ok) {
                 return umaResponse; // propagate error
             }
 
-            const rptJson = await umaResponse.json();
+            const rptJson = (await umaResponse.json()) as RPT;
 
             // Add RPT to headers
             const newHeaders = new Headers(init.headers);
