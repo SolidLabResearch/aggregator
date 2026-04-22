@@ -15,7 +15,6 @@ import (
 	"aggregator/model"
 	"aggregator/services"
 
-	rdfgo "github.com/maartyman/rdfgo/lib/data_model"
 	"github.com/sirupsen/logrus"
 )
 
@@ -90,7 +89,7 @@ func (collec *ServiceCollection) getServices(w http.ResponseWriter, _ *http.Requ
 
 	serviceList := []string{}
 	for _, service := range collec.services {
-		serviceList = append(serviceList, service.Exe.URI)
+		serviceList = append(serviceList, service.URI)
 	}
 
 	response := map[string][]string{
@@ -192,15 +191,15 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Parse request description
-	exe, err := services.ParseRequestBody(body)
+	service, err := services.ParseRequestBody(body)
 	if err != nil {
 		logrus.WithError(err).Errorf("Failed to parse body")
 		http.Error(w, "Failed to parse body", http.StatusInternalServerError)
 		return
 	}
 
-	// Extraxt service Id from execution URI
-	servicePath, serviceId, err := services.ValidServiceUri(exe.URI)
+	// Extraxt service Path and Id
+	servicePath, serviceId, err := services.ValidServiceUri(service.URI)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Invalid execution URI: %v", err), http.StatusBadRequest)
 		return
@@ -215,11 +214,19 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 	}
 	collec.servicesMu.Unlock()
 
+	service.Path = servicePath
+	service.InstanceID = serviceId
+	service.NamespaceID = serviceId + "-" + model.ID
+	service.Outputs = make(map[string]string)
+	for pred := range service.Application.Transformation.OutputMapping {
+		service.Outputs[pred] = service.Application.Transformation.Base + pred
+	}
+
 	// Create service
-	service, err := services.CreateAggregatorService(serviceId, servicePath, exe)
+	err = services.DeployAggregatorService(service)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to create service from request")
-		http.Error(w, "Failed to create service", http.StatusInternalServerError)
+		logrus.WithError(err).Error("Failed to deploy service from request")
+		http.Error(w, "Failed to deploy service", http.StatusInternalServerError)
 		return
 	}
 
@@ -228,6 +235,7 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 	if _, exists := collec.services[serviceId]; exists {
 		collec.servicesMu.Unlock()
 		http.Error(w, "Service id already registered for user", http.StatusConflict)
+		service.Stop()
 		return
 	}
 
@@ -244,13 +252,19 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Create output endpoints
-	for output := range service.Exe.Transformation.OutputMapping {
-		path := servicePath + "/" + output
-		uri := service.Exe.Transformation.Base + output
-		service.Exe.Outputs[uri] = rdfgo.NewNamedNode(model.ExternalBaseURL() + path)
+	for pred := range service.Application.Transformation.OutputMapping {
+		path := servicePath + "/" + pred
+		predUri := service.Application.Transformation.Base + pred
+		outputUri, exists := service.Application.Transformation.Predicates[predUri]
+		if !exists {
+			logrus.Errorf("No output found for mapped predicate %s", predUri)
+			http.Error(w, "Failed to create service from request", http.StatusInternalServerError)
+			return
+		}
+
 		err = collec.HandleFunc(path, collec.HandleServiceOutput, []model.Scope{model.Read, model.Write})
 		if err != nil {
-			logrus.WithError(err).Errorf("Error registering handler for output %s", output)
+			logrus.WithError(err).Errorf("Error registering handler for output %s", outputUri)
 			http.Error(w, "Failed to create service from request", http.StatusInternalServerError)
 			return
 		}
@@ -313,7 +327,7 @@ func (collec *ServiceCollection) HandleServiceOutput(w http.ResponseWriter, r *h
 		return
 	}
 
-	mapping, exists := service.Exe.Transformation.OutputMapping[pred]
+	mapping, exists := service.Application.Transformation.OutputMapping[pred]
 	if !exists {
 		logrus.Errorf("No output mapping found for %s", pred)
 		http.Error(w, fmt.Sprintf("Requested service has no output %s", pred), http.StatusNotFound)

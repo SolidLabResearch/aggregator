@@ -18,6 +18,10 @@ func FnO(id string) rdfgo.INamedNode {
 	return rdfgo.NewNamedNode(`https://w3id.org/function/ontology#` + id)
 }
 
+func FnOC(id string) rdfgo.INamedNode {
+	return rdfgo.NewNamedNode(`https://w3id.org/function/vocabulary/composition#` + id)
+}
+
 type Execution struct {
 	URI            string
 	Transformation *Transformation
@@ -25,13 +29,19 @@ type Execution struct {
 	Outputs        map[string]rdfgo.ITerm
 }
 
+type Application struct {
+	Transformation *Transformation
+	Params         map[string]rdfgo.ITerm
+}
+
 type Transformation struct {
 	Base          string                   `json:"base,omitempty"`
 	URI           string                   `json:"uri"`
 	Image         string                   `json:"image,omitempty"`
 	FnO           string                   `json:"-"`
-	Params        []string                 `json:"params,omitempty"`
-	Outputs       []string                 `json:"outputs,omitempty"`
+	Params        map[string]string        `json:"params,omitempty"`
+	Outputs       map[string]string        `json:"outputs,omitempty"`
+	Predicates    map[string]string        `json:"predicates,omitempty"`
 	InputMapping  map[string]string        `json:"inputMapping,omitempty"`
 	OutputMapping map[string]OutputMapping `json:"outputMapping,omitempty"`
 }
@@ -42,8 +52,9 @@ type OutputMapping struct {
 }
 
 func (tf *Transformation) ParseTransformation() {
-	tf.Params = []string{}
-	tf.Outputs = []string{}
+	tf.Params = map[string]string{}
+	tf.Outputs = map[string]string{}
+	tf.Predicates = map[string]string{}
 
 	quadStream, errChan := rdfgo.Parse(
 		strings.NewReader(tf.FnO),
@@ -64,22 +75,26 @@ func (tf *Transformation) ParseTransformation() {
 	store := rdfgo.NewStore()
 	store.Import(quadStream)
 
-	// Get parameter predicates
+	// Get parameters
 	for listQuad := range store.Match(rdfgo.NewNamedNode(tf.URI), FnO("expects"), nil, nil) {
 		for _, param := range RDFListToSlice(store, listQuad.GetObject()) {
 			for predQuad := range store.Match(param, FnO("predicate"), nil, nil) {
-				pred := predQuad.GetObject()
-				tf.Params = append(tf.Params, strings.Trim(pred.ToString(), "<>"))
+				predUri := strings.Trim(predQuad.GetObject().ToString(), "<>")
+				paramUri := strings.Trim(param.ToString(), "<>")
+				tf.Predicates[predUri] = paramUri
+				tf.Params[paramUri] = predUri
 			}
 		}
 	}
 
-	// Get output predicates
+	// Get outputs
 	for listQuad := range store.Match(rdfgo.NewNamedNode(tf.URI), FnO("returns"), nil, nil) {
 		for _, output := range RDFListToSlice(store, listQuad.GetObject()) {
 			for predQuad := range store.Match(output, FnO("predicate"), nil, nil) {
-				pred := predQuad.GetObject()
-				tf.Outputs = append(tf.Outputs, strings.Trim(pred.ToString(), "<>"))
+				predUri := strings.Trim(predQuad.GetObject().ToString(), "<>")
+				outputUri := strings.Trim(output.ToString(), "<>")
+				tf.Predicates[predUri] = outputUri
+				tf.Outputs[outputUri] = predUri
 			}
 		}
 	}

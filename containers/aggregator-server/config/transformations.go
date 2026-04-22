@@ -204,6 +204,6 @@ const catalogBase = `
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 
-<transformation-catalog> a aggr:TransformationCollection ;
+<transformation-catalog> a aggr:TransformationCatalog ;
     dct:title "Aggregator transformations" .
 `

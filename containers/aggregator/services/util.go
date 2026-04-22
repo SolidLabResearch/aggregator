@@ -43,7 +43,7 @@ func ValidServiceUri(uri string) (string, string, error) {
 	return servicePath, serviceId, nil
 }
 
-func ParseRequestBody(fno string) (model.Execution, error) {
+func ParseRequestBodyOld(fno string) (model.Execution, error) {
 	quadStream, errChan := rdfgo.Parse(
 		strings.NewReader(fno),
 		rdfgo.ParserOptions{Format: "text/turtle"},
@@ -108,6 +108,93 @@ func ParseRequestBody(fno string) (model.Execution, error) {
 	}
 
 	return executions[0], nil
+}
+
+func ParseRequestBody(fno string) (*model.Service, error) {
+	quadStream, errChan := rdfgo.Parse(
+		strings.NewReader(fno),
+		rdfgo.ParserOptions{Format: "text/turtle"},
+	)
+
+	go func() {
+		for parseErr := range errChan {
+			if parseErr != nil {
+				logrus.WithError(parseErr).Warn("Error parsing FnO description")
+			}
+		}
+	}()
+
+	store := rdfgo.NewStore()
+	store.Import(quadStream)
+
+	// Find the Service Description
+	var service *model.Service
+	for svcQuery := range store.Match(nil, rdfgo.IRI.RDF.Type, model.Agg("Service"), nil) {
+		if service != nil {
+			return nil, errors.New("multiple agg:Service found; expected exactly one")
+		}
+
+		svc := svcQuery.GetSubject()
+
+		// Get application
+		var application *model.Application
+		for appQuery := range store.Match(svc, model.Agg("applies"), nil, nil) {
+			if application != nil {
+				return nil, errors.New("multiple agg:applies found; expected exactly one")
+			}
+
+			app := appQuery.GetObject()
+
+			// Get applied transformation
+			var tf *model.Transformation
+			var err error
+			for tfQuery := range store.Match(app, model.FnOC("applies"), nil, nil) {
+				tfUri := strings.Trim(tfQuery.GetObject().ToString(), "<>")
+				// Load and parse transformation
+				tf, err = LoadTransformationCR(tfUri)
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			// Get application parameters
+			params := make(map[string]rdfgo.ITerm)
+			for bindingQuery := range store.Match(app, model.FnOC("parameterBinding"), nil, nil) {
+				binding := bindingQuery.GetObject()
+				for paramQuery := range store.Match(binding, model.FnOC("boundParameter"), nil, nil) {
+					paramUri := strings.Trim(paramQuery.GetObject().ToString(), "<>")
+					for valueQuery := range store.Match(binding, model.FnOC("boundToTerm"), nil, nil) {
+						value := valueQuery.GetObject()
+						params[paramUri] = value
+					}
+				}
+			}
+
+			// Check if all parameters have an input
+			// TODO: check if all required parameters have an input
+			if len(params) != len(tf.Params) {
+				return nil, fmt.Errorf("Not enough inputs provided: %d (expected: %d)", len(params), len(tf.Params))
+			}
+
+			application = &model.Application{
+				Transformation: tf,
+				Params:         params,
+			}
+		}
+
+		service = &model.Service{
+			URI:         strings.Trim(svc.ToString(), "<>"),
+			Application: *application,
+		}
+	}
+
+	// Enforce exactly one service description
+	// TODO: allow multiple
+	if service == nil {
+		return nil, errors.New("no agg:Service found in FnO description")
+	}
+
+	return service, nil
 }
 
 func LoadTransformationCR(uri string) (*model.Transformation, error) {
@@ -217,19 +304,27 @@ func getString(m map[string]interface{}, key string) string {
 	return ""
 }
 
-func ParametersToEnvVars(params map[string]rdfgo.ITerm, inputMapping map[string]string) ([]corev1.EnvVar, error) {
+func ParametersToEnvVars(application *model.Application) ([]corev1.EnvVar, error) {
 	var envVars = []corev1.EnvVar{
 		{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 	}
-	for paramKey, paramValue := range params {
-		pred, err := StripPrefix(paramKey, model.ExternalServerURL()+model.TransformationCatalog+"#")
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse parameter key %q: %w", paramKey, err)
+
+	for paramKey, paramValue := range application.Params {
+		predUri, exists := application.Transformation.Predicates[paramKey]
+		if !exists {
+			return nil, fmt.Errorf("no predicate found for parameter %q", paramKey)
 		}
-		envKey, exists := inputMapping[pred]
+
+		pred, err := StripPrefix(predUri, model.ExternalServerURL()+model.TransformationCatalog+"#")
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse predicate %q: %w", predUri, err)
+		}
+
+		envKey, exists := application.Transformation.InputMapping[pred]
 		if !exists {
 			return nil, fmt.Errorf("no environment variable mapping found for parameter %q", paramKey)
 		}
+
 		envVars = append(envVars, corev1.EnvVar{
 			Name:  envKey,
 			Value: strings.Trim(paramValue.GetValue(), "<>"),

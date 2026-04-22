@@ -14,7 +14,9 @@ type Service struct {
 	NamespaceID string
 	InstanceID  string
 	Path        string
-	Exe         Execution
+	URI         string
+	Application Application
+	Outputs     map[string]string
 	CreatedAt   time.Time
 }
 
@@ -105,7 +107,7 @@ func (service *Service) Status() string {
 
 func (service *Service) FnORepresentation() ([]byte, error) {
 	stream := rdfgo.NewStream()
-	svcNode := rdfgo.NewNamedNode(service.Exe.URI)
+	svcNode := rdfgo.NewNamedNode(service.URI)
 
 	go func() {
 		defer close(stream)
@@ -162,7 +164,7 @@ func (service *Service) FnORepresentation() ([]byte, error) {
 		quad, err = rdfgo.NewQuad(
 			svcNode,
 			FnO("executes"),
-			rdfgo.NewNamedNode(service.Exe.Transformation.URI),
+			rdfgo.NewNamedNode(service.Application.Transformation.URI),
 			nil,
 		)
 		if err != nil {
@@ -171,7 +173,7 @@ func (service *Service) FnORepresentation() ([]byte, error) {
 		stream <- quad
 
 		// parameters
-		for param, value := range service.Exe.Params {
+		for param, value := range service.Application.Params {
 			quad, err = rdfgo.NewQuad(
 				svcNode,
 				rdfgo.NewNamedNode(param),
@@ -185,18 +187,6 @@ func (service *Service) FnORepresentation() ([]byte, error) {
 		}
 
 		// outputs
-		for output, value := range service.Exe.Outputs {
-			quad, err = rdfgo.NewQuad(
-				svcNode,
-				rdfgo.NewNamedNode(output),
-				value,
-				nil,
-			)
-			if err != nil {
-				return
-			}
-			stream <- quad
-		}
 	}()
 
 	// serialize to turtle
