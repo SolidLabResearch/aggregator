@@ -117,3 +117,24 @@ Under construction.
 ## Provision Flow
 
 Under construction.
+
+## Listing available aggregators
+
+To list available aggregators, send a `GET` request to the registration endpoint:
+  - Add an `Authorization` header to list all aggregators you have access to
+  - Omit the `Authorization` header to list public aggregators
+
+```http
+GET /registration
+```
+
+#### Response
+
+```json
+{
+  "aggregators": [
+    <aggregator-base-iri-1>,
+    ...
+  ]
+}
+```
