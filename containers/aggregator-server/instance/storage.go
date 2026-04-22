@@ -54,6 +54,33 @@ func storeAggregatorInstance(instance *AggregatorInstance) {
 	}
 }
 
+// ListPublicAggregators lists all public aggregator instances (for 'none' registration type)
+func ListPublicAggregators() ([]*AggregatorInstance, error) {
+	return ListAggregatorsByOwner("")
+}
+
+// ListAggregatorssByOwner lists all aggregator instances owned by a user
+func ListAggregatorsByOwner(ownerID string) ([]*AggregatorInstance, error) {
+	ownerIndexMu.RLock()
+	aggregatorIDs, exists := ownerIndex[ownerID]
+	ownerIndexMu.RUnlock()
+
+	if !exists {
+		return nil, nil
+	}
+
+	instances := make([]*AggregatorInstance, len(aggregatorIDs))
+	for i, id := range aggregatorIDs {
+		instance, err := GetAggregatorInstance(id)
+		if err != nil {
+			return nil, err
+		}
+		instances[i] = instance
+	}
+
+	return instances, nil
+}
+
 // getAggregatorInstance retrieves an aggregator instance by ID
 func GetAggregatorInstance(aggregatorID string) (*AggregatorInstance, error) {
 	aggregatorInstancesMu.RLock()

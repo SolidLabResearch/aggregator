@@ -15,6 +15,8 @@ import (
 // RegistrationHandler handles POST and DELETE requests to the registration endpoint
 func RegistrationHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
+	case http.MethodGet:
+		handleRegistrationGet(w, r)
 	case http.MethodPost:
 		handleRegistrationPost(w, r)
 	case http.MethodDelete:
@@ -23,6 +25,66 @@ func RegistrationHandler(w http.ResponseWriter, r *http.Request) {
 		logrus.Warnf("Registration attempt with wrong method: %s", r.Method)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleRegistrationGet handles GET requests for listing user aggregators
+func handleRegistrationGet(w http.ResponseWriter, r *http.Request) {
+	log := logrus.WithField("handler", "handleRegistrationGet")
+	log.Info("Incoming list request")
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Check if Authorization header exists
+	authHeader := r.Header.Get("Authorization")
+
+	// CASE 1: No auth header → return public aggregators
+	if authHeader == "" {
+		publicInstances, err := instance.ListPublicAggregators()
+		if err != nil {
+			log.WithError(err).Error("Failed to list public aggregators")
+			http.Error(w, "Failed to list public aggregators", http.StatusInternalServerError)
+			return
+		}
+
+		log.Infof("No auth provided. Returning %d public aggregators", len(publicInstances))
+
+		baseURLs := make([]string, 0, len(publicInstances))
+		for _, inst := range publicInstances {
+			baseURLs = append(baseURLs, inst.BaseURL)
+		}
+
+		json.NewEncoder(w).Encode(map[string][]string{
+			"aggregators": baseURLs,
+		})
+		return
+	}
+
+	// CASE 2: Auth header exists → validate
+	_, id, _, err := authenticateRequest(r)
+	if err != nil || id == "" {
+		log.WithError(err).Warn("Invalid authentication provided")
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// CASE 3: Valid auth → return user aggregators
+	instances, err := instance.ListAggregatorsByOwner(id)
+	if err != nil {
+		log.WithError(err).Error("Failed to list aggregators")
+		http.Error(w, "Failed to list aggregators", http.StatusInternalServerError)
+		return
+	}
+
+	log.Infof("Found %d aggregators for user %s", len(instances), id)
+
+	baseURLs := make([]string, 0, len(instances))
+	for _, inst := range instances {
+		baseURLs = append(baseURLs, inst.BaseURL)
+	}
+
+	json.NewEncoder(w).Encode(map[string][]string{
+		"aggregators": baseURLs,
+	})
 }
 
 // handleRegistrationPost handles POST requests for creating/updating aggregators

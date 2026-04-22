@@ -24,10 +24,17 @@ program
 program
   .command("list")
   .description("List all available aggregators")
-  .action(() => {
-    console.log("List of available aggregators:");
-    for (const agg of Object.keys(config.aggregators))
-      console.log(`\t-> ${agg}`);
+  .option("--all", "List all stored aggregators, without fetching from the server")
+  .option("--public", "List all public aggregators on the server")
+  .action(async (opts) => {
+    if (opts.all) {
+      console.log("List of stored aggregators:");
+      for (const agg of Object.keys(config.aggregators))
+        console.log(`\t-> ${agg}`);
+      return
+    }
+    const { main } = await import("./get-aggregator.js");
+    await main(opts);
   });
 
 program

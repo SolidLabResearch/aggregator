@@ -357,7 +357,6 @@ func healthzHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
-	logrus.Info("aggregator-server is healthy")
 }
 
 func parseAllowedRegistrationTypes(raw string) []string {

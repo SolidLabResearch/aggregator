@@ -260,7 +260,7 @@ func processDeviceCodeFlow(session *DeviceSession, oidcConfig *model.OIDCConfig)
 
 		// Create aggregator record
 		inst := instance.CreateAggregatorInstanceRecord(
-			session.AggregatorID,
+			userID,
 			"device_code",
 			session.AuthorizationServer,
 			aggregatorID,
