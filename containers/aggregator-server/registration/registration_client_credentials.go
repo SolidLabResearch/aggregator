@@ -115,11 +115,11 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 	}
 
 	if isUpdate {
-		updateTokens(id, tokenResp, issuer, req.ClientID, req.ClientSecret)
+		upsertTokens(id, tokenResp, issuer, req.ClientID, req.ClientSecret)
 		logrus.Infof("Aggregator tokens updated (client_credentials): %s", req.AggregatorID)
 	} else {
 		// Store user tokens
-		err = storeTokens(id, tokenResp, issuer, req.ClientID, req.ClientSecret)
+		err = upsertTokens(id, tokenResp, issuer, req.ClientID, req.ClientSecret)
 		if err != nil {
 			logrus.WithError(err).Error("Failed to store user tokens")
 			http.Error(w, "Failed to store user tokens", http.StatusInternalServerError)

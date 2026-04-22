@@ -235,9 +235,9 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 		}
 
 		if mode == "solid-oidc" {
-			err = updateTokens(id, tokenResp, storedData.IDPIssuer, model.SolidClientId, "")
+			err = upsertTokens(id, tokenResp, storedData.IDPIssuer, model.SolidClientId, "")
 		} else {
-			err = updateTokens(id, tokenResp, model.OIDCServer, model.OIDCClientId, model.OIDCClientSecret)
+			err = upsertTokens(id, tokenResp, model.OIDCServer, model.OIDCClientId, model.OIDCClientSecret)
 		}
 		if err != nil {
 			logrus.WithError(err).Error("Failed to update user tokens")
@@ -248,9 +248,9 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 	} else {
 		// Store user tokens
 		if mode == "solid-oidc" {
-			err = storeTokens(id, tokenResp, storedData.IDPIssuer, model.SolidClientId, "")
+			err = upsertTokens(id, tokenResp, storedData.IDPIssuer, model.SolidClientId, "")
 		} else {
-			err = storeTokens(id, tokenResp, model.OIDCServer, model.OIDCClientId, model.OIDCClientSecret)
+			err = upsertTokens(id, tokenResp, model.OIDCServer, model.OIDCClientId, model.OIDCClientSecret)
 		}
 		if err != nil {
 			logrus.WithError(err).Error("Failed to store user tokens")

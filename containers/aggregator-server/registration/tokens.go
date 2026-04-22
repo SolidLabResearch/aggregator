@@ -32,56 +32,7 @@ type StoreRequest struct {
 	Expiry       int64  `json:"expiry"`
 }
 
-func storeTokens(
-	userID string,
-	tok TokenResponse,
-	issuer string,
-	clientID string,
-	clientSecret string,
-) error {
-
-	expiryUnix := time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second).Unix()
-
-	reqBody := StoreRequest{
-		UserID:       userID,
-		AccessToken:  tok.AccessToken,
-		RefreshToken: tok.RefreshToken,
-		IDToken:      tok.IDToken,
-		Issuer:       issuer,
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		Expiry:       expiryUnix,
-	}
-
-	data, err := json.Marshal(reqBody)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://token-service:8080/token", bytes.NewBuffer(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := model.HttpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("token service returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
-}
-
-func updateTokens(
+func upsertTokens(
 	userID string,
 	tok TokenResponse,
 	issuer string,
@@ -121,7 +72,7 @@ func updateTokens(
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("token service returned %d: %s", resp.StatusCode, string(body))
 	}

@@ -115,7 +115,7 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 	defer cancel()
 
 	// Store user tokens
-	err = storeTokens(id, tokenResp, idpIssuer, model.ProvisionClientID, model.ProvisionClientSecret)
+	err = upsertTokens(id, tokenResp, idpIssuer, model.ProvisionClientID, model.ProvisionClientSecret)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to store user tokens")
 		http.Error(w, "Failed to store user tokens", http.StatusInternalServerError)

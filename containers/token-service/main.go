@@ -98,10 +98,8 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 
 func tokenHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
-	case http.MethodPost:
-		handleStore(w, r)
 	case http.MethodPut:
-		handleUpdate(w, r)
+		handleUpsert(w, r)
 	case http.MethodGet:
 		handleGet(w, r)
 	case http.MethodDelete:
@@ -122,90 +120,56 @@ type StoreRequest struct {
 	ClientSecret string `json:"client_secret"`
 }
 
-func handleStore(w http.ResponseWriter, r *http.Request) {
+func handleUpsert(w http.ResponseWriter, r *http.Request) {
 	var req StoreRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.WithError(err).Warn("Invalid store request")
-		http.Error(w, err.Error(), 400)
+		log.WithError(err).Warn("Invalid upsert request")
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	if req.UserID == "" {
+		http.Error(w, "user_id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Check if exists BEFORE writing
+	store.mu.RLock()
 	_, exists := store.tokens[req.UserID]
+	store.mu.RUnlock()
+
+	provider, err := oidc.NewProvider(ctx, req.Issuer)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	oauthConfig := &oauth2.Config{
+		ClientID: req.ClientID,
+		Endpoint: provider.Endpoint(),
+		Scopes:   []string{"openid", "offline_access"},
+	}
+
+	if req.ClientSecret != "" {
+		oauthConfig.ClientSecret = req.ClientSecret
+	}
+
+	token := &oauth2.Token{
+		AccessToken:  req.AccessToken,
+		RefreshToken: req.RefreshToken,
+		TokenType:    "Bearer",
+		Expiry:       time.Unix(req.Expiry, 0),
+	}
+
+	storeToken(req.UserID, token, req.IDToken, oauthConfig, req.Issuer)
+
 	if exists {
-		log.WithField("user_id", req.UserID).Warn("Token store requested but existing token found")
-		http.Error(w, "User tokens already exists. Use PUT to update a token", 409)
-		return
+		log.WithField("user_id", req.UserID).Info("Updated token")
+		w.WriteHeader(http.StatusOK)
+	} else {
+		log.WithField("user_id", req.UserID).Info("Created token")
+		w.WriteHeader(http.StatusCreated)
 	}
-
-	provider, err := oidc.NewProvider(ctx, req.Issuer)
-	if err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
-
-	oauthConfig := &oauth2.Config{
-		ClientID: req.ClientID,
-		Endpoint: provider.Endpoint(),
-		Scopes:   []string{"openid", "offline_access"},
-	}
-
-	if req.ClientSecret != "" {
-		oauthConfig.ClientSecret = req.ClientSecret
-	}
-
-	token := &oauth2.Token{
-		AccessToken:  req.AccessToken,
-		RefreshToken: req.RefreshToken,
-		TokenType:    "Bearer",
-		Expiry:       time.Unix(req.Expiry, 0),
-	}
-
-	storeToken(req.UserID, token, req.IDToken, oauthConfig, req.Issuer)
-
-	w.WriteHeader(http.StatusCreated)
-}
-
-func handleUpdate(w http.ResponseWriter, r *http.Request) {
-	var req StoreRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.WithError(err).Warn("Invalid update request")
-		http.Error(w, err.Error(), 400)
-		return
-	}
-
-	_, exists := store.tokens[req.UserID]
-	if !exists {
-		log.WithField("user_id", req.UserID).Warn("Token update requested but no existing token found")
-		http.Error(w, "User tokens not found. Use POST to create a token", 404)
-		return
-	}
-
-	provider, err := oidc.NewProvider(ctx, req.Issuer)
-	if err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
-
-	oauthConfig := &oauth2.Config{
-		ClientID: req.ClientID,
-		Endpoint: provider.Endpoint(),
-		Scopes:   []string{"openid", "offline_access"},
-	}
-
-	if req.ClientSecret != "" {
-		oauthConfig.ClientSecret = req.ClientSecret
-	}
-
-	token := &oauth2.Token{
-		AccessToken:  req.AccessToken,
-		RefreshToken: req.RefreshToken,
-		TokenType:    "Bearer",
-		Expiry:       time.Unix(req.Expiry, 0),
-	}
-
-	storeToken(req.UserID, token, req.IDToken, oauthConfig, req.Issuer)
-
-	w.WriteHeader(http.StatusOK)
 }
 
 func storeToken(userID string, token *oauth2.Token, idToken string, config *oauth2.Config, url string) {
