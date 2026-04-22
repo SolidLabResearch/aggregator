@@ -128,6 +128,7 @@ func main() {
 
 	// Add middlewares
 	mwMux := ingress.Chain(serverMux,
+		ingress.CorsMiddleware(),
 		ingress.UMAAuthMiddleware(),
 		ingress.StripPrefixMiddleware(model.ID),
 		ingress.LoggingMiddleware(),

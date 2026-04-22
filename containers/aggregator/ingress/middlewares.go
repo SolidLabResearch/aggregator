@@ -149,3 +149,43 @@ func LoggingMiddleware() Middleware {
 		})
 	}
 }
+
+func CorsMiddleware() Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+			origin := r.Header.Get("Origin")
+			if origin != "" {
+				// Echo origin (required for credentials)
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
+			}
+
+			// Allow all methods you care about
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH")
+
+			// Echo requested headers
+			reqHeaders := r.Header.Get("Access-Control-Request-Headers")
+			if reqHeaders != "" {
+				w.Header().Set("Access-Control-Allow-Headers", reqHeaders)
+			} else {
+				// Fallback
+				w.Header().Set("Access-Control-Allow-Headers", "*")
+			}
+
+			// Expose all response headers
+			w.Header().Set("Access-Control-Expose-Headers", "*")
+
+			// Allow credentials (cookies, auth headers)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+			// Handle preflight request
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
