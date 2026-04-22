@@ -11,24 +11,38 @@ if (existsSync(CONFIG_PATH)) {
 
 export const config: Config = deepMerge(defaults, userConfig) as Config;
 
-function deepMerge(target: any, source: any): any {
+function deepMerge(target: any, source: any, replaceKeys: string[] = []) {
   const result = { ...target };
+
   for (const key of Object.keys(source ?? {})) {
-    if (source[key] && typeof source[key] === "object" && !Array.isArray(source[key])) {
-      result[key] = deepMerge(target[key] ?? {}, source[key]);
-    } else {
+    if (replaceKeys.includes(key)) {
       result[key] = source[key];
+      continue;
+    }
+
+    const sourceVal = source[key];
+
+    if (
+      sourceVal &&
+      typeof sourceVal === "object" &&
+      !Array.isArray(sourceVal)
+    ) {
+      result[key] = deepMerge(target[key] ?? {}, sourceVal, replaceKeys);
+    } else {
+      result[key] = sourceVal;
     }
   }
+
   return result;
 }
 
-export function updateConfig(updates: any) {
+
+export function updateConfig(updates: any, replaceKeys: string[] = []) {
   const current = existsSync(CONFIG_PATH)
     ? JSON.parse(readFileSync(CONFIG_PATH, "utf-8"))
     : {};
 
-  const merged = deepMerge(current, updates);
+  const merged = deepMerge(current, updates, replaceKeys);
 
   writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2));
 }

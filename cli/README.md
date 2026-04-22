@@ -112,6 +112,14 @@ agg register-user                 # register and add aggregator to config
 agg register-user --set-active    # also set it as the active aggregator
 ```
 
+#### `list`
+
+List all registered aggregators.
+
+```bash
+agg list
+```
+
 #### `agg set-active <id>`
 
 Set the active aggregator by its ID.

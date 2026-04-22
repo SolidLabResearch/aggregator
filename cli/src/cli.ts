@@ -22,6 +22,15 @@ program
   });
 
 program
+  .command("list")
+  .description("List all available aggregators")
+  .action(() => {
+    console.log("List of available aggregators:");
+    for (const agg of Object.keys(config.aggregators))
+      console.log(`\t-> ${agg}`);
+  });
+
+program
   .command("set-active <id>")
   .description("Set the active aggregator")
   .action((id: string) => {
@@ -113,7 +122,7 @@ program
   .command("reset")
   .description("Remove all aggregators and unset the active aggregator")
   .action(() => {
-    updateConfig({ aggregators: {}, activeAggregator: null });
+    updateConfig({ aggregators: {}, activeAggregator: null }, ["aggregators"]);
     console.log("✅ All aggregators removed and active aggregator unset.");
   });
 
