@@ -1,12 +1,10 @@
 package model
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"time"
 
-	"github.com/maartyman/rdfgo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -103,98 +101,4 @@ func (service *Service) Status() string {
 
 	// All deployments have available replicas & services have endpoints
 	return "running"
-}
-
-func (service *Service) FnORepresentation() ([]byte, error) {
-	stream := rdfgo.NewStream()
-	svcNode := rdfgo.NewNamedNode(service.URI)
-
-	go func() {
-		defer close(stream)
-
-		// service URI is a service and execution
-		quad, err := rdfgo.NewQuad(
-			svcNode,
-			rdfgo.IRI.RDF.Type,
-			Agg("Service"),
-			nil,
-		)
-		if err != nil {
-			return
-		}
-		stream <- quad
-		quad, err = rdfgo.NewQuad(
-			svcNode,
-			rdfgo.IRI.RDF.Type,
-			FnO("Execution"),
-			nil,
-		)
-		if err != nil {
-			return
-		}
-		stream <- quad
-
-		// SERVICE DETAILS
-		// service status
-		quad, err = rdfgo.NewQuad(
-			svcNode,
-			Agg("status"),
-			rdfgo.NewStringLiteral(service.Status(), "en"),
-			nil,
-		)
-		if err != nil {
-			return
-		}
-		stream <- quad
-
-		// service createdAt
-		quad, err = rdfgo.NewQuad(
-			svcNode,
-			Agg("createdAt"),
-			rdfgo.NewLiteral(service.CreatedAt.Format(time.RFC3339), "", DateTime),
-			nil,
-		)
-		if err != nil {
-			return
-		}
-		stream <- quad
-
-		// EXECUTION DETAILS
-		// transformation
-		quad, err = rdfgo.NewQuad(
-			svcNode,
-			FnO("executes"),
-			rdfgo.NewNamedNode(service.Application.Transformation.URI),
-			nil,
-		)
-		if err != nil {
-			return
-		}
-		stream <- quad
-
-		// parameters
-		for param, value := range service.Application.Params {
-			quad, err = rdfgo.NewQuad(
-				svcNode,
-				rdfgo.NewNamedNode(param),
-				value,
-				nil,
-			)
-			if err != nil {
-				return
-			}
-			stream <- quad
-		}
-
-		// outputs
-	}()
-
-	// serialize to turtle
-	var buf bytes.Buffer
-	_, err := rdfgo.Write(stream.ToIStream(), &buf, rdfgo.WriterOptions{Format: "turtle"})
-	if err != nil {
-		return nil, err
-	}
-
-	return buf.Bytes(), nil
 }

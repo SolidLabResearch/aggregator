@@ -1,9 +1,12 @@
 package model
 
 import (
+	"bytes"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/maartyman/rdfgo"
 	"github.com/sirupsen/logrus"
 )
@@ -22,11 +25,12 @@ func FnOC(id string) rdfgo.INamedNode {
 	return rdfgo.NewNamedNode(`https://w3id.org/function/vocabulary/composition#` + id)
 }
 
-type Execution struct {
-	URI            string
-	Transformation *Transformation
-	Params         map[string]rdfgo.ITerm
-	Outputs        map[string]rdfgo.ITerm
+func Dcat(id string) rdfgo.INamedNode {
+	return rdfgo.NewNamedNode(`http://www.w3.org/ns/dcat#` + id)
+}
+
+func Prov(id string) rdfgo.INamedNode {
+	return rdfgo.NewNamedNode(`http://www.w3.org/ns/prov#` + id)
 }
 
 type Application struct {
@@ -148,4 +152,161 @@ func RDFListToSlice(store rdfgo.Store, headNode rdfgo.ITerm) []rdfgo.ITerm {
 	}
 
 	return elements
+}
+
+func (service *Service) FnORepresentation() ([]byte, error) {
+	stream := rdfgo.NewStream()
+	svcNode := rdfgo.NewNamedNode(service.URI)
+
+	go func() {
+		defer close(stream)
+
+		// service is a agg:Service
+		quad, err := rdfgo.NewQuad(
+			svcNode,
+			rdfgo.IRI.RDF.Type,
+			Agg("Service"),
+			nil,
+		)
+		if err != nil {
+			return
+		}
+		stream <- quad
+		// service is a dcat:DataService
+		quad, err = rdfgo.NewQuad(
+			svcNode,
+			rdfgo.IRI.RDF.Type,
+			Dcat("DataService"),
+			nil,
+		)
+		if err != nil {
+			return
+		}
+		stream <- quad
+		// service is a prov:SoftwareAgent
+		quad, err = rdfgo.NewQuad(
+			svcNode,
+			rdfgo.IRI.RDF.Type,
+			Prov("SoftwareAgent"),
+			nil,
+		)
+		if err != nil {
+			return
+		}
+		stream <- quad
+
+		// SERVICE DETAILS
+		// service status
+		quad, err = rdfgo.NewQuad(
+			svcNode,
+			Agg("status"),
+			rdfgo.NewStringLiteral(service.Status(), "en"),
+			nil,
+		)
+		if err != nil {
+			return
+		}
+		stream <- quad
+
+		// service createdAt
+		quad, err = rdfgo.NewQuad(
+			svcNode,
+			Agg("createdAt"),
+			rdfgo.NewLiteral(service.CreatedAt.Format(time.RFC3339), "", DateTime),
+			nil,
+		)
+		if err != nil {
+			return
+		}
+		stream <- quad
+
+		// service performs
+		quad, err = rdfgo.NewQuad(
+			svcNode,
+			Agg("performs"),
+			rdfgo.NewNamedNode(service.Application.Transformation.URI),
+			nil,
+		)
+		if err != nil {
+			return
+		}
+		stream <- quad
+
+		// service applies
+		appNode := rdfgo.NewBlankNode(uuid.New().String())
+		quad, err = rdfgo.NewQuad(
+			svcNode,
+			Agg("applies"),
+			appNode,
+			nil,
+		)
+		if err != nil {
+			return
+		}
+		stream <- quad
+
+		// Application details
+		// application applies transformation
+		quad, err = rdfgo.NewQuad(
+			appNode,
+			FnOC("applies"),
+			rdfgo.NewNamedNode(service.Application.Transformation.URI),
+			nil,
+		)
+		if err != nil {
+			return
+		}
+		stream <- quad
+
+		// application binds parameters
+		for param, value := range service.Application.Params {
+			bindingNode := rdfgo.NewBlankNode(uuid.New().String())
+			quad, err = rdfgo.NewQuad(
+				bindingNode,
+				FnOC("parameterBinding"),
+				value,
+				nil,
+			)
+			if err != nil {
+				return
+			}
+			stream <- quad
+
+			// application parameterBinding boundParameter
+			quad, err = rdfgo.NewQuad(
+				bindingNode,
+				FnOC("boundParameter"),
+				rdfgo.NewNamedNode(param),
+				nil,
+			)
+			if err != nil {
+				return
+			}
+			stream <- quad
+
+			// application parameterBinding boundToTerm
+			quad, err = rdfgo.NewQuad(
+				bindingNode,
+				FnOC("boundToTerm"),
+				value,
+				nil,
+			)
+			if err != nil {
+				return
+			}
+			stream <- quad
+		}
+
+		// outputs
+
+	}()
+
+	// serialize to turtle
+	var buf bytes.Buffer
+	_, err := rdfgo.Write(stream.ToIStream(), &buf, rdfgo.WriterOptions{Format: "turtle"})
+	if err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
 }
