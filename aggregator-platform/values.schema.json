@@ -156,13 +156,13 @@
         },
         "mode": {
           "type": "string",
-          "enum": ["selfsigned", "cert-manager"]
+          "enum": ["manual", "cert-manager", "external"]
         },
         "secretName": {
           "type": "string",
           "minLength": 1
         },
-        "selfSigned": {
+        "certificate": {
           "type": "object",
           "required": ["crt", "key"],
           "additionalProperties": false,
@@ -216,9 +216,7 @@
       "allOf": [
         {
           "if": {
-            "properties": {
-              "enabled": { "const": true }
-            }
+            "properties": { "enabled": { "const": true } }
           },
           "then": {
             "required": ["mode", "secretName"]
@@ -228,11 +226,11 @@
           "if": {
             "properties": {
               "enabled": { "const": true },
-              "mode": { "const": "selfsigned" }
+              "mode": { "const": "manual" }
             }
           },
           "then": {
-            "required": ["selfSigned"],
+            "required": ["certificate"],
             "not": { "required": ["certManager"] }
           }
         },
@@ -245,7 +243,23 @@
           },
           "then": {
             "required": ["certManager"],
-            "not": { "required": ["selfSigned"] }
+            "not": { "required": ["certificate"] }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "enabled": { "const": true },
+              "mode": { "const": "external" }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                { "required": ["certificate"] },
+                { "required": ["certManager"] }
+              ]
+            }
           }
         }
       ]
