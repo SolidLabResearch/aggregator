@@ -89,7 +89,7 @@ func (collec *ServiceCollection) getServices(w http.ResponseWriter, _ *http.Requ
 
 	serviceList := []string{}
 	for _, service := range collec.services {
-		serviceList = append(serviceList, service.URI)
+		serviceList = append(serviceList, service.FullPath)
 	}
 
 	response := map[string][]string{
@@ -137,7 +137,7 @@ func generateServiceETag(repr []byte) string {
 func (collec *ServiceCollection) headService(w http.ResponseWriter, _ *http.Request, service model.Service) {
 	logrus.WithFields(logrus.Fields{"service_id": service.InstanceID}).Debug("Request HEAD for service")
 
-	repr, err := service.FnORepresentation()
+	repr, err := service.Description.FnORepresentation()
 	if err != nil {
 		logrus.WithError(err).Error("Failed to generate service FnO representation")
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -154,7 +154,7 @@ func (collec *ServiceCollection) headService(w http.ResponseWriter, _ *http.Requ
 func (collec *ServiceCollection) getService(w http.ResponseWriter, _ *http.Request, service model.Service) {
 	logrus.WithFields(logrus.Fields{"service_id": service.InstanceID}).Info("Request GET for service")
 
-	repr, err := service.FnORepresentation()
+	repr, err := service.Description.FnORepresentation()
 	if err != nil {
 		logrus.WithError(err).Error("Failed to generate service FnO representation")
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -199,7 +199,7 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Extraxt service Path and Id
-	servicePath, serviceId, err := services.ValidServiceUri(service.URI)
+	aggPath, serviceId, err := services.ValidServicePath(service.FullPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Invalid execution URI: %v", err), http.StatusBadRequest)
 		return
@@ -214,13 +214,9 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 	}
 	collec.servicesMu.Unlock()
 
-	service.Path = servicePath
+	service.AggPath = aggPath
 	service.InstanceID = serviceId
 	service.NamespaceID = serviceId + "-" + model.ID
-	service.Outputs = make(map[string]string)
-	for pred := range service.Application.Transformation.OutputMapping {
-		service.Outputs[pred] = service.Application.Transformation.Base + pred
-	}
 
 	// Create service
 	err = services.DeployAggregatorService(service)
@@ -244,7 +240,7 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 	collec.servicesMu.Unlock()
 
 	// Create service endpoint
-	err = collec.HandleFunc(servicePath, collec.HandleServiceEndpoint, []model.Scope{model.Read, model.Delete})
+	err = collec.HandleFunc(aggPath, collec.HandleServiceEndpoint, []model.Scope{model.Read, model.Delete})
 	if err != nil {
 		logrus.WithError(err).Errorf("Error registering handler for service %s", serviceId)
 		http.Error(w, "Failed to create service from request", http.StatusInternalServerError)
@@ -253,7 +249,7 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 
 	// Create output endpoints
 	for pred := range service.Application.Transformation.OutputMapping {
-		path := servicePath + "/" + pred
+		path := aggPath + "/" + pred
 		predUri := service.Application.Transformation.Base + pred
 		outputUri, exists := service.Application.Transformation.Predicates[predUri]
 		if !exists {
@@ -273,7 +269,8 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 	// Return service information
 	w.Header().Set("Content-Type", "text/turtle")
 
-	repr, err := service.FnORepresentation()
+	service.InitDescription()
+	repr, err := service.Description.FnORepresentation()
 	if err != nil {
 		logrus.WithError(err).Error("Failed to generate service FnO representation")
 		http.Error(w, "Failed to serialize response", http.StatusInternalServerError)

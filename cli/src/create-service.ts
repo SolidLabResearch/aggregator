@@ -3,6 +3,7 @@ import { DataFactory } from "rdf-data-factory";
 import { Writer } from "n3";
 import { config, updateConfig } from "./config.js";
 import { AggregatorConfig } from "./config.template.js";
+import { format } from "path";
 
 const df = new DataFactory();
 
@@ -62,37 +63,36 @@ async function parseServiceRequest(
   tf: string,
   params: Record<string, string>
 ): Promise<string> {
-
   const writer = new Writer({
+    format: "turtle",
     prefixes: {
       trans: `${config.server.host}${config.server.tf}#`,
       fno: "https://w3id.org/function/ontology#",
+      fnoc: "https://w3id.org/function/vocabulary/composition#",
       rdf: "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
       xsd: "http://www.w3.org/2001/XMLSchema#",
+      agg: "https://spec.knows.idlab.ugent.be/aggregator-protocol/latest/#"
     }
   });
 
-  const execution = df.namedNode(`${agg.id}/${name}`);
+  const service = df.namedNode(`${agg.id}/${name}`);
+  const fnoc = (local: string) => df.namedNode(`https://w3id.org/function/vocabulary/composition#${local}`);
+  const aggNs = (local: string) => df.namedNode(`https://spec.knows.idlab.ugent.be/aggregator-protocol/latest/#${local}`);
 
-  writer.addQuad(
-    execution,
-    df.namedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type"),
-    df.namedNode("https://w3id.org/function/ontology#Execution")
+  const paramBindings = Object.entries(params).map(([key, value]) =>
+    writer.blank([
+      { predicate: fnoc("boundToTerm"),   object: df.literal(value) },
+      { predicate: fnoc("boundParameter"), object: df.namedNode(`${config.server.host}${config.server.tf}#${key}`) },
+    ])
   );
 
-  writer.addQuad(
-    execution,
-    df.namedNode("https://w3id.org/function/ontology#executes"),
-    df.namedNode(`${config.server.host}${config.server.tf}#${tf}`)
-  );
+  const application = writer.blank([
+    { predicate: fnoc("applies"), object: df.namedNode(`${config.server.host}${config.server.tf}#${tf}`) },
+    ...paramBindings.map(binding => ({ predicate: fnoc("parameterBinding"), object: binding })),
+  ]);
 
-  for (const [key, value] of Object.entries(params)) {
-    writer.addQuad(
-      execution,
-      df.namedNode(`${config.server.host}${config.server.tf}#${key}`),
-      df.literal(value)
-    );
-  }
+  writer.addQuad(service, df.namedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type"), aggNs("Service"));
+  writer.addQuad(service, aggNs("applies"), application);
 
   return new Promise((resolve, reject) => {
     writer.end((error, result) => {

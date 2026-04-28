@@ -9,8 +9,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/sirupsen/logrus"
 )
 
@@ -272,7 +273,7 @@ func verifyTicket(token string, validIssuers []string) ([]Permission, error) {
 	// Parse and validate with our chosen public key.
 	// We'll also check the issuer in the claims.
 	claims := &UmaClaims{}
-	parser := jwt.NewParser()
+	parser := jwt.NewParser(jwt.WithLeeway(5 * time.Second))
 	parsedToken, err := parser.ParseWithClaims(token, claims, func(t *jwt.Token) (interface{}, error) {
 		return fetchAndSelectKey(config.JwksUri, "TODO")
 
@@ -309,9 +310,9 @@ func verifyTicket(token string, validIssuers []string) ([]Permission, error) {
 		return nil, fmt.Errorf(`token "iss" (%s) does not match expected issuer (%s)`, claims.Issuer, issVal)
 	}
 
-	if claims.VerifyAudience("[solid]", true) {
-		return nil, fmt.Errorf(`token "aud" (%s) does not match expected audience ("solid")`, claims.Audience)
-	}
+	// if claims.VerifyAudience("[solid]", true) {
+	//	 return nil, fmt.Errorf(`token "aud" (%s) does not match expected audience ("solid")`, claims.Audience)
+	// }
 
 	// Check the permissions in the token
 	if len(claims.Permissions) > 0 {

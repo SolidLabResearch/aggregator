@@ -55,6 +55,11 @@ type OutputMapping struct {
 	Path string
 }
 
+type ServiceDescription struct {
+	Service rdfgo.Store
+	Outputs map[string]rdfgo.Store
+}
+
 func (tf *Transformation) ParseTransformation() {
 	tf.Params = map[string]string{}
 	tf.Outputs = map[string]string{}
@@ -154,158 +159,257 @@ func RDFListToSlice(store rdfgo.Store, headNode rdfgo.ITerm) []rdfgo.ITerm {
 	return elements
 }
 
-func (service *Service) FnORepresentation() ([]byte, error) {
-	stream := rdfgo.NewStream()
-	svcNode := rdfgo.NewNamedNode(service.URI)
+func (service *Service) InitDescription() error {
+	description := ServiceDescription{
+		Service: rdfgo.NewStore(),
+		Outputs: make(map[string]rdfgo.Store),
+	}
 
-	go func() {
-		defer close(stream)
+	svcNode := rdfgo.NewNamedNode(service.FullPath + "#" + "service")
 
-		// service is a agg:Service
-		quad, err := rdfgo.NewQuad(
-			svcNode,
-			rdfgo.IRI.RDF.Type,
-			Agg("Service"),
-			nil,
-		)
-		if err != nil {
-			return
-		}
-		stream <- quad
-		// service is a dcat:DataService
-		quad, err = rdfgo.NewQuad(
-			svcNode,
-			rdfgo.IRI.RDF.Type,
-			Dcat("DataService"),
-			nil,
-		)
-		if err != nil {
-			return
-		}
-		stream <- quad
-		// service is a prov:SoftwareAgent
-		quad, err = rdfgo.NewQuad(
-			svcNode,
-			rdfgo.IRI.RDF.Type,
-			Prov("SoftwareAgent"),
-			nil,
-		)
-		if err != nil {
-			return
-		}
-		stream <- quad
+	// service is a agg:Service
+	quad, err := rdfgo.NewQuad(
+		svcNode,
+		rdfgo.IRI.RDF.Type,
+		Agg("Service"),
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	description.Service.AddQuad(quad)
 
-		// SERVICE DETAILS
-		// service status
-		quad, err = rdfgo.NewQuad(
-			svcNode,
-			Agg("status"),
-			rdfgo.NewStringLiteral(service.Status(), "en"),
-			nil,
-		)
-		if err != nil {
-			return
-		}
-		stream <- quad
+	// service is a dcat:DataService
+	quad, err = rdfgo.NewQuad(
+		svcNode,
+		rdfgo.IRI.RDF.Type,
+		Dcat("DataService"),
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	description.Service.AddQuad(quad)
 
-		// service createdAt
-		quad, err = rdfgo.NewQuad(
-			svcNode,
-			Agg("createdAt"),
-			rdfgo.NewLiteral(service.CreatedAt.Format(time.RFC3339), "", DateTime),
-			nil,
-		)
-		if err != nil {
-			return
-		}
-		stream <- quad
+	// service is a prov:SoftwareAgent
+	quad, err = rdfgo.NewQuad(
+		svcNode,
+		rdfgo.IRI.RDF.Type,
+		Prov("SoftwareAgent"),
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	description.Service.AddQuad(quad)
 
-		// service performs
-		quad, err = rdfgo.NewQuad(
-			svcNode,
-			Agg("performs"),
-			rdfgo.NewNamedNode(service.Application.Transformation.URI),
-			nil,
-		)
-		if err != nil {
-			return
-		}
-		stream <- quad
+	// SERVICE DETAILS
+	// service status
+	quad, err = rdfgo.NewQuad(
+		svcNode,
+		Agg("status"),
+		rdfgo.NewStringLiteral(service.Status(), "en"),
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	description.Service.AddQuad(quad)
 
-		// service applies
-		appNode := rdfgo.NewBlankNode(uuid.New().String())
+	// service createdAt
+	quad, err = rdfgo.NewQuad(
+		svcNode,
+		Agg("createdAt"),
+		rdfgo.NewLiteral(service.CreatedAt.Format(time.RFC3339), "", DateTime),
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	description.Service.AddQuad(quad)
+
+	// service performs
+	quad, err = rdfgo.NewQuad(
+		svcNode,
+		Agg("performs"),
+		rdfgo.NewNamedNode(service.Application.Transformation.URI),
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	description.Service.AddQuad(quad)
+
+	// service applies
+	appNode := rdfgo.NewBlankNode(uuid.New().String())
+	quad, err = rdfgo.NewQuad(
+		svcNode,
+		Agg("applies"),
+		appNode,
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	description.Service.AddQuad(quad)
+
+	// APPLICATION DETAILS
+	// application applies transformation
+	quad, err = rdfgo.NewQuad(
+		appNode,
+		FnOC("applies"),
+		rdfgo.NewNamedNode(service.Application.Transformation.URI),
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	description.Service.AddQuad(quad)
+
+	// application binds parameters
+	for param, value := range service.Application.Params {
+		bindingNode := rdfgo.NewBlankNode(uuid.New().String())
 		quad, err = rdfgo.NewQuad(
-			svcNode,
-			Agg("applies"),
 			appNode,
+			FnOC("parameterBinding"),
+			bindingNode,
 			nil,
 		)
 		if err != nil {
-			return
+			return err
 		}
-		stream <- quad
+		description.Service.AddQuad(quad)
 
-		// Application details
-		// application applies transformation
+		// application parameterBinding boundParameter
 		quad, err = rdfgo.NewQuad(
-			appNode,
-			FnOC("applies"),
-			rdfgo.NewNamedNode(service.Application.Transformation.URI),
+			bindingNode,
+			FnOC("boundParameter"),
+			rdfgo.NewNamedNode(param),
 			nil,
 		)
 		if err != nil {
-			return
+			return err
 		}
-		stream <- quad
+		description.Service.AddQuad(quad)
 
-		// application binds parameters
-		for param, value := range service.Application.Params {
-			bindingNode := rdfgo.NewBlankNode(uuid.New().String())
-			quad, err = rdfgo.NewQuad(
-				bindingNode,
-				FnOC("parameterBinding"),
-				value,
-				nil,
-			)
-			if err != nil {
-				return
-			}
-			stream <- quad
-
-			// application parameterBinding boundParameter
-			quad, err = rdfgo.NewQuad(
-				bindingNode,
-				FnOC("boundParameter"),
-				rdfgo.NewNamedNode(param),
-				nil,
-			)
-			if err != nil {
-				return
-			}
-			stream <- quad
-
-			// application parameterBinding boundToTerm
-			quad, err = rdfgo.NewQuad(
-				bindingNode,
-				FnOC("boundToTerm"),
-				value,
-				nil,
-			)
-			if err != nil {
-				return
-			}
-			stream <- quad
+		// application parameterBinding boundToTerm
+		quad, err = rdfgo.NewQuad(
+			bindingNode,
+			FnOC("boundToTerm"),
+			value,
+			nil,
+		)
+		if err != nil {
+			return err
 		}
+		description.Service.AddQuad(quad)
+	}
 
-		// outputs
+	// OUTPUTS
+	for pred := range service.Application.Transformation.OutputMapping {
+		// Create a store for the output
+		outputStore := rdfgo.NewStore()
+		description.Outputs[pred] = outputStore
+		datasetNode := rdfgo.NewNamedNode(service.FullPath + "#" + pred + "Dataset")
 
-	}()
+		// output is a dcat:Dataset
+		quad, err = rdfgo.NewQuad(
+			datasetNode,
+			rdfgo.IRI.RDF.Type,
+			Dcat("Dataset"),
+			nil,
+		)
+		if err != nil {
+			return err
+		}
+		outputStore.AddQuad(quad)
 
+		// output is serverd by a dcat:DataService
+		quad, err = rdfgo.NewQuad(
+			svcNode,
+			Dcat("servesDataset"),
+			datasetNode,
+			nil,
+		)
+		if err != nil {
+			return err
+		}
+		outputStore.AddQuad(quad)
+
+		// OUTPUT DISTRIBUTION
+		distributionNode := rdfgo.NewNamedNode(service.FullPath + "#" + pred + "Distribution")
+
+		// output has a dcat:Distribution
+		quad, err = rdfgo.NewQuad(
+			distributionNode,
+			rdfgo.IRI.RDF.Type,
+			Dcat("Distribution"),
+			nil,
+		)
+		if err != nil {
+			return err
+		}
+		outputStore.AddQuad(quad)
+
+		quad, err = rdfgo.NewQuad(
+			datasetNode,
+			Dcat("distribution"),
+			distributionNode,
+			nil,
+		)
+		if err != nil {
+			return err
+		}
+		outputStore.AddQuad(quad)
+
+		// distribution has a dcat:accessURL
+		quad, err = rdfgo.NewQuad(
+			distributionNode,
+			Dcat("accessURL"),
+			rdfgo.NewNamedNode(service.FullPath+"/"+pred),
+			nil,
+		)
+		if err != nil {
+			return err
+		}
+		outputStore.AddQuad(quad)
+
+		// distribution has a dcat:DataService
+		quad, err = rdfgo.NewQuad(
+			distributionNode,
+			Dcat("accessService"),
+			svcNode,
+			nil,
+		)
+		if err != nil {
+			return err
+		}
+		outputStore.AddQuad(quad)
+	}
+
+	service.Description = description
+
+	return nil
+}
+
+func (description *ServiceDescription) FnORepresentation() ([]byte, error) {
 	// serialize to turtle
 	var buf bytes.Buffer
-	_, err := rdfgo.Write(stream.ToIStream(), &buf, rdfgo.WriterOptions{Format: "turtle"})
+
+	// Write service description
+	stream := description.Service.Match(nil, nil, nil, nil)
+	_, err := rdfgo.Write(stream, &buf, rdfgo.WriterOptions{Format: "turtle"})
 	if err != nil {
 		return nil, err
+	}
+
+	// Write outputs
+	for _, outputStore := range description.Outputs {
+		stream := outputStore.Match(nil, nil, nil, nil)
+		_, err := rdfgo.Write(stream, &buf, rdfgo.WriterOptions{Format: "turtle"})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return buf.Bytes(), nil

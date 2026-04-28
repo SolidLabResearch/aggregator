@@ -9,12 +9,12 @@ import (
 )
 
 type Service struct {
+	Description ServiceDescription
 	NamespaceID string
 	InstanceID  string
-	Path        string
-	URI         string
+	AggPath     string
+	FullPath    string
 	Application Application
-	Outputs     map[string]string
 	CreatedAt   time.Time
 }
 
