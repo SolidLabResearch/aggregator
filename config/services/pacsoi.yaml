@@ -1,0 +1,52 @@
+serviceConfigurations:
+  pacsoi:
+    inputMapping:
+      ":sources":
+        id: SOURCES
+      ":weight-slice":
+        id: WEIGHT_SLICE
+      ":procedure-slice":
+        id: PROCEDURE_SLICE
+
+    outputMapping:
+      ":w-dist":
+        dataset:
+          title: "Weight Distribution"
+
+        distribution:
+          access:
+            urlType: accessURL
+            servicePort: 3000
+            internalPath: /w-dist
+            externalPath: /w-dist
+            protocol: http
+
+          extraProperties:
+            dcat:mediaType: "https://www.iana.org/assignments/media-types/text/csv"
+
+    serviceMapping:
+      dataservice:
+        title: "Pacsoi Service"
+
+      orchestration:
+        type: Deployment
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: pacsoi
+          template:
+            metadata:
+              labels:
+                app: pacsoi
+            spec:
+              containers:
+                - name: pacsoi
+                  image: pacsoi-service
+                  env:
+                    - name: SOURCES
+                      value: "$(SOURCES)"
+                    - name: WEIGHT_SLICE
+                      value: "$(WEIGHT_SLICE)"
+                    - name: PROCEDURE_SLICE
+                      value: "$(PROCEDURE_SLICE)"

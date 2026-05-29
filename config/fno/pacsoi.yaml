@@ -1,0 +1,35 @@
+fnoDescriptions:
+  pacsoi:
+    type: function
+    serviceConfigurationRef:
+      name: pacsoi
+    description: |
+      @prefix fno: <https://w3id.org/function/ontology#> .
+      @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+      <Pacsoi>
+        a fno:Function ;
+        fno:expects ( <Sources> <WeightSlice> <ProcedureSlice> ) ;
+        fno:returns ( <WeightDistribution> ) .
+
+      <Sources>
+        a fno:Parameter ;
+        fno:type xsd:string ;
+        fno:predicate <sources> ;
+        fno:required "true"^^xsd:boolean .
+
+      <WeightSlice>
+        a fno:Parameter ;
+        fno:type xsd:string ;
+        fno:predicate <weight-slice> ;
+        fno:required "true"^^xsd:boolean .
+
+      <ProcedureSlice>
+        a fno:Parameter ;
+        fno:type xsd:string ;
+        fno:predicate <procedure-slice> ;
+        fno:required "true"^^xsd:boolean .
+
+      <WeightDistribution>
+        a fno:Output ;
+        fno:predicate <w-dist> .

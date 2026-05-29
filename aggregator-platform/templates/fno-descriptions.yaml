@@ -1,0 +1,21 @@
+{{- range $name, $config := .Values.fnoDescriptions }}
+---
+apiVersion: aggregator.example.org/v1alpha1
+kind: FnoDescription
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    aggregator.example.org/fno-type: {{ $config.type }}
+spec:
+  type: {{ $config.type }}
+{{- if $config.serviceConfigurationRef }}
+  serviceConfigurationRef:
+    name: {{ $config.serviceConfigurationRef.name }}
+    {{- if $config.serviceConfigurationRef.namespace }}
+    namespace: {{ $config.serviceConfigurationRef.namespace }}
+    {{- end }}
+  {{- end }}
+  description: |
+{{ $config.description | indent 4 }}
+{{- end }}

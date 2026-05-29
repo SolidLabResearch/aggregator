@@ -10,7 +10,8 @@ spec:
   transformation_catalog: /transformations
   registration: /registration
 
-transformations: []
+fnoDescriptions: {}
+serviceConfigurations: {}
 
 server:
   replicaCount: 1

@@ -71,10 +71,10 @@ func ensureRoleBindings(aggregatorId string, ctx context.Context) error {
 		return fmt.Errorf("failed to create manager RoleBinding: %w", err)
 	}
 
-	// Aggregator can read the server transformations
+	// Aggregator can read fno-descriptions and service configurations
 	tfBinding := &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("tf-reader-binding-%s", aggregatorId),
+			Name:      fmt.Sprintf("cr-reader-binding-%s", aggregatorId),
 			Namespace: model.Namespace,
 			Labels: map[string]string{
 				"agg.knows.idlab.ugent.be/managed-by": aggregatorId,
@@ -89,7 +89,7 @@ func ensureRoleBindings(aggregatorId string, ctx context.Context) error {
 		},
 		RoleRef: rbacv1.RoleRef{
 			Kind:     "Role",
-			Name:     "aggregator-transformation-reader",
+			Name:     "aggregator-cr-reader",
 			APIGroup: "rbac.authorization.k8s.io",
 		},
 	}

@@ -36,14 +36,12 @@ func InitTransformationsConfiguration(mux *http.ServeMux) error {
 	}
 	config.updateCatalog()
 
-	// Register HTTP handler
 	mux.HandleFunc(model.TransformationCatalog, config.HandleTransformationsEndpoint)
 
 	logrus.Info("Transformations configuration initialization completed")
 	return nil
 }
 
-// HandleTransformationsEndpoint handles requests to the /config/transformations endpoint
 func (config TransformationsConfigData) HandleTransformationsEndpoint(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "HEAD":
@@ -55,7 +53,6 @@ func (config TransformationsConfigData) HandleTransformationsEndpoint(w http.Res
 	}
 }
 
-// getAvailableTransformations HEAD /config/transformations retrieves all available transformations
 func (config *TransformationsConfigData) headAvailableTransformations(w http.ResponseWriter, r *http.Request) {
 	accept := r.Header.Get("Accept")
 	contentType := negotiateContentType(accept, []string{"text/turtle"})
@@ -70,7 +67,6 @@ func (config *TransformationsConfigData) headAvailableTransformations(w http.Res
 	header.Set("Content-Type", contentType)
 }
 
-// getAvailableTransformations GET /config/transformations retrieves all available transformations
 func (config *TransformationsConfigData) getAvailableTransformations(w http.ResponseWriter, r *http.Request) {
 	accept := r.Header.Get("Accept")
 	contentType := negotiateContentType(accept, []string{"text/turtle"})
@@ -80,12 +76,15 @@ func (config *TransformationsConfigData) getAvailableTransformations(w http.Resp
 		return
 	}
 
-	// serialize store to turtle
 	var buf bytes.Buffer
 	stream := config.store.Match(nil, nil, nil, nil)
 	_, err := rdfgo.Write(stream, &buf, rdfgo.WriterOptions{
 		Format: "turtle",
 	})
+	if err != nil {
+		http.Error(w, "error serializing store", http.StatusInternalServerError)
+		return
+	}
 
 	header := w.Header()
 	header.Set("ETag", strconv.Itoa(config.etagTransformations))
@@ -97,10 +96,8 @@ func (config *TransformationsConfigData) getAvailableTransformations(w http.Resp
 }
 
 func (config *TransformationsConfigData) updateCatalog() {
-	// Clear existing store
 	config.store.RemoveMatches(nil, nil, nil, nil)
 
-	// Insert catalog base
 	reader := strings.NewReader(catalogBase)
 	quads, errChan := rdfgo.Parse(reader, rdfgo.ParserOptions{
 		Format:  "turtle",
@@ -117,8 +114,8 @@ func (config *TransformationsConfigData) updateCatalog() {
 
 	config.store.Import(quads)
 
-	// Insert transformations
 	for _, tf := range config.transformations {
+		// Parse the FNO description into a temporary store
 		reader := strings.NewReader(tf.FNO)
 		quads, errChan := rdfgo.Parse(reader, rdfgo.ParserOptions{
 			Format:  "turtle",
@@ -134,12 +131,21 @@ func (config *TransformationsConfigData) updateCatalog() {
 		}()
 
 		config.store.Import(quads)
+	}
 
-		// Link transformation to catalog
+	// Match ?subject rdf:type fno:Function
+	functions := config.store.Match(
+		nil,
+		rdfgo.NewNamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type"),
+		rdfgo.NewNamedNode("https://w3id.org/function/ontology#Function"),
+		nil,
+	)
+
+	for function := range functions {
 		config.store.AddQuadFromTerms(
 			rdfgo.NewNamedNode(model.ExternalURL()+model.TransformationCatalog+"#transformation-catalog"),
 			rdfgo.NewNamedNode("https://spec.knows.idlab.ugent.be/aggregator-protocol/latest/#hasTransformation"),
-			rdfgo.NewNamedNode(model.ExternalURL()+model.TransformationCatalog+"#"+tf.ID),
+			function.GetSubject(),
 			nil,
 		)
 	}
@@ -147,15 +153,17 @@ func (config *TransformationsConfigData) updateCatalog() {
 
 func loadTransformationCRs() ([]model.Transformation, error) {
 	gvr := schema.GroupVersionResource{
-		Group:    "agg.idlab.ugent.be",
-		Version:  "v1",
-		Resource: "transformations",
+		Group:    "aggregator.example.org",
+		Version:  "v1alpha1",
+		Resource: "fnodescriptions",
 	}
 
 	crList, err := model.DynamicClient.
 		Resource(gvr).
 		Namespace(model.Namespace).
-		List(context.TODO(), v1.ListOptions{})
+		List(context.TODO(), v1.ListOptions{
+			LabelSelector: "aggregator.example.org/fno-type=function",
+		})
 
 	if err != nil {
 		return nil, err
@@ -170,18 +178,9 @@ func loadTransformationCRs() ([]model.Transformation, error) {
 		}
 
 		t := model.Transformation{
-			ID:           getString(spec, "id"),
-			Image:        getString(spec, "image"),
-			InputMapping: make(map[string]string),
-			FNO:          getString(spec, "fno"),
-		}
-
-		// inputMapping
-		if env, ok := spec["inputMapping"].(map[string]interface{}); ok {
-			t.InputMapping = make(map[string]string)
-			for k, v := range env {
-				t.InputMapping[k] = fmt.Sprint(v)
-			}
+			ID:  item.GetName(),
+			FNO: getString(spec, "description"),
+			// URI left empty — resolved from FNO description at catalog build time
 		}
 
 		results = append(results, t)

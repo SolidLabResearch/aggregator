@@ -8,20 +8,33 @@
         docker-clean deploy integration-test unit-test
 
 # ------------------------
+# Makefile configuration
+# ------------------------
+
+CONFIG_DIR  ?= ./config
+SERVICE_DIR := $(CONFIG_DIR)/services
+FNO_DIR     := $(CONFIG_DIR)/fno
+SERVICE_FILES := $(wildcard $(SERVICE_DIR)/*.yaml)
+FNO_FILES     := $(wildcard $(FNO_DIR)/*.yaml)
+VALUES_FLAGS  := -f $(CONFIG_DIR)/$(CONFIG) \
+                 $(foreach f,$(SERVICE_FILES),-f $(f)) \
+                 $(foreach f,$(FNO_FILES),-f $(f))
+
+# ------------------------
 # Aggregator deployment
 # ------------------------
 
 deploy:
 	@echo "📄 Deploying aggregator application..."
-	@helm upgrade --install aggregator-platform ./aggregator-platform -f $(CONFIG) \
-		-n aggregator-platform --create-namespace \
-		--set-file tls.selfSigned.crt=aggregator.local.pem \
-  	--set-file tls.selfSigned.key=aggregator.local-key.pem
+	@helm upgrade --install aggregator-platform ./aggregator-platform \
+		$(VALUES_FLAGS) \
+		-n aggregator-platform --create-namespace
 	@kubectl rollout status deployment aggregator-server -n aggregator-platform --timeout=120s
 	@echo "✅ Aggregator application successfully deployed!"
 
-kind-deploy: 
-	$(MAKE) configure-etc-hosts HOSTS="aggregator.local wsl.local" deploy CONFIG=kind/helm-config.yaml
+kind-deploy:
+	$(MAKE) configure-etc-hosts HOSTS="aggregator.local wsl.local"
+	$(MAKE) deploy CONFIG=kind.yaml
 
 undeploy:
 	@echo "🧹 Stopping aggregator deployment..."
@@ -29,6 +42,8 @@ undeploy:
 		kubectl config use-context kind-aggregator || true; \
 		helm uninstall aggregator-platform -n aggregator-platform || true; \
 		kubectl delete namespace aggregator-platform --ignore-not-found || true; \
+		kubectl delete crd serviceconfigurations.aggregator.example.org --ignore-not-found || true; \
+		kubectl delete crd fnodescriptions.aggregator.example.org --ignore-not-found || true; \
 	else \
 		echo "ℹ️ Kind cluster 'aggregator' does not exist, skipping cleanup"; \
 	fi

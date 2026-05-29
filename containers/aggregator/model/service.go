@@ -9,13 +9,14 @@ import (
 )
 
 type Service struct {
-	Description ServiceDescription
-	NamespaceID string
-	InstanceID  string
-	AggPath     string
-	FullPath    string
-	Application Application
-	CreatedAt   time.Time
+	Description   ServiceDescription
+	NamespaceID   string
+	InstanceID    string
+	AggPath       string
+	FullPath      string
+	Application   *Application
+	Configuration *ServiceConfiguration
+	CreatedAt     time.Time
 }
 
 func (service *Service) Stop() error {

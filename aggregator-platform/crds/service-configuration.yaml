@@ -1,0 +1,190 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: serviceconfigurations.aggregator.example.org
+spec:
+  group: aggregator.example.org
+  scope: Namespaced
+  names:
+    plural: serviceconfigurations
+    singular: serviceconfiguration
+    kind: ServiceConfiguration
+    shortNames:
+      - svcconf
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [serviceMapping]
+              properties:
+
+                # -------------------------------------------------------
+                # Prefix declarations
+                # -------------------------------------------------------
+                prefixes:
+                  type: object
+                  description: >
+                    Namespace prefix declarations used in extraProperties
+                    throughout this CR. Merged with built-in defaults:
+                    dct, dcat, foaf, skos, schema, fno, xsd.
+                    User-defined entries override defaults.
+                  additionalProperties:
+                    type: string
+                    format: uri
+                  example:
+                    aggr: "https://example.org/aggregator#"
+                    freq: "http://purl.org/cld/freq/"
+
+                # -------------------------------------------------------
+                # Input mapping
+                # -------------------------------------------------------
+                inputMapping:
+                  type: object
+                  description: >
+                    Keys reference predicates defined for the FnO Parameter.
+                  additionalProperties:
+                    type: object
+                    required: [id]
+                    properties:
+                      id:
+                        type: string
+                        description: >
+                          Identifier used in the orchestration spec as $(id).
+                          
+                # -------------------------------------------------------
+                # Output mapping
+                # -------------------------------------------------------
+                outputMapping:
+                  type: object
+                  description: >
+                    Keys reference predicates defined for the FnO Output.
+                  additionalProperties:
+                    type: object
+                    properties:
+                      dataset:
+                        type: object
+                        description: >
+                          Metadata for the generated dcat:Dataset.
+                          A dataset is always generated for each output.
+                        properties:
+                          title:
+                            type: string
+                          description:
+                            type: string
+                          extraProperties:
+                            type: object
+                            description: >
+                              Additional RDF properties as prefixed name →
+                              literal or URI string.
+                              e.g. "dct:license": "https://..."
+                              e.g. "dct:accrualPeriodicity": "freq:daily"
+                            additionalProperties:
+                              type: string
+
+                      distribution:
+                        type: object
+                        description: >
+                          If absent, output is abstract — no dcat:Distribution
+                          is generated. If present, a distribution is generated
+                          and linked to the dataset.
+                        properties:
+                          title:
+                            type: string
+                          description:
+                            type: string
+                          access:
+                            type: object
+                            description: >
+                              Describes how to reach this output and which
+                              DCAT URL predicate to generate.
+                            required: [urlType, servicePort]
+                            properties:
+                              urlType:
+                                type: string
+                                enum: [accessURL, downloadURL]
+                                description: >
+                                  `accessURL`  → generates dcat:accessURL
+                                  (use for live endpoints, e.g. Deployment).
+                                  `downloadURL` → generates dcat:downloadURL
+                                  (use for file outputs, e.g. Job/CronJob).
+                              servicePort:
+                                type: integer
+                              internalPath:
+                                type: string
+                                description: >
+                                  URL path to the kubernetes object, e.g. /
+                              externalPath:
+                                type: string
+                                description: >
+                                  URL path exposed on the aggregator, e.g. /output/csv
+                              protocol:
+                                type: string
+                                enum: [http, https]
+                                default: http
+                          extraProperties:
+                            type: object
+                            additionalProperties:
+                              type: string
+
+                # -------------------------------------------------------
+                # Service mapping
+                # -------------------------------------------------------
+                serviceMapping:
+                  type: object
+                  required: [orchestration]
+                  properties:
+
+                    dataservice:
+                      type: object
+                      description: >
+                        Metadata for the generated dcat:DataService.
+                        endpointURL is auto-generated from the orchestration.
+                      properties:
+                        title:
+                          type: string
+                        description:
+                          type: string
+                        extraProperties:
+                          type: object
+                          additionalProperties:
+                            type: string
+
+                    orchestration:
+                      type: object
+                      required: [type]
+                      properties:
+                        type:
+                          type: string
+                          enum: [Deployment, Job, CronJob]
+                        trigger:
+                          type: object
+                          description: >
+                            Describes how a Job is triggered. Only relevant when type=Job.
+                            Defaults to { type: http, path: /run } if not specified.
+                          properties:
+                            type:
+                              type: string
+                              enum: [http]
+                              default: http
+                            path:
+                              type: string
+                              default: /run
+                              description: >
+                                HTTP path to trigger the job. The operator exposes
+                                POST {endpointURL}{path} to start the job.
+                                Returns a job ID for status polling.
+                        spec:
+                          type: object
+                          description: >
+                            Inline native Kubernetes spec for the chosen
+                            orchestration type. Placeholders $(inputKey)
+                            are substituted by the operator using
+                            service-scoped inputValues from the
+                            ServiceDeployment.
+                          x-kubernetes-preserve-unknown-fields: true

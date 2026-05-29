@@ -254,7 +254,7 @@ func processDeviceCodeFlow(session *DeviceSession, oidcConfig *model.OIDCConfig)
 			ctx,
 		)
 		if err != nil {
-			setSessionError(session, "Failed to deploy aggregator")
+			setSessionError(session, fmt.Sprintf("Failed to deploy aggregator: %v", err))
 			return
 		}
 

@@ -1,0 +1,23 @@
+{{- range $name, $config := .Values.serviceConfigurations }}
+---
+apiVersion: aggregator.example.org/v1alpha1
+kind: ServiceConfiguration
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  {{- if $config.prefixes }}
+  prefixes:
+    {{- toYaml $config.prefixes | nindent 4 }}
+  {{- end }}
+  {{- if $config.inputMapping }}
+  inputMapping:
+    {{- toYaml $config.inputMapping | nindent 4 }}
+  {{- end }}
+  {{- if $config.outputMapping }}
+  outputMapping:
+    {{- toYaml $config.outputMapping | nindent 4 }}
+  {{- end }}
+  serviceMapping:
+    {{- toYaml $config.serviceMapping | nindent 4 }}
+{{- end }}

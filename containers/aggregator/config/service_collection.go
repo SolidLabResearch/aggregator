@@ -14,6 +14,7 @@ import (
 	"aggregator/auth"
 	"aggregator/model"
 	"aggregator/services"
+	"aggregator/util"
 
 	"github.com/sirupsen/logrus"
 )
@@ -248,22 +249,45 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Create output endpoints
-	for pred := range service.Application.Transformation.OutputMapping {
-		path := aggPath + "/" + pred
-		predUri := service.Application.Transformation.Base + pred
-		outputUri, exists := service.Application.Transformation.Predicates[predUri]
-		if !exists {
-			logrus.Errorf("No output found for mapped predicate %s", predUri)
+	seen := make(map[string]bool)
+
+	for pred, output := range service.Configuration.Spec.OutputMapping {
+
+		if output.Distribution == nil || output.Distribution.Access == nil {
+			continue // abstract output → no endpoint
+		}
+
+		externalPath := output.Distribution.Access.ExternalPath
+
+		// Validate (now required)
+		if externalPath == "" {
+			errMsg := fmt.Sprintf("externalPath is required for output %s", pred)
+			logrus.Error(errMsg)
+			http.Error(w, errMsg, http.StatusInternalServerError)
+			return
+		}
+
+		// Normalize and join
+		path := util.JoinPaths(aggPath, externalPath)
+
+		// Prevent duplicates
+		if seen[path] {
+			errMsg := fmt.Sprintf("duplicate externalPath resolved to %s", path)
+			logrus.Error(errMsg)
+			http.Error(w, errMsg, http.StatusInternalServerError)
+			return
+		}
+		seen[path] = true
+
+		// Register handler
+		err = collec.HandleFunc(path, collec.HandleServiceOutput, []model.Scope{model.Read, model.Write})
+		if err != nil {
+			logrus.WithError(err).Errorf("Error registering handler for output %s", pred)
 			http.Error(w, "Failed to create service from request", http.StatusInternalServerError)
 			return
 		}
 
-		err = collec.HandleFunc(path, collec.HandleServiceOutput, []model.Scope{model.Read, model.Write})
-		if err != nil {
-			logrus.WithError(err).Errorf("Error registering handler for output %s", outputUri)
-			http.Error(w, "Failed to create service from request", http.StatusInternalServerError)
-			return
-		}
+		logrus.Infof("Registered endpoint: %s → %s", path, pred)
 	}
 
 	// Return service information
@@ -324,20 +348,46 @@ func (collec *ServiceCollection) HandleServiceOutput(w http.ResponseWriter, r *h
 		return
 	}
 
-	mapping, exists := service.Application.Transformation.OutputMapping[pred]
+	// Lookup output mapping from ServiceConfiguration
+	output, exists := service.Configuration.Spec.OutputMapping[pred]
 	if !exists {
 		logrus.Errorf("No output mapping found for %s", pred)
 		http.Error(w, fmt.Sprintf("Requested service has no output %s", pred), http.StatusNotFound)
 		return
 	}
 
-	// Create new request to forward
-	forwardURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s",
+	if output.Distribution == nil || output.Distribution.Access == nil {
+		logrus.Errorf("Output %s has no distribution access defined", pred)
+		http.Error(w, fmt.Sprintf("Output %s is not accessible", pred), http.StatusNotFound)
+		return
+	}
+
+	access := output.Distribution.Access
+
+	// Extract servicePort
+	port := access.ServicePort
+
+	// Normalize internalPath (default "/")
+	internalPath := access.InternalPath
+	if internalPath == "" {
+		internalPath = "/"
+	}
+
+	// ensure it starts with "/"
+	if !strings.HasPrefix(internalPath, "/") {
+		internalPath = "/" + internalPath
+	}
+
+	// Build forwarding URL
+	forwardURL := fmt.Sprintf(
+		"%s://%s.%s.svc.cluster.local:%d%s",
+		access.Protocol,
 		service.NamespaceID,
 		model.Namespace,
-		mapping.Port,
-		mapping.Path,
+		port,
+		internalPath,
 	)
+
 	req, err := http.NewRequest(r.Method, forwardURL, r.Body)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to create forward request")
