@@ -18,7 +18,7 @@ KIND_CONTEXT     := kind-$(KIND_CLUSTER)
 KIND_HOSTS       := aggregator.local wsl.local
 
 TLS_SECRET_NAME  := aggregator-tls-secret
-TLS_MANUAL       ?= true
+TLS_MANUAL       ?= false
 
 # ------------------------
 # Aggregator deployment
