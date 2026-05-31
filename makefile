@@ -12,6 +12,7 @@
 # ------------------------
 
 CONFIG_DIR  ?= ./config
+CONFIG_FILE ?= local.yaml
 SERVICE_DIR := $(CONFIG_DIR)/services
 FNO_DIR     := $(CONFIG_DIR)/fno
 SERVICE_FILES := $(wildcard $(SERVICE_DIR)/*.yaml)
@@ -34,7 +35,7 @@ deploy:
 
 kind-deploy:
 	$(MAKE) configure-etc-hosts HOSTS="aggregator.local wsl.local"
-	$(MAKE) deploy CONFIG=kind.yaml
+	$(MAKE) deploy CONFIG=$(CONFIG_FILE)
 
 undeploy:
 	@echo "🧹 Stopping aggregator deployment..."

@@ -43,6 +43,7 @@ serviceConfigurations:
               containers:
                 - name: pacsoi
                   image: pacsoi-service
+                  imagePullPolicy: Never
                   env:
                     - name: SOURCES
                       value: "$(SOURCES)"

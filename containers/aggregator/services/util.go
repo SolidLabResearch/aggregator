@@ -162,6 +162,20 @@ func injectIntoPodSpec(podSpec *corev1.PodSpec, envVars []corev1.EnvVar) {
 	}
 }
 
+func injectNamespace(obj interface{}, namespace string) error {
+	switch r := obj.(type) {
+	case *appsv1.Deployment:
+		r.Namespace = namespace
+	case *batchv1.Job:
+		r.Namespace = namespace
+	case *batchv1.CronJob:
+		r.Namespace = namespace
+	default:
+		return fmt.Errorf("unsupported object type")
+	}
+	return nil
+}
+
 func injectLabels(obj interface{}, service *model.Service) error {
 
 	labels := map[string]string{

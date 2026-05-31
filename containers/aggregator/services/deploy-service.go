@@ -3,6 +3,7 @@ package services
 import (
 	"aggregator/model"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -73,10 +74,29 @@ func deploy(
 		return err
 	}
 
+	// Inject UMA Proxy envs
+	if useUMA {
+		err = injectUMAEnv(obj)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Inject namespace
+	err = injectNamespace(obj, model.Namespace)
+	if err != nil {
+		return err
+	}
+
 	// Inject labels
 	err = injectLabels(obj, service)
 	if err != nil {
 		return err
+	}
+
+	// Log final spec
+	if finalBytes, err := json.MarshalIndent(obj, "", "  "); err == nil {
+		logrus.Debugf("Final deployment spec for service %s:\n%s", service.NamespaceID, string(finalBytes))
 	}
 
 	// Apply

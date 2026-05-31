@@ -22,18 +22,24 @@ serviceConfigurations:
       orchestration:
         type: Deployment
         spec:
-          replicas: 1
-          selector:
-            matchLabels:
-              app: fetch
-          template:
-            metadata:
-              labels:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: fetch
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
                 app: fetch
-            spec:
-              containers:
-                - name: fetch
-                  image: fetch
-                  env:
-                    - name: GET_URL
-                      value: "$(URL)"
+            template:
+              metadata:
+                labels:
+                  app: fetch
+              spec:
+                containers:
+                  - name: fetch
+                    image: fetch
+                    imagePullPolicy: Never
+                    env:
+                      - name: GET_URL
+                        value: "$(URL)"

@@ -253,13 +253,7 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 
 	for pred, output := range service.Configuration.Spec.OutputMapping {
 
-		if output.Distribution == nil || output.Distribution.Access == nil {
-			continue // abstract output → no endpoint
-		}
-
 		externalPath := output.Distribution.Access.ExternalPath
-
-		// Validate (now required)
 		if externalPath == "" {
 			errMsg := fmt.Sprintf("externalPath is required for output %s", pred)
 			logrus.Error(errMsg)
@@ -267,10 +261,8 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
-		// Normalize and join
 		path := util.JoinPaths(aggPath, externalPath)
 
-		// Prevent duplicates
 		if seen[path] {
 			errMsg := fmt.Sprintf("duplicate externalPath resolved to %s", path)
 			logrus.Error(errMsg)
@@ -279,15 +271,37 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 		}
 		seen[path] = true
 
-		// Register handler
-		err = collec.HandleFunc(path, collec.HandleServiceOutput, []model.Scope{model.Read, model.Write})
+		// Build forward URL at registration time, nil if abstract
+		var forwardURL string
+		if output.Distribution != nil && output.Distribution.Access != nil {
+			access := output.Distribution.Access
+			internalPath := access.InternalPath
+			if internalPath == "" {
+				internalPath = "/"
+			}
+			if !strings.HasPrefix(internalPath, "/") {
+				internalPath = "/" + internalPath
+			}
+			forwardURL = fmt.Sprintf(
+				"%s://%s.%s.svc.cluster.local:%d%s",
+				access.Protocol,
+				service.NamespaceID,
+				model.Namespace,
+				access.ServicePort,
+				internalPath,
+			)
+		}
+
+		err = collec.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+			collec.HandleServiceOutput(w, r, forwardURL)
+		}, []model.Scope{model.Read, model.Write})
 		if err != nil {
 			logrus.WithError(err).Errorf("Error registering handler for output %s", pred)
 			http.Error(w, "Failed to create service from request", http.StatusInternalServerError)
 			return
 		}
 
-		logrus.Infof("Registered endpoint: %s → %s", path, pred)
+		logrus.Infof("Registered endpoint: %s → %s", pred, path)
 	}
 
 	// Return service information
@@ -328,65 +342,11 @@ func (collec *ServiceCollection) deleteService(w http.ResponseWriter, _ *http.Re
 }
 
 // Handles all incoming service requests <service path>/<output>
-func (collec *ServiceCollection) HandleServiceOutput(w http.ResponseWriter, r *http.Request) {
-	// Trim leading/trailing slashes and split path
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) < 2 {
-		http.Error(w, "Invalid path, must be /<service-path>/<output>", http.StatusBadRequest)
+func (collec *ServiceCollection) HandleServiceOutput(w http.ResponseWriter, r *http.Request, forwardURL string) {
+	if forwardURL == "" {
+		http.Error(w, "Output has no distribution", http.StatusNotFound)
 		return
 	}
-
-	// Last segment is the output
-	pred := parts[len(parts)-1]
-
-	// Everything else is the service path
-	servicePath := parts[:len(parts)-1]
-	serviceID := strings.Join(servicePath, "-")
-	service, ok := collec.services[serviceID]
-	if !ok {
-		http.Error(w, "Service not found", http.StatusNotFound)
-		return
-	}
-
-	// Lookup output mapping from ServiceConfiguration
-	output, exists := service.Configuration.Spec.OutputMapping[pred]
-	if !exists {
-		logrus.Errorf("No output mapping found for %s", pred)
-		http.Error(w, fmt.Sprintf("Requested service has no output %s", pred), http.StatusNotFound)
-		return
-	}
-
-	if output.Distribution == nil || output.Distribution.Access == nil {
-		logrus.Errorf("Output %s has no distribution access defined", pred)
-		http.Error(w, fmt.Sprintf("Output %s is not accessible", pred), http.StatusNotFound)
-		return
-	}
-
-	access := output.Distribution.Access
-
-	// Extract servicePort
-	port := access.ServicePort
-
-	// Normalize internalPath (default "/")
-	internalPath := access.InternalPath
-	if internalPath == "" {
-		internalPath = "/"
-	}
-
-	// ensure it starts with "/"
-	if !strings.HasPrefix(internalPath, "/") {
-		internalPath = "/" + internalPath
-	}
-
-	// Build forwarding URL
-	forwardURL := fmt.Sprintf(
-		"%s://%s.%s.svc.cluster.local:%d%s",
-		access.Protocol,
-		service.NamespaceID,
-		model.Namespace,
-		port,
-		internalPath,
-	)
 
 	req, err := http.NewRequest(r.Method, forwardURL, r.Body)
 	if err != nil {
@@ -395,14 +355,12 @@ func (collec *ServiceCollection) HandleServiceOutput(w http.ResponseWriter, r *h
 		return
 	}
 
-	// Copy headers from original request
 	for k, vv := range r.Header {
 		for _, v := range vv {
 			req.Header.Add(k, v)
 		}
 	}
 
-	// Send request using proxy client
 	resp, err := model.HttpClient.Do(req)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to forward request: %v", err), http.StatusBadGateway)
@@ -410,17 +368,14 @@ func (collec *ServiceCollection) HandleServiceOutput(w http.ResponseWriter, r *h
 	}
 	defer resp.Body.Close()
 
-	// Copy response headers
 	for k, vv := range resp.Header {
 		for _, v := range vv {
 			w.Header().Add(k, v)
 		}
 	}
 
-	// Write status code
 	w.WriteHeader(resp.StatusCode)
 
-	// Copy response body
 	if _, err := io.Copy(w, resp.Body); err != nil {
 		logrus.WithError(err).Error("Failed to copy response body")
 	}

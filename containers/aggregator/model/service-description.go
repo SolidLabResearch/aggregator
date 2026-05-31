@@ -189,14 +189,15 @@ func (service *Service) InitDescription() error {
 		description.Service.AddQuad(quad)
 	}
 
-	// OUTPUTS (UPDATED)
+	// OUTPUTS
 	for pred, output := range service.Configuration.Spec.OutputMapping {
 
+		id := uuid.New().String()
 		outputStore := rdfgo.NewStore()
 		description.Outputs[pred] = outputStore
 
-		// ✅ Dataset node
-		datasetNode := rdfgo.NewNamedNode(service.FullPath + "#" + pred + "Dataset")
+		// Dataset node
+		datasetNode := rdfgo.NewNamedNode(service.FullPath + "#" + id + "Dataset")
 
 		quad, err := rdfgo.NewQuad(
 			datasetNode,
@@ -209,7 +210,7 @@ func (service *Service) InitDescription() error {
 		}
 		outputStore.AddQuad(quad)
 
-		// ✅ Service serves dataset
+		// Service serves dataset
 		quad, err = rdfgo.NewQuad(
 			svcNode,
 			Dcat("servesDataset"),
@@ -221,7 +222,7 @@ func (service *Service) InitDescription() error {
 		}
 		outputStore.AddQuad(quad)
 
-		// ✅ DATASET METADATA
+		// DATASET METADATA
 		if output.Dataset != nil {
 
 			if output.Dataset.Title != "" {
@@ -250,7 +251,7 @@ func (service *Service) InitDescription() error {
 				outputStore.AddQuad(quad)
 			}
 
-			// ✅ Extra RDF properties
+			// Extra RDF properties
 			for predURI, val := range output.Dataset.ExtraProperties {
 				quad, err = rdfgo.NewQuad(
 					datasetNode,
@@ -265,10 +266,10 @@ func (service *Service) InitDescription() error {
 			}
 		}
 
-		// ✅ DISTRIBUTION
+		// DISTRIBUTION
 		if output.Distribution != nil && output.Distribution.Access != nil {
 
-			distNode := rdfgo.NewNamedNode(service.FullPath + "#" + pred + "Distribution")
+			distNode := rdfgo.NewNamedNode(service.FullPath + "#" + id + "Distribution")
 
 			// rdf:type
 			quad, err = rdfgo.NewQuad(
@@ -294,7 +295,7 @@ func (service *Service) InitDescription() error {
 			}
 			outputStore.AddQuad(quad)
 
-			// ✅ Distribution metadata
+			// Distribution metadata
 			if output.Distribution.Title != "" {
 				quad, err = rdfgo.NewQuad(
 					distNode,
@@ -321,7 +322,7 @@ func (service *Service) InitDescription() error {
 				outputStore.AddQuad(quad)
 			}
 
-			// ✅ Access URL
+			// Access URL
 			access := output.Distribution.Access
 
 			externalPath := access.ExternalPath
@@ -347,7 +348,7 @@ func (service *Service) InitDescription() error {
 			}
 			outputStore.AddQuad(quad)
 
-			// ✅ Link to DataService
+			// Link to DataService
 			quad, err = rdfgo.NewQuad(
 				distNode,
 				Dcat("accessService"),
@@ -359,7 +360,7 @@ func (service *Service) InitDescription() error {
 			}
 			outputStore.AddQuad(quad)
 
-			// ✅ Distribution extra RDF
+			// Distribution extra RDF
 			for predURI, val := range output.Distribution.ExtraProperties {
 				quad, err = rdfgo.NewQuad(
 					distNode,
