@@ -100,6 +100,10 @@ func createPolicy(
 		return fmt.Errorf("resource ID %s not registered, cannot create policy", resourceId)
 	}
 
+	// Get Aggregator ID and User ID
+	aggregatorID := data.AggData.AggregatorID
+	userID := data.AggData.UserID
+
 	// Define policies
 	policyStore := rdfgo.NewStore()
 	if len(clients) == 0 {
@@ -130,7 +134,7 @@ func createPolicy(
 	}
 
 	req.Header.Set("Content-Type", "application/n-quads")
-	req.Header.Set("Authorization", UserAuthHeader(assigner))
+	req.Header.Set("Authorization", UserAuthHeader(aggregatorID, userID))
 	logrus.WithFields(logrus.Fields{
 		"policy_uri": policyUri,
 		"policy":     buf.String(),

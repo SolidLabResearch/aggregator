@@ -184,7 +184,7 @@ func requestCredentials(data AggregatorAuthData) (Credentials, error) {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", UserAuthHeader(data.UserID))
+	req.Header.Set("Authorization", UserAuthHeader(data.AggregatorID, data.UserID))
 
 	log.WithField("endpoint", config.RegistrationEndpoint).
 		Debug("Sending client registration request")
@@ -258,7 +258,7 @@ func DeleteCredentials() {
 			log.WithError(err).Error("Failed to create client deletion request")
 			continue
 		}
-		req.Header.Set("Authorization", UserAuthHeader(data.UserID))
+		req.Header.Set("Authorization", UserAuthHeader(data.AggregatorID, data.UserID))
 
 		resp, err := model.HttpClient.Do(req)
 		if err != nil {
@@ -356,24 +356,26 @@ func getPAT(data AggregatorAuthData) (string, error) {
 	return pat.AccessToken, nil
 }
 
-func UserAuthHeader(assigner string) string {
-	// First, try to get an id token
-	idToken, err := getIDToken(assigner)
+func UserAuthHeader(aggregatorID string, userID string) string {
+	idToken, err := getIDToken(aggregatorID)
 	if err != nil {
-		logrus.WithError(err).Warnf("Failed to get ID token for assigner %s, falling back to WebId authorization", assigner)
-		return "WebId " + assigner
+		logrus.WithError(err).Warnf("Failed to get ID token for assigner %s, falling back to WebId authorization", aggregatorID)
+		if userID != "" {
+			return "WebId " + userID
+		}
+		return "WebId " + aggregatorID
 	}
 	return "Bearer " + idToken
 }
 
-func getIDToken(userId string) (string, error) {
+func getIDToken(aggregatorID string) (string, error) {
 	log := logrus.WithFields(logrus.Fields{
-		"user_id":   userId,
-		"component": "token_service",
+		"aggregator_id": aggregatorID,
+		"component":     "token_service",
 	})
 
 	// URL-encode the userID for safe use as a query parameter
-	encodedID := url.QueryEscape(userId)
+	encodedID := url.QueryEscape(aggregatorID)
 
 	url := fmt.Sprintf(
 		"http://token-service:8080/token?id=%s",

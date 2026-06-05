@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -9,6 +10,8 @@ import (
 )
 
 func waitForIngressUMA() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		return err

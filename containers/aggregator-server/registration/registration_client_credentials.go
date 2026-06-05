@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -131,10 +132,11 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 		defer cancel()
 
 		// Deploy aggregator resources
-		aggregatorId, err := instance.DeployAggregator(
+		aggregatorID := uuid.New().String()
+		err := instance.DeployAggregator(
 			id,
+			aggregatorID,
 			req.AuthorizationServer,
-			"",
 			ctx,
 		)
 		if err != nil {
@@ -148,7 +150,7 @@ func handleClientCredentialsFlow(w http.ResponseWriter, req model.RegistrationRe
 			id,
 			"client_credentials",
 			req.AuthorizationServer,
-			aggregatorId,
+			aggregatorID,
 		)
 
 		if req.WebID != "" {

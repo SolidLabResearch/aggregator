@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -263,10 +264,11 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 		defer cancel()
 
 		// Deploy aggregator instance
-		aggregatorId, err := instance.DeployAggregator(
+		aggregatorID := uuid.New().String()
+		err := instance.DeployAggregator(
 			id,
+			aggregatorID,
 			storedData.AuthorizationServer,
-			"",
 			ctx,
 		)
 		if err != nil {
@@ -280,7 +282,7 @@ func handleAuthorizationCodeFinish(w http.ResponseWriter, req model.Registration
 			id,
 			"authorization_code",
 			storedData.AuthorizationServer,
-			aggregatorId,
+			aggregatorID,
 		)
 
 		logrus.Infof("Aggregator created: %s for ID %s", inst.AggregatorID, id)

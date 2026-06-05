@@ -1,15 +1,5 @@
 package model
 
-// OIDCConfig represents the relevant fields from the OpenID configuration
-type OIDCConfig struct {
-	Issuer                            string   `json:"issuer"`
-	AuthorizationEndpoint             string   `json:"authorization_endpoint"`
-	DeviceAuthorizationEndpoint       string   `json:"device_authorization_endpoint"`
-	TokenEndpoint                     string   `json:"token_endpoint"`
-	JWKSURI                           string   `json:"jwks_uri"`
-	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
-}
-
 // RegistrationRequest represents the request body for the registration endpoint
 type RegistrationRequest struct {
 	// REQUIRED for all flows
@@ -27,6 +17,9 @@ type RegistrationRequest struct {
 
 	// authorization_code & device_code flow - finish phase
 	State string `json:"state,omitempty"`
+
+	// provision flow
+	Party string `json:"party,omitempty"`
 
 	// client_credentials flow
 	ClientID     string `json:"client_id,omitempty"`
@@ -52,4 +45,15 @@ type AuthorizationCodeStartResponse struct {
 	CodeChallenge       string `json:"code_challenge"`
 	CodeChallengeMethod string `json:"code_challenge_method"`
 	State               string `json:"state"`
+}
+
+// OIDCConfig represents the relevant fields from the OpenID configuration
+type OIDCConfig struct {
+	Issuer                            string   `json:"issuer"`
+	AuthorizationEndpoint             string   `json:"authorization_endpoint"`
+	DeviceAuthorizationEndpoint       string   `json:"device_authorization_endpoint"`
+	RegistrationEndpoint              string   `json:"registration_endpoint"`
+	TokenEndpoint                     string   `json:"token_endpoint"`
+	JWKSURI                           string   `json:"jwks_uri"`
+	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
 }

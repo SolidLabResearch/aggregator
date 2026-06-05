@@ -3,20 +3,20 @@ package registration
 import (
 	"aggregator/instance"
 	"aggregator/model"
+	"aggregator/oidc"
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
 )
 
 // handleProvisionFlow handles the provision registration type
-func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, id string) {
+func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	// Check if this is an update (aggregator_id provided)
 	isUpdate := req.AggregatorID != ""
 
@@ -25,107 +25,37 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 		return
 	}
 
-	authorizationServer := model.ProvisionAuthorizationServer
-	webID := model.ProvisionWebID
-	clientID := model.ProvisionClientID
-	clientSecret := model.ProvisionClientSecret
-	idpIssuer := model.ProvisionIDP
-
-	if authorizationServer == "" || webID == "" || clientID == "" || clientSecret == "" || idpIssuer == "" {
-		http.Error(w, "Provisioning configuration is not set", http.StatusInternalServerError)
-		return
-	}
-
-	// Step 2: Fetch OIDC configuration
-	oidcConfig, err := fetchOIDCConfig(idpIssuer)
+	// Get OIDC Configuration
+	oidcConfig, err := oidc.FetchOIDCConfig(ctx, model.OIDCServer)
 	if err != nil {
-		logrus.WithError(err).Error("Unable to fetch OIDC configuration")
-		http.Error(w, "Unable to fetch OIDC configuration", http.StatusInternalServerError)
+		logrus.WithError(err).Warnf("Unable to fetch OIDC configuration for %s", model.OIDCServer)
+		http.Error(w, "Authorization failed", http.StatusInternalServerError)
 		return
 	}
-
-	clientIDToUse := clientID
-	clientSecretToUse := clientSecret
-	if strings.EqualFold(model.IDPServerType, "solid") &&
-		strings.Contains(clientID, "@") && !strings.HasPrefix(clientID, "http") {
-		baseURL, err := deriveSolidBaseURL(idpIssuer)
-		if err != nil {
-			logrus.WithError(err).Error("Unable to determine Solid base URL")
-			http.Error(w, "Unable to determine Solid base URL", http.StatusInternalServerError)
-			return
-		}
-		solidClientID, solidClientSecret, err := fetchSolidClientCredentials(baseURL, clientID, clientSecret, "aggregator-provision", webID)
-		if err != nil {
-			logrus.WithError(err).Error("Unable to obtain Solid client credentials")
-			http.Error(w, "Unable to obtain Solid client credentials", http.StatusInternalServerError)
-			return
-		}
-		clientIDToUse = solidClientID
-		clientSecretToUse = solidClientSecret
+	// Get Client Registration Endpoint
+	if oidcConfig.RegistrationEndpoint == "" {
+		logrus.Warn("Missing registration endpoint in OIDC config")
+		http.Error(w, "Authorization failed", http.StatusInternalServerError)
+		return
 	}
+	logrus.Debugf("OIDC Registration Endpoint: %s", oidcConfig.RegistrationEndpoint)
 
-	// Step 3: Perform client_credentials grant using configured client_id/client_secret
-	tokenData := url.Values{
-		"grant_type": {"client_credentials"},
-		"scope":      {"openid webid offline_access"},
-	}
-	tokenData.Set("webid", webID)
-
-	resp, err := doTokenRequest(
-		oidcConfig.TokenEndpoint,
-		oidcConfig.TokenEndpointAuthMethodsSupported,
-		tokenData,
-		clientIDToUse,
-		clientSecretToUse,
-	)
+	// Register new client
+	aggregatorID, clientID, _, err := registerAggregatorClient(ctx, oidcConfig, nil)
 	if err != nil {
-		logrus.WithError(err).Error("Token request failed")
-		http.Error(w, "Failed to obtain tokens from IDP", http.StatusInternalServerError)
+		logrus.WithError(err).Error("Client registration failed")
+		http.Error(w, "Failed to register client with IDP", http.StatusInternalServerError)
 		return
 	}
-	defer resp.Body.Close()
+	logrus.Infof("Registered new client with IDP: %s (client_id: %s)", aggregatorID, clientID)
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		logrus.Errorf("Token endpoint returned %d: %s", resp.StatusCode, string(body))
+	// Store aggregator client tokens?
 
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
-			return
-		}
-
-		http.Error(w, fmt.Sprintf("Token endpoint error: %s", string(body)), http.StatusBadGateway)
-		return
-	}
-
-	var tokenResp TokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		logrus.WithError(err).Error("Failed to parse token response")
-		http.Error(w, "Invalid token response", http.StatusInternalServerError)
-		return
-	}
-
-	if tokenResp.AccessToken == "" {
-		logrus.Error("Token response missing access_token")
-		http.Error(w, "Invalid token response: missing access_token", http.StatusInternalServerError)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Store user tokens
-	err = upsertTokens(id, tokenResp, idpIssuer, model.ProvisionClientID, model.ProvisionClientSecret)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to store user tokens")
-		http.Error(w, "Failed to store user tokens", http.StatusInternalServerError)
-		return
-	}
-
-	aggregatorId, err := instance.DeployAggregator(
-		id,
-		authorizationServer,
-		webID,
+	// Deploy new aggregator instance
+	err = instance.DeployAggregator(
+		req.Party,
+		aggregatorID,
+		req.AuthorizationServer,
 		ctx,
 	)
 	if err != nil {
@@ -135,18 +65,18 @@ func handleProvisionFlow(w http.ResponseWriter, req model.RegistrationRequest, i
 	}
 
 	inst := instance.CreateAggregatorInstanceRecord(
-		id,
+		req.Party,
 		"provision",
-		authorizationServer,
-		aggregatorId,
+		req.AuthorizationServer,
+		aggregatorID,
 	)
 
-	logrus.Infof("Aggregator created (provision): %s for ID %s (acting as %s)", inst.AggregatorID, id, webID)
+	logrus.Infof("Aggregator created (provision): %s with ID %s (acting for %s)", inst.AggregatorID, clientID, req.Party)
 
 	response := model.RegistrationResponse{
 		AggregatorID: inst.AggregatorID,
 		Aggregator:   inst.BaseURL,
-		Subject:      webID,
+		Subject:      clientID,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

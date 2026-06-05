@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -19,24 +18,23 @@ import (
 
 func DeployAggregator(
 	ownerID string,
+	aggregatorId string,
 	authzServerURL string,
-	provisionId string,
 	ctx context.Context,
-) (string, error) {
-	aggregatorId := uuid.NewString()
+) error {
 	resolvedOwner := resolveOwnerID(ownerID, aggregatorId)
 
 	if authzServerURL != "" {
 		registerAsResourceServer(aggregatorId, ownerID, authzServerURL)
 		// Deploy egress for the aggregator
 		if err := ensureEgress(aggregatorId, ownerID, ctx); err != nil {
-			return "", fmt.Errorf("failed to deploy uma egress for %s: %w", aggregatorId, err)
+			return fmt.Errorf("failed to deploy uma egress for %s: %w", aggregatorId, err)
 		}
 		logrus.Infof("Deployed uma egress for %s", aggregatorId)
 	}
 
 	if err := ensurePermissions(aggregatorId, ctx); err != nil {
-		return "", fmt.Errorf("failed to ensure permissions for %s: %w", aggregatorId, err)
+		return fmt.Errorf("failed to ensure permissions for %s: %w", aggregatorId, err)
 	}
 	logrus.Infof("Ensured permissions for %s", aggregatorId)
 
@@ -44,16 +42,16 @@ func DeployAggregator(
 		"created_at": time.Now().Format(time.RFC3339),
 	}, ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to ensure instance configmap for %s: %w", aggregatorId, err)
+		return fmt.Errorf("failed to ensure instance configmap for %s: %w", aggregatorId, err)
 	}
 	logrus.Infof("Ensured configuration for %s", aggregatorId)
 
-	if err := ensureDeployment(aggregatorId, 1, resolvedOwner, authzServerURL, provisionId, cmName, ctx); err != nil {
-		return "", fmt.Errorf("failed to deploy aggregator %s: %w", aggregatorId, err)
+	if err := ensureDeployment(aggregatorId, 1, resolvedOwner, authzServerURL, cmName, ctx); err != nil {
+		return fmt.Errorf("failed to deploy aggregator %s: %w", aggregatorId, err)
 	}
 	logrus.Infof("Deployed aggregator %s", aggregatorId)
 
-	return aggregatorId, nil
+	return nil
 }
 
 // deleteAggregator deletes an aggregator instance and its associated resources

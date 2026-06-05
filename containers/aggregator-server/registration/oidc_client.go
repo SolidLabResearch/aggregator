@@ -32,6 +32,32 @@ var (
 	stateStoreMu sync.Mutex
 )
 
+// FetchOIDCConfig fetches and parses the OIDC discovery document for the given IdP
+func fetchOIDCConfig(idpURL string) (*model.OIDCConfig, error) {
+	discoveryURL := fmt.Sprintf("%s/.well-known/openid-configuration", idpURL)
+
+	res, err := model.HttpClient.Get(discoveryURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch OIDC discovery document: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("OIDC discovery returned non-OK status: %s", res.Status)
+	}
+
+	var cfg model.OIDCConfig
+	if err := json.NewDecoder(res.Body).Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to decode OIDC discovery JSON: %w", err)
+	}
+
+	if cfg.AuthorizationEndpoint == "" || cfg.TokenEndpoint == "" {
+		return nil, fmt.Errorf("OIDC config missing required endpoints")
+	}
+
+	return &cfg, nil
+}
+
 func generatePKCE() (verifier string, challenge string, err error) {
 	// 32 bytes = 43-character URL-safe string
 	b := make([]byte, 32)
@@ -58,32 +84,6 @@ func generateRandomState() (string, error) {
 		return "", err
 	}
 	return base64.URLEncoding.EncodeToString(b), nil
-}
-
-// fetchOIDCConfig fetches and parses the OIDC discovery document for the given IdP
-func fetchOIDCConfig(idpURL string) (*model.OIDCConfig, error) {
-	discoveryURL := fmt.Sprintf("%s/.well-known/openid-configuration", idpURL)
-
-	res, err := model.HttpClient.Get(discoveryURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch OIDC discovery document: %w", err)
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("OIDC discovery returned non-OK status: %s", res.Status)
-	}
-
-	var cfg model.OIDCConfig
-	if err := json.NewDecoder(res.Body).Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to decode OIDC discovery JSON: %w", err)
-	}
-
-	if cfg.AuthorizationEndpoint == "" || cfg.TokenEndpoint == "" {
-		return nil, fmt.Errorf("OIDC config missing required endpoints")
-	}
-
-	return &cfg, nil
 }
 
 const (

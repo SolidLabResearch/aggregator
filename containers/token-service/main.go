@@ -18,6 +18,8 @@ import (
 	"github.com/coreos/go-oidc"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/oauth2"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 const refreshBuffer = 2 * time.Minute
@@ -43,12 +45,31 @@ var (
 		},
 		Timeout: 0,
 	}
-	ctx = context.WithValue(context.Background(), oauth2.HTTPClient, HttpClient)
-	log = logrus.New()
+	log       = logrus.New()
+	Clientset *kubernetes.Clientset
+	Namespace string
 )
 
 func main() {
 	setupLogger()
+
+	log.Info("Loading in-cluster Kubernetes configuration")
+	kubeConfig, err := rest.InClusterConfig()
+	if err != nil {
+		log.WithError(err).Fatal("Failed to load in-cluster config")
+	}
+
+	Clientset, err = kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		log.WithError(err).Fatal("Failed to create Kubernetes client")
+	}
+	log.Info("Kubernetes client initialized")
+
+	Namespace = os.Getenv("NAMESPACE")
+	if Namespace == "" {
+		log.Fatal("Environment variable NAMESPACE must be set")
+	}
+	log.WithField("namespace", Namespace).Info("Namespace loaded")
 
 	log.Info("Starting token service")
 
@@ -56,14 +77,13 @@ func main() {
 	http.HandleFunc("/loginstatus", authorizedHandler)
 	http.HandleFunc("/healthz", healthHandler)
 
-	// Listen for SIGTERM
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
 	go func() {
 		time.Sleep(10 * time.Second)
 		<-ctx.Done()
-		log.Println("SIGTERM/SIGINT received, starting shutdown procedure")
+		log.Info("SIGTERM/SIGINT received, starting shutdown procedure") // was log.Println
 		waitForIngressUMA()
 	}()
 
@@ -89,6 +109,7 @@ func setupLogger() {
 	}
 
 	log.SetLevel(level)
+	log.WithField("level", level.String()).Info("Logger initialized")
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -97,61 +118,85 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func tokenHandler(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	log.WithFields(logrus.Fields{
+		"method": r.Method,
+		"path":   r.URL.Path,
+	}).Debug("Token handler invoked")
+
 	switch r.Method {
 	case http.MethodPut:
-		handleUpsert(w, r)
+		handleUpsert(ctx, w, r)
 	case http.MethodGet:
-		handleGet(w, r)
+		handleGet(ctx, w, r)
 	case http.MethodDelete:
 		handleDelete(w, r)
 	default:
+		log.WithField("method", r.Method).Warn("Token handler received unsupported method")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 
 type StoreRequest struct {
-	UserID       string `json:"user_id"`
+	AggregatorID string `json:"aggregator_id"`
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	IDToken      string `json:"id_token"`
 	Expiry       int64  `json:"expiry"`
 	Issuer       string `json:"issuer"`
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
 }
 
-func handleUpsert(w http.ResponseWriter, r *http.Request) {
+func handleUpsert(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	var req StoreRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.WithError(err).Warn("Invalid upsert request")
+		log.WithError(err).Warn("Failed to decode upsert request body")
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	if req.UserID == "" {
-		http.Error(w, "user_id is required", http.StatusBadRequest)
+	if req.AggregatorID == "" {
+		log.Warn("Upsert request missing aggregator_id")
+		http.Error(w, "aggregator_id is required", http.StatusBadRequest)
 		return
 	}
 
-	// Check if exists BEFORE writing
+	l := log.WithFields(logrus.Fields{
+		"aggregator_id": req.AggregatorID,
+		"issuer":        req.Issuer,
+	})
+
 	store.mu.RLock()
-	_, exists := store.tokens[req.UserID]
+	_, exists := store.tokens[req.AggregatorID]
 	store.mu.RUnlock()
 
+	l.WithField("exists", exists).Debug("Resolved existing token state for upsert")
+
+	// Inject custom HTTP client so oidc.NewProvider uses localRedirectTransport
+	ctx = oidc.ClientContext(ctx, HttpClient)
+
+	// Initialize OIDC provider
 	provider, err := oidc.NewProvider(ctx, req.Issuer)
 	if err != nil {
+		l.WithError(err).Error("Failed to initialize OIDC provider")
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	oauthConfig := &oauth2.Config{
-		ClientID: req.ClientID,
-		Endpoint: provider.Endpoint(),
-		Scopes:   []string{"openid", "offline_access"},
+	clientID, clientSecret, err := getClientCredentials(req.AggregatorID)
+	if err != nil {
+		l.WithError(err).Error("Failed to load client credentials")
+		http.Error(w, "Failed to get client credentials", http.StatusInternalServerError)
+		return
 	}
+	l.WithField("client_id", clientID).Debug("Loaded client credentials")
 
-	if req.ClientSecret != "" {
-		oauthConfig.ClientSecret = req.ClientSecret
+	oauthConfig := &oauth2.Config{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		Endpoint:     provider.Endpoint(),
+		Scopes:       []string{"openid", "offline_access"},
 	}
 
 	token := &oauth2.Token{
@@ -161,58 +206,61 @@ func handleUpsert(w http.ResponseWriter, r *http.Request) {
 		Expiry:       time.Unix(req.Expiry, 0),
 	}
 
-	storeToken(req.UserID, token, req.IDToken, oauthConfig, req.Issuer)
+	storeToken(req.AggregatorID, token, req.IDToken, oauthConfig, req.Issuer)
 
 	if exists {
-		log.WithField("user_id", req.UserID).Info("Updated token")
+		l.WithField("token_expiry", token.Expiry.UTC().Format(time.RFC3339)).Info("Token updated")
 		w.WriteHeader(http.StatusOK)
 	} else {
-		log.WithField("user_id", req.UserID).Info("Created token")
+		l.WithField("token_expiry", token.Expiry.UTC().Format(time.RFC3339)).Info("Token created")
 		w.WriteHeader(http.StatusCreated)
 	}
 }
 
-func storeToken(userID string, token *oauth2.Token, idToken string, config *oauth2.Config, url string) {
+func storeToken(aggregatorID string, token *oauth2.Token, idToken string, config *oauth2.Config, issuer string) {
 	store.mu.Lock()
-	store.tokens[userID] = &TokenEntry{
+	store.tokens[aggregatorID] = &TokenEntry{
 		Token:       token,
 		IDToken:     idToken,
 		OAuthConfig: config,
-		Issuer:      url,
+		Issuer:      issuer,
 	}
 	store.mu.Unlock()
-
-	log.WithField("user_id", userID).Info("Stored token")
 }
 
-func handleGet(w http.ResponseWriter, r *http.Request) {
-	// Get the userID from the query parameter
+func handleGet(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	encodedID := r.URL.Query().Get("id")
 	if encodedID == "" {
+		log.Warn("GET /token request missing 'id' query parameter")
 		http.Error(w, "Missing 'id' query parameter", http.StatusBadRequest)
 		return
 	}
 
-	// URL-decode the userID
-	userID, err := url.QueryUnescape(encodedID)
+	aggregatorID, err := url.QueryUnescape(encodedID)
 	if err != nil {
+		log.WithField("raw_id", encodedID).Warn("Failed to URL-decode aggregator ID")
 		http.Error(w, "Invalid 'id' query parameter", http.StatusBadRequest)
 		return
 	}
 
-	entry, err := getEntry(userID)
+	l := log.WithField("aggregator_id", aggregatorID)
+
+	entry, err := getEntry(aggregatorID)
 	if err != nil {
-		log.WithField("user_id", userID).Warn("Token not found")
-		http.Error(w, err.Error(), 404)
+		l.Warn("Token lookup failed: entry not found")
+		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
-	token, idToken, err := ensureValidToken(entry, userID)
+	token, idToken, err := ensureValidToken(ctx, entry, aggregatorID)
 	if err != nil {
-		log.WithError(err).WithField("user_id", userID).Error("Token refresh failed")
-		http.Error(w, err.Error(), 500)
+		l.WithError(err).Error("Failed to obtain valid token")
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	l.WithField("token_expiry", token.Expiry.UTC().Format(time.RFC3339)).
+		Debug("Returning valid token")
 
 	json.NewEncoder(w).Encode(map[string]string{
 		"access_token": token.AccessToken,
@@ -221,73 +269,75 @@ func handleGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleDelete(w http.ResponseWriter, r *http.Request) {
-	// Get the userID from the query parameter
 	encodedID := r.URL.Query().Get("id")
 	if encodedID == "" {
+		log.Warn("DELETE /token request missing 'id' query parameter")
 		http.Error(w, "Missing 'id' query parameter", http.StatusBadRequest)
 		return
 	}
 
-	// URL-decode the userID
-	userID, err := url.QueryUnescape(encodedID)
+	aggregatorID, err := url.QueryUnescape(encodedID)
 	if err != nil {
+		log.WithField("raw_id", encodedID).Warn("Failed to URL-decode aggregator ID")
 		http.Error(w, "Invalid 'id' query parameter", http.StatusBadRequest)
 		return
 	}
 
 	store.mu.Lock()
-	delete(store.tokens, userID)
+	_, exists := store.tokens[aggregatorID]
+	delete(store.tokens, aggregatorID)
 	store.mu.Unlock()
 
-	log.WithField("user_id", userID).Info("Deleted token")
+	if exists {
+		log.WithField("aggregator_id", aggregatorID).Info("Token deleted")
+	} else {
+		log.WithField("aggregator_id", aggregatorID).Warn("Delete requested for non-existent token")
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func authorizedHandler(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	if r.Method != http.MethodGet {
+		log.WithField("method", r.Method).Warn("authorizedHandler received unsupported method")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Get the userID from the query parameter
 	encodedID := r.URL.Query().Get("id")
 	if encodedID == "" {
+		log.Warn("GET /loginstatus request missing 'id' query parameter")
 		http.Error(w, "Missing 'id' query parameter", http.StatusBadRequest)
 		return
 	}
 
-	// URL-decode the userID
 	userID, err := url.QueryUnescape(encodedID)
 	if err != nil {
+		log.WithField("raw_id", encodedID).Warn("Failed to URL-decode user ID")
 		http.Error(w, "Invalid 'id' query parameter", http.StatusBadRequest)
 		return
 	}
 
+	l := log.WithField("user_id", userID)
+
 	entry, err := getEntry(userID)
 	if err != nil {
-		log.WithField("user_id", userID).
-			Warn("Authorization check failed: token not found")
-
-		json.NewEncoder(w).Encode(map[string]bool{
-			"login_status": false,
-		})
+		l.Warn("Login status check: token not found")
+		json.NewEncoder(w).Encode(map[string]bool{"login_status": false})
 		return
 	}
 
-	token, _, err := ensureValidToken(entry, userID)
+	token, _, err := ensureValidToken(ctx, entry, userID)
 	if err != nil {
-		log.WithError(err).
-			WithField("user_id", userID).
-			Warn("Authorization check failed: refresh failed")
-
-		json.NewEncoder(w).Encode(map[string]bool{
-			"login_status": false,
-		})
+		l.WithError(err).Warn("Login status check: token refresh failed")
+		json.NewEncoder(w).Encode(map[string]bool{"login_status": false})
 		return
 	}
 
-	log.WithField("user_id", userID).
-		Debug("Authorization check successful")
+	l.WithField("token_expiry", token.Expiry.UTC().Format(time.RFC3339)).
+		Debug("Login status check: authorized")
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"login_status": true,
@@ -306,38 +356,52 @@ func getEntry(userID string) (*TokenEntry, error) {
 }
 
 // ensureValidToken refreshes both access token and id token using refresh token
-func ensureValidToken(entry *TokenEntry, userID string) (*oauth2.Token, string, error) {
+func ensureValidToken(ctx context.Context, entry *TokenEntry, aggregatorID string) (*oauth2.Token, string, error) {
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 
+	l := log.WithField("aggregator_id", aggregatorID)
+
 	now := time.Now()
 	if entry.Token.Expiry.After(now.Add(refreshBuffer)) {
+		l.WithField("token_expiry", entry.Token.Expiry.UTC().Format(time.RFC3339)).
+			Debug("Token still valid; no refresh needed")
 		return entry.Token, entry.IDToken, nil
 	}
 
-	log.WithField("user_id", userID).Info("Refreshing token using refresh token")
+	l.WithFields(logrus.Fields{
+		"token_expiry":   entry.Token.Expiry.UTC().Format(time.RFC3339),
+		"refresh_buffer": refreshBuffer.String(),
+	}).Info("Token within refresh buffer; refreshing")
 
 	if entry.OAuthConfig.ClientSecret == "" {
-		// TODO: allow public client refresh (e.g. Solid-OIDC / DPoP support)
+		l.Warn("Token refresh skipped: public client has no client secret")
 		return nil, "", errors.New("token expired and refresh not supported for public clients")
 	}
 
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, HttpClient)
 	ts := entry.OAuthConfig.TokenSource(ctx, entry.Token)
 	newToken, err := ts.Token()
 	if err != nil {
+		l.WithError(err).Error("Token refresh failed")
 		return nil, "", err
 	}
 
 	entry.Token = newToken
 
-	// update ID token if returned
+	idToken := entry.IDToken
 	if idv := newToken.Extra("id_token"); idv != nil {
 		if idStr, ok := idv.(string); ok && idStr != "" {
 			entry.IDToken = idStr
+			idToken = idStr
+			l.Debug("ID token updated from refresh response")
 		}
 	}
 
-	return newToken, entry.IDToken, nil
+	l.WithField("new_token_expiry", newToken.Expiry.UTC().Format(time.RFC3339)).
+		Info("Token refreshed successfully")
+
+	return newToken, idToken, nil
 }
 
 // localRedirectTransport rewrites requests to localhost -> host.docker.internal

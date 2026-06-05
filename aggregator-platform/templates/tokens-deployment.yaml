@@ -40,4 +40,6 @@ spec:
           env:
             - name: LOG_LEVEL
               value: "{{ .Values.loglevel }}"
+            - name: NAMESPACE
+              value: "{{ .Release.Namespace }}"
       terminationGracePeriodSeconds: {{ .Values.tokenService.terminationGracePeriodSeconds }}

@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	UserId string
+	AggregatorID string
 )
 
 func main() {
@@ -24,9 +24,9 @@ func main() {
 	logrus.SetLevel(logLevel)
 	logrus.SetOutput(os.Stdout)
 
-	UserId = os.Getenv("USER_ID")
-	if UserId == "" {
-		logrus.Fatal("USER_ID is not set")
+	AggregatorID = os.Getenv("AGGREGATOR_ID")
+	if AggregatorID == "" {
+		logrus.Fatal("AGGREGATOR_ID is not set")
 	}
 
 	_, err = getAccessToken()

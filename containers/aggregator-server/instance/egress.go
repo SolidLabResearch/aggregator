@@ -91,6 +91,7 @@ func ensureEgressDeployment(aggregatorId string, replicas int32, ownerID string,
 							},
 							Env: []corev1.EnvVar{
 								{Name: "USER_ID", Value: ownerID},
+								{Name: "AGGREGATOR_ID", Value: aggregatorId},
 								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 							},
 						},

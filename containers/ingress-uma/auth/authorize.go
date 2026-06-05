@@ -27,12 +27,12 @@ type UmaClaims struct {
 
 var ExternalHost string
 var DisableAuth bool
-var AggClientId string
+var UMAClientID string
 
 func InitAuth(extHost string, disbaleAuth bool, clientId string) {
 	ExternalHost = extHost
 	DisableAuth = disbaleAuth
-	AggClientId = clientId
+	UMAClientID = clientId
 }
 
 func HandleAuthorizationRequest(w http.ResponseWriter, r *http.Request) {

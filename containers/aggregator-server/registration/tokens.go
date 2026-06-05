@@ -22,7 +22,7 @@ type TokenResponse struct {
 }
 
 type StoreRequest struct {
-	UserID       string `json:"user_id"`
+	AggregatorID string `json:"aggregator_id"`
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	IDToken      string `json:"id_token"`
@@ -33,7 +33,7 @@ type StoreRequest struct {
 }
 
 func upsertTokens(
-	userID string,
+	aggregatorID string,
 	tok TokenResponse,
 	issuer string,
 	clientID string,
@@ -42,7 +42,7 @@ func upsertTokens(
 	expiryUnix := time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second).Unix()
 
 	reqBody := StoreRequest{
-		UserID:       userID,
+		AggregatorID: aggregatorID,
 		AccessToken:  tok.AccessToken,
 		RefreshToken: tok.RefreshToken,
 		IDToken:      tok.IDToken,
@@ -80,8 +80,8 @@ func upsertTokens(
 	return nil
 }
 
-func deleteTokens(userID string) error {
-	encodedID := url.QueryEscape(userID)
+func deleteTokens(aggregatorID string) error {
+	encodedID := url.QueryEscape(aggregatorID)
 
 	endpoint := fmt.Sprintf(
 		"http://token-service:8080/token?id=%s",

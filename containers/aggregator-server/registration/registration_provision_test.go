@@ -30,7 +30,7 @@ func TestHandleProvisionFlow_MissingConfig(t *testing.T) {
 	model.ProvisionAuthorizationServer = ""
 
 	recorder := httptest.NewRecorder()
-	handleProvisionFlow(recorder, model.RegistrationRequest{RegistrationType: "provision"}, "https://owner.example/webid#me")
+	handleProvisionFlow(recorder, model.RegistrationRequest{RegistrationType: "provision"})
 
 	resp := recorder.Result()
 	defer resp.Body.Close()

@@ -129,6 +129,11 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 		handleDeviceCodeFlow(w, req)
 		return
 
+	case "provision":
+		log.Info("Routing to provision flow")
+		handleProvisionFlow(w, req)
+		return
+
 	case "none":
 		log.Info("Routing to none flow")
 		handleNoneFlow(w, req)
@@ -162,10 +167,6 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 
 	// Route to authenticated flows
 	switch registrationType {
-	case "provision":
-		log.Info("Routing to provision flow")
-		handleProvisionFlow(w, req, id)
-
 	case "authorization_code":
 		log.Info("Routing to authorization_code flow")
 		handleAuthorizationCodeFlow(w, req, issuer, id, mode)

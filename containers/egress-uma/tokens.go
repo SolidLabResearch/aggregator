@@ -13,12 +13,12 @@ import (
 
 func getAccessToken() (string, error) {
 	log := logrus.WithFields(logrus.Fields{
-		"user_id":   UserId,
-		"component": "token_service",
+		"aggregator_id": AggregatorID,
+		"component":     "token_service",
 	})
 
 	// URL-encode the userID for safe use as a query parameter
-	encodedID := url.QueryEscape(UserId)
+	encodedID := url.QueryEscape(AggregatorID)
 
 	url := fmt.Sprintf(
 		"http://token-service:8080/token?id=%s",

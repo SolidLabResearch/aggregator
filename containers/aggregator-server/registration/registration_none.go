@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -20,7 +21,8 @@ func handleNoneFlow(w http.ResponseWriter, req model.RegistrationRequest) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	aggregatorId, err := instance.DeployAggregator("", "", "", ctx)
+	aggregatorID := uuid.New().String()
+	err := instance.DeployAggregator("", aggregatorID, "", ctx)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to deploy aggregator")
 		http.Error(w, "Failed to deploy aggregator", http.StatusInternalServerError)
@@ -31,11 +33,11 @@ func handleNoneFlow(w http.ResponseWriter, req model.RegistrationRequest) {
 		"",
 		"none",
 		"",
-		aggregatorId,
+		aggregatorID,
 	)
 
 	response := model.RegistrationResponse{
-		AggregatorID: aggregatorId,
+		AggregatorID: aggregatorID,
 		Aggregator:   inst.BaseURL,
 	}
 
