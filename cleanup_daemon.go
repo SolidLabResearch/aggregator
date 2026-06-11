@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"net/http"
@@ -23,17 +24,8 @@ func DeployCleanupDaemon() error {
 
 	logrus.Info("🚀 Deploying cleanup daemon...")
 
-	existing, err := Clientset.CoreV1().Pods(cleanupDaemonNamespace).Get(ctx, cleanupDaemonName, metav1.GetOptions{})
-	if err == nil && existing.Name != "" {
-		logrus.Info("Cleanup daemon already exists, deleting old instance...")
-		gracePeriod := int64(0)
-		err = Clientset.CoreV1().Pods(cleanupDaemonNamespace).Delete(ctx, cleanupDaemonName, metav1.DeleteOptions{
-			GracePeriodSeconds: &gracePeriod,
-		})
-		if err != nil {
-			logrus.WithFields(logrus.Fields{"err": err}).Warn("Failed to delete old cleanup daemon")
-		}
-		time.Sleep(2 * time.Second)
+	if err := deleteExistingCleanupDaemon(ctx); err != nil {
+		return err
 	}
 
 	pod := &v1.Pod{
@@ -63,7 +55,7 @@ func DeployCleanupDaemon() error {
 		},
 	}
 
-	_, err = Clientset.CoreV1().Pods(cleanupDaemonNamespace).Create(ctx, pod, metav1.CreateOptions{})
+	_, err := Clientset.CoreV1().Pods(cleanupDaemonNamespace).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create cleanup daemon pod: %w", err)
 	}
@@ -116,6 +108,82 @@ func DeployCleanupDaemon() error {
 			return fmt.Errorf("timeout waiting for cleanup daemon to start")
 		}
 	}
+}
+
+func deleteExistingCleanupDaemon(ctx context.Context) error {
+	gracePeriod := int64(0)
+	foundExisting := false
+
+	if err := Clientset.CoreV1().Pods(cleanupDaemonNamespace).Delete(ctx, cleanupDaemonName, metav1.DeleteOptions{
+		GracePeriodSeconds: &gracePeriod,
+	}); err != nil {
+		if !apierrors.IsNotFound(err) {
+			logrus.WithFields(logrus.Fields{"err": err}).Warn("Failed to delete old cleanup daemon pod")
+		}
+	} else {
+		foundExisting = true
+	}
+
+	if err := Clientset.CoreV1().Services(cleanupDaemonNamespace).Delete(ctx, cleanupDaemonName, metav1.DeleteOptions{}); err != nil {
+		if !apierrors.IsNotFound(err) {
+			logrus.WithFields(logrus.Fields{"err": err}).Warn("Failed to delete old cleanup daemon service")
+		}
+	} else {
+		foundExisting = true
+	}
+
+	if foundExisting {
+		logrus.Info("Cleanup daemon already exists, deleting old instance...")
+	}
+
+	return waitForCleanupDaemonDeletion(ctx)
+}
+
+func waitForCleanupDaemonDeletion(ctx context.Context) error {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		podDeleted, err := cleanupDaemonPodDeleted(ctx)
+		if err != nil {
+			return err
+		}
+		serviceDeleted, err := cleanupDaemonServiceDeleted(ctx)
+		if err != nil {
+			return err
+		}
+		if podDeleted && serviceDeleted {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timed out waiting for old cleanup daemon resources to be deleted: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func cleanupDaemonPodDeleted(ctx context.Context) (bool, error) {
+	_, err := Clientset.CoreV1().Pods(cleanupDaemonNamespace).Get(ctx, cleanupDaemonName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to check cleanup daemon pod deletion: %w", err)
+	}
+	return false, nil
+}
+
+func cleanupDaemonServiceDeleted(ctx context.Context) (bool, error) {
+	_, err := Clientset.CoreV1().Services(cleanupDaemonNamespace).Get(ctx, cleanupDaemonName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to check cleanup daemon service deletion: %w", err)
+	}
+	return false, nil
 }
 
 func TriggerCleanup() {

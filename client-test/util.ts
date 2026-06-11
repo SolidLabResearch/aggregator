@@ -199,11 +199,14 @@ export class SolidOIDCAuth {
                     });
                     break;
                 case "urn:ietf:params:oauth:token-type:access_token":
+                    const issuer = requiredClaim.issuer ?? requiredClaim.details?.issuer;
+                    const resourceId = requiredClaim.derivation_resource_id ?? requiredClaim.details?.resource_id;
+                    const resourceScopes = requiredClaim.resource_scopes ?? requiredClaim.details?.resource_scopes;
                     const {token, error} = await this.fetchAccessToken(
-                      requiredClaim.details.issuer + "/token",
+                      issuer + "/token",
                       [{
-                          resource_id: requiredClaim.details.resource_id,
-                          resource_scopes: requiredClaim.details.resource_scopes
+                          resource_id: resourceId,
+                          resource_scopes: resourceScopes
                       }]
                     );
                     if (error) {

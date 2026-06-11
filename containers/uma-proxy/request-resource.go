@@ -73,7 +73,11 @@ type permission struct {
 }
 
 type requiredClaim struct {
-	ClaimTokenFormat string `json:"claim_token_format"`
+	ClaimTokenFormat string   `json:"claim_token_format"`
+	Issuer           string   `json:"issuer"`
+	DerivationID     string   `json:"derivation_resource_id"`
+	ResourceID       string   `json:"resource_id"`
+	ResourceScopes   []string `json:"resource_scopes"`
 	Details          struct {
 		Issuer         string   `json:"issuer"`
 		ResourceID     string   `json:"resource_id"`
@@ -81,14 +85,19 @@ type requiredClaim struct {
 	} `json:"details"`
 }
 
+type uma2Config struct {
+	TokenEndpoint                string `json:"token_endpoint"`
+	ResourceRegistrationEndpoint string `json:"resource_registration_endpoint"`
+}
+
 // fetchAccessToken performs UMA token acquisition with recursive claim gathering on 403.
 // Returns access token, token type, optional derivation resource id, and expires_in.
-func fetchAccessToken(tokenEndpoint string, request interface{}, claims []claimToken) (string, string, string, int, error) {
+func fetchAccessToken(tokenEndpoint string, request interface{}, claims []claimToken) (string, string, string, ManagementAccessToken, int, error) {
 	// Initialize with single ID token claim if none provided.
 	if claims == nil || len(claims) == 0 {
 		idTok, err := solidAuth.CreateClaimToken()
 		if err != nil {
-			return "", "", "", 0, fmt.Errorf("failed to create initial claim token: %w", err)
+			return "", "", "", ManagementAccessToken{}, 0, fmt.Errorf("failed to create initial claim token: %w", err)
 		}
 		claims = []claimToken{{
 			ClaimToken:       idTok,
@@ -115,22 +124,22 @@ func fetchAccessToken(tokenEndpoint string, request interface{}, claims []claimT
 	case []permission:
 		body["permissions"] = v
 	default:
-		return "", "", "", 0, fmt.Errorf("unsupported request type for fetchAccessToken: %T", request)
+		return "", "", "", ManagementAccessToken{}, 0, fmt.Errorf("unsupported request type for fetchAccessToken: %T", request)
 	}
 
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return "", "", "", 0, err
+		return "", "", "", ManagementAccessToken{}, 0, err
 	}
 
 	tokenReq, err := createRequestWithRedirect("POST", tokenEndpoint, bytes.NewReader(payload))
 	if err != nil {
-		return "", "", "", 0, err
+		return "", "", "", ManagementAccessToken{}, 0, err
 	}
 	tokenReq.Header.Set("Content-Type", "application/json")
 	resp, err := throttledDo(tokenReq)
 	if err != nil {
-		return "", "", "", 0, err
+		return "", "", "", ManagementAccessToken{}, 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	logrus.WithFields(logrus.Fields{"status_code": resp.StatusCode, "endpoint": tokenEndpoint}).Debug("UMA token endpoint response")
@@ -142,34 +151,35 @@ func fetchAccessToken(tokenEndpoint string, request interface{}, claims []claimT
 			RequiredClaims []requiredClaim `json:"required_claims"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&forbidden); err != nil {
-			return "", "", "", 0, fmt.Errorf("failed to decode forbidden response: %w", err)
+			return "", "", "", ManagementAccessToken{}, 0, fmt.Errorf("failed to decode forbidden response: %w", err)
 		}
 		updatedClaims, err := gatherClaims(claims, forbidden.RequiredClaims)
 		if err != nil {
-			return "", "", "", 0, err
+			return "", "", "", ManagementAccessToken{}, 0, err
 		}
 		return fetchAccessToken(tokenEndpoint, forbidden.Ticket, updatedClaims)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		return "", "", "", 0, fmt.Errorf("failed to fetch access token: status %d body %s", resp.StatusCode, string(b))
+		return "", "", "", ManagementAccessToken{}, 0, fmt.Errorf("failed to fetch access token: status %d body %s", resp.StatusCode, string(b))
 	}
 
 	var okResp struct {
-		AccessToken          string `json:"access_token"`
-		TokenType            string `json:"token_type"`
-		DerivationResourceID string `json:"derivation_resource_id"`
-		ExpiresIn            int    `json:"expires_in"`
+		AccessToken           string                `json:"access_token"`
+		TokenType             string                `json:"token_type"`
+		DerivationResourceID  string                `json:"derivation_resource_id"`
+		ManagementAccessToken ManagementAccessToken `json:"management_access_token"`
+		ExpiresIn             int                   `json:"expires_in"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&okResp); err != nil {
-		return "", "", "", 0, fmt.Errorf("failed to decode token response: %w", err)
+		return "", "", "", ManagementAccessToken{}, 0, fmt.Errorf("failed to decode token response: %w", err)
 	}
 
 	if okResp.AccessToken == "" || okResp.TokenType == "" {
-		return "", "", "", 0, fmt.Errorf("incomplete token response")
+		return "", "", "", ManagementAccessToken{}, 0, fmt.Errorf("incomplete token response")
 	}
-	return okResp.AccessToken, okResp.TokenType, okResp.DerivationResourceID, okResp.ExpiresIn, nil
+	return okResp.AccessToken, okResp.TokenType, okResp.DerivationResourceID, okResp.ManagementAccessToken, okResp.ExpiresIn, nil
 }
 
 // gatherClaims augments the claims slice based on server-required claims.
@@ -185,8 +195,14 @@ func gatherClaims(existing []claimToken, required []requiredClaim) ([]claimToken
 			claims = append(claims, claimToken{ClaimToken: idTok, ClaimTokenFormat: rc.ClaimTokenFormat})
 		case "urn:ietf:params:oauth:token-type:access_token":
 			// Obtain nested access token using permissions.
-			perm := []permission{{ResourceID: rc.Details.ResourceID, ResourceScopes: rc.Details.ResourceScopes}}
-			at, _, _, _, err := fetchAccessToken(rc.Details.Issuer+"/token", perm, nil)
+			issuer := firstNonEmpty(rc.Issuer, rc.Details.Issuer)
+			resourceID := firstNonEmpty(rc.DerivationID, rc.ResourceID, rc.Details.ResourceID)
+			resourceScopes := rc.ResourceScopes
+			if len(resourceScopes) == 0 {
+				resourceScopes = rc.Details.ResourceScopes
+			}
+			perm := []permission{{ResourceID: resourceID, ResourceScopes: resourceScopes}}
+			at, _, _, _, _, err := fetchAccessToken(strings.TrimSuffix(issuer, "/")+"/token", perm, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -196,6 +212,99 @@ func gatherClaims(existing []claimToken, required []requiredClaim) ([]claimToken
 		}
 	}
 	return claims, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func fetchUMA2Config(asUri string) (uma2Config, error) {
+	reqConf, err := createRequestWithRedirect("GET", strings.TrimSuffix(asUri, "/")+"/.well-known/uma2-configuration", nil)
+	if err != nil {
+		return uma2Config{}, err
+	}
+	resp, err := throttledDo(reqConf)
+	if err != nil {
+		return uma2Config{}, fmt.Errorf("failed to get UMA2 configuration: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return uma2Config{}, fmt.Errorf("UMA2 configuration returned status %d", resp.StatusCode)
+	}
+	var config uma2Config
+	if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
+		return uma2Config{}, fmt.Errorf("failed to decode UMA2 config: %w", err)
+	}
+	if config.TokenEndpoint == "" {
+		return uma2Config{}, fmt.Errorf("UMA2 configuration missing token_endpoint")
+	}
+	return config, nil
+}
+
+func updateUpstreamDerivationResource(config uma2Config, entry DerivationEntry, sourceURL string) error {
+	if config.ResourceRegistrationEndpoint == "" {
+		return fmt.Errorf("UMA2 configuration missing resource_registration_endpoint")
+	}
+	if entry.ManagementAccessToken.AccessToken == "" || entry.ManagementAccessToken.TokenType == "" {
+		return fmt.Errorf("missing management_access_token")
+	}
+
+	payload := map[string]interface{}{
+		"name":            entry.DerivationResourceID,
+		"type":            "https://w3id.org/aggregator#DerivedResource",
+		"description":     "Derived resource source for " + sourceURL,
+		"resource_scopes": []string{"urn:knows:uma:scopes:derivation-read"},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	endpoint := strings.TrimRight(config.ResourceRegistrationEndpoint, "/") + "/" + url.PathEscape(entry.DerivationResourceID)
+	req, err := createRequestWithRedirect("PUT", endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", entry.ManagementAccessToken.TokenType+" "+entry.ManagementAccessToken.AccessToken)
+	resp, err := throttledDo(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("upstream derivation resource update returned status %d: %s", resp.StatusCode, string(b))
+	}
+	return nil
+}
+
+func deleteUpstreamDerivationResource(entry DerivationEntry) error {
+	if entry.ResourceRegistrationURL == "" {
+		return fmt.Errorf("missing resource registration URL")
+	}
+	if entry.ManagementAccessToken.AccessToken == "" || entry.ManagementAccessToken.TokenType == "" {
+		return fmt.Errorf("missing management_access_token")
+	}
+	req, err := createRequestWithRedirect("DELETE", entry.ResourceRegistrationURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", entry.ManagementAccessToken.TokenType+" "+entry.ManagementAccessToken.AccessToken)
+	resp, err := throttledDo(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("upstream derivation resource delete returned status %d: %s", resp.StatusCode, string(b))
+	}
+	return nil
 }
 
 func Do(req *http.Request) (*http.Response, error) {
@@ -259,35 +368,33 @@ func Do(req *http.Request) (*http.Response, error) {
 		}
 
 		logrus.WithFields(logrus.Fields{"asUri": asUri}).Info("Received UMA ticket")
-		reqConf, err := createRequestWithRedirect("GET", asUri+"/.well-known/uma2-configuration", nil)
+		uma2Config, err := fetchUMA2Config(asUri)
 		if err != nil {
-			return nil, err
-		}
-		uma2ConfigResponse, err := throttledDo(reqConf)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get UMA2 configuration: %w", err)
-		}
-		defer func() { _ = uma2ConfigResponse.Body.Close() }()
-
-		if uma2ConfigResponse.StatusCode != http.StatusOK {
+			logrus.WithError(err).Warn("Failed to fetch UMA2 configuration")
 			return unauthenticatedResp, nil
-		}
-
-		var uma2Config struct {
-			TokenEndpoint string `json:"token_endpoint"`
-		}
-		if err := json.NewDecoder(uma2ConfigResponse.Body).Decode(&uma2Config); err != nil {
-			return nil, fmt.Errorf("failed to decode UMA2 config: %w", err)
 		}
 
 		tokenEndpoint := uma2Config.TokenEndpoint
 
-		accessToken, tokenType, derivationResourceId, expiresIn, err := fetchAccessToken(tokenEndpoint, ticket, nil)
+		accessToken, tokenType, derivationResourceId, managementToken, expiresIn, err := fetchAccessToken(tokenEndpoint, ticket, nil)
 		if err != nil {
 			return nil, err
 		}
 		// Store in cache before retry
 		solidAuth.storeUmaToken(method, resourceURL, tokenType, accessToken, expiresIn)
+		if derivationResourceId != "" {
+			entry := DerivationEntry{
+				SourceURL:               resourceURL,
+				Issuer:                  asUri,
+				DerivationResourceID:    derivationResourceId,
+				ManagementAccessToken:   managementToken,
+				ResourceRegistrationURL: strings.TrimRight(uma2Config.ResourceRegistrationEndpoint, "/") + "/" + url.PathEscape(derivationResourceId),
+			}
+			solidAuth.storeDerivation(resourceURL, entry)
+			if err := updateUpstreamDerivationResource(uma2Config, entry, resourceURL); err != nil {
+				logrus.WithFields(logrus.Fields{"source": resourceURL, "derivation_resource_id": derivationResourceId, "err": err}).Warn("Failed to update upstream derivation resource metadata")
+			}
+		}
 		req.Header.Set("Authorization", fmt.Sprintf("%s %s", tokenType, accessToken))
 		authorizedResp, err := throttledDo(req)
 		if err != nil {

@@ -58,13 +58,19 @@ func InitAuthProxy(mux *http.ServeMux, baseURL string) {
 		},
 	}
 	mux.HandleFunc("/service/tokens", AuthProxyInstance.serviceTokenEndpoint)
+}
+
+func RegisterAuthProxyResources() {
+	if AuthProxyInstance == nil {
+		return
+	}
 	err := auth.CreateResource(
 		AuthProxyInstance.endpointUrl,
 		[]auth.ResourceScope{auth.ScopeCreate},
 		nil,
 	)
 	if err != nil {
-		panic(err)
+		logrus.WithError(err).Warn("Failed to register service token endpoint with UMA; continuing without initial UMA registration")
 	}
 }
 

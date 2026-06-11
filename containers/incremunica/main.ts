@@ -5,6 +5,7 @@ import { Store, Parser } from 'n3';
 import http from "http";
 import { URL } from "url";
 import {EventEmitter} from "node:events";
+import { createHash } from "node:crypto";
 import { logger } from './logger';
 
 class SSEConnectionManager {
@@ -153,14 +154,44 @@ const registeredSources: Map<string, {
   issuer: string;
   derivation_resource_id: string;
 }> = new Map();
+
+function hashText(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 12);
+}
+
+function summarizeSourceTerm(term: any): any {
+  if (!term) {
+    return null;
+  }
+  if (term.endpoint) {
+    return {
+      type: "dynamic",
+      endpoint: term.endpoint,
+      variables: Array.isArray(term.variables) ? term.variables : []
+    };
+  }
+  return {
+    termType: term.termType,
+    value: term.value ?? String(term)
+  };
+}
+
 // Create custom fetch function that uses the proxy's /fetch endpoint
 async function customFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const originalUrl = input.toString();
 
   // If no proxy configured, fall back to direct fetch.
   if (!proxyUrl) {
-    logger.trace({ url: originalUrl }, 'Direct fetch (no proxy)');
-    return fetch(input as any, init);
+    logger.debug({ url: originalUrl, method: init?.method?.toUpperCase() || 'GET' }, 'Direct fetch (no proxy)');
+    const directResponse = await fetch(input as any, init);
+    logger.info({
+      url: originalUrl,
+      method: init?.method?.toUpperCase() || 'GET',
+      status: directResponse.status,
+      contentType: directResponse.headers.get("content-type"),
+      contentLength: directResponse.headers.get("content-length")
+    }, 'Direct fetch response');
+    return directResponse;
   }
 
   // Prepare the request payload for the proxy
@@ -187,11 +218,33 @@ async function customFetch(input: RequestInfo | URL, init?: RequestInit): Promis
     configurable: false
   });
 
-  logger.info({
+  const fetchLog: any = {
+    url: originalUrl,
+    method: fetchRequest.method,
+    status: response.status,
+    ok: response.ok,
+    contentType: response.headers.get("content-type"),
+    contentLength: response.headers.get("content-length"),
     has: registeredSources.has(originalUrl),
-    Issuer: response.headers.get("X-Derivation-Issuer"),
-    ResourceId: response.headers.get("X-Derivation-Resource-Id")
-  }, 'fetch');
+    issuer: response.headers.get("X-Derivation-Issuer"),
+    resourceId: response.headers.get("X-Derivation-Resource-Id")
+  };
+
+  if (!response.ok) {
+    try {
+      fetchLog.body = (await response.clone().text()).slice(0, 500);
+    } catch (error) {
+      fetchLog.bodyReadError = (error as any)?.toString?.() ?? String(error);
+    }
+  } else if (logger.isLevelEnabled("debug")) {
+    try {
+      fetchLog.bodyPreview = (await response.clone().text()).slice(0, 500);
+    } catch (error) {
+      fetchLog.bodyReadError = (error as any)?.toString?.() ?? String(error);
+    }
+  }
+
+  logger.info(fetchLog, 'Proxy fetch response');
   if (
     !registeredSources.has(originalUrl) &&
     response.headers.get("X-Derivation-Issuer") &&
@@ -253,6 +306,24 @@ async function fetchRegistration(method: 'POST' | 'PATCH' | 'PUT' | 'DELETE', bo
 type RegisteredEndpoint = { endpoint: string, description: string, scopes: string[] };
 const registeredEndpoints: RegisteredEndpoint[] = [];
 
+async function readRegistrationResponse(response: Response): Promise<any> {
+  const text = await response.text();
+  if (!text) {
+    return {};
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
+  }
+}
+
+function trackRegisteredEndpoint(endpoint: string, description: string, scopes: string[]): void {
+  if (!registeredEndpoints.some(registered => registered.endpoint === endpoint)) {
+    registeredEndpoints.push({ endpoint, description, scopes });
+  }
+}
+
 // Function to register an endpoint with the aggregator
 async function registerEndpointWithAggregator(endpoint: string, description: string, scopes: string[] = ["read"]): Promise<void> {
   const registrationData: any = {
@@ -272,11 +343,26 @@ async function registerEndpointWithAggregator(endpoint: string, description: str
       return;
     }
     if (response.ok) {
-      const result = await response.json();
+      const result = await readRegistrationResponse(response);
       logger.info({ endpoint, external_url: result.external_url, actor_id: result.actor_id }, 'Endpoint registered');
-      // Track for cleanup
-      registeredEndpoints.push({ endpoint, description, scopes });
+      trackRegisteredEndpoint(endpoint, description, scopes);
       return result.actor_id;
+    } else if (response.status === 409) {
+      const conflictText = await response.text();
+      logger.warn({ endpoint, status: response.status, conflictText }, 'Endpoint already registered; updating existing registration');
+      const updateResponse = await fetchRegistration("PUT", registrationData);
+      if (!updateResponse) {
+        logger.error({ endpoint }, 'Failed updating endpoint registration: no aggregator reachable');
+        return;
+      }
+      if (updateResponse.ok) {
+        const result = await readRegistrationResponse(updateResponse);
+        logger.info({ endpoint, external_url: result.external_url, actor_id: result.actor_id }, 'Endpoint registration updated');
+        trackRegisteredEndpoint(endpoint, description, scopes);
+        return result.actor_id;
+      }
+      const updateErrorText = await updateResponse.text();
+      logger.error({ endpoint, status: updateResponse.status, errorText: updateErrorText }, 'Failed updating endpoint registration');
     } else {
       const errorText = await response.text();
       logger.error({ endpoint, status: response.status, errorText }, 'Failed registering endpoint');
@@ -327,14 +413,14 @@ async function registerWithAggregator(): Promise<void> {
   await registerEndpointWithAggregator(
     "/",
     "SPARQL SELECT incremental query service - JSON results",
-    ["urn:example:css:modes:read"]
+    ["urn:knows:uma:scopes:read"]
   );
 
   // Register the server-sent events endpoint
   await registerEndpointWithAggregator(
     "/events",
     "SPARQL SELECT incremental query service - Real-time SSE stream",
-    ["urn:example:css:modes:continuous:read"]
+    ["urn:knows:uma:scopes:continuous:read"]
   );
 
   logger.info('All endpoints registered with aggregator');
@@ -371,6 +457,26 @@ async function deregisterWithAggregator(): Promise<void> {
   logger.info('Deregistering all endpoints with aggregator');
   await Promise.all(registeredEndpoints.map(e => deregisterEndpointWithAggregator(e.endpoint)));
   logger.info('All endpoints deregistered with aggregator');
+}
+
+async function cleanupUpstreamDerivations(): Promise<void> {
+  if (!proxyUrl) {
+    return;
+  }
+  try {
+    const response = await fetch(`${proxyUrl}/derivations`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) {
+      logger.warn({ status: response.status, body: await response.text() }, 'Failed cleaning upstream derivation resources');
+      return;
+    }
+    logger.info({ result: await response.json() }, 'Upstream derivation resources cleaned');
+  } catch (error) {
+    logger.warn({ error }, 'Error cleaning upstream derivation resources');
+  }
 }
 
 class UpToDateTimeout {
@@ -420,6 +526,7 @@ async function main() {
       if (req.method === "GET" && req.url === "/") {
         res.writeHead(200, { "Content-Type": "application/sparql-results+json" });
         deferredEvaluationTrigger.emit("update");
+        logger.info({ bindings: materializedView.size, cacheDirty: isCacheDirty }, 'Serving materialized view');
 
         if (isCacheDirty) {
           cachedSerializedSparql = JSON.stringify(materializedViewToSparqlJson(materializedView));
@@ -479,7 +586,13 @@ async function main() {
   if (pipelineDescription === undefined) {
     throw new Error('Environment variable PIPELINE_DESCRIPTION is not set. Please provide a valid pipeline description.');
   }
-  logger.debug({ pipelineDescriptionLength: pipelineDescription.length }, 'Parsing pipeline description')
+  logger.info({
+    pipelineDescriptionLength: pipelineDescription.length,
+    pipelineDescriptionHash: hashText(pipelineDescription),
+    podName: POD_NAME,
+    podIp: POD_IP,
+    proxyConfigured: !!proxyUrl
+  }, 'Parsing pipeline description')
   const pipelineParsingEngine = new QueryEngine();
   const pipelineDescriptionStore = new Store();
   const parser = new Parser();
@@ -586,9 +699,22 @@ SELECT ?queryString ?source ?endpoint ?variable WHERE {
   );
   queryInfoStream.destroy();
 
+  logger.info({
+    queryLength: queryInfo.query.length,
+    queryHash: hashText(queryInfo.query),
+    queryPreview: queryInfo.query.slice(0, 300),
+    sourceCount: queryInfo.sources.length,
+    sources: queryInfo.sources.map(summarizeSourceTerm)
+  }, 'SPARQL evaluation pipeline parsed');
+
   const sourceIterator = await getSources(queryInfo.sources);
+  logger.info('Query source iterator created');
 
   const queryEngine = new QueryEngineInc();
+  logger.info({
+    queryHash: hashText(queryInfo.query),
+    sourceCount: queryInfo.sources.length
+  }, 'Starting Incremunica query');
   const bindingsStream = await queryEngine.queryBindings(queryInfo.query, {
     // @ts-ignore
     sources: [sourceIterator],
@@ -606,6 +732,7 @@ SELECT ?queryString ?source ?endpoint ?variable WHERE {
         materializedView.set(key, { bindings: bindings, count: 1 });
       }
       isCacheDirty = true;
+      logger.info({ bindings: materializedView.size, keyHash: hashText(key) }, 'Binding addition received');
       sseManager.queueUpdate(true, bindingToSparqlJson(bindings).bindings[0]);
     } else {
       if (materializedView.has(key)) {
@@ -615,6 +742,7 @@ SELECT ?queryString ?source ?endpoint ?variable WHERE {
           materializedView.delete(key);
         }
         isCacheDirty = true;
+        logger.info({ bindings: materializedView.size, keyHash: hashText(key) }, 'Binding deletion received');
         sseManager.queueUpdate(false, bindingToSparqlJson(bindings).bindings[0]);
       } else {
         throw new Error('Received a deletion for a binding that was not in the materialized view:' + key);
@@ -689,7 +817,12 @@ async function getSources(sourceTerms: any[]): Promise<QuerySourceIterator> {
     }
   });
 
-  logger.info({ static: staticSources.size, dynamicSeed: initialDynamicCombined.length }, 'Initial sources collected');
+  logger.info({
+    static: staticSources.size,
+    staticSources: [...staticSources],
+    dynamicSeed: initialDynamicCombined.length,
+    dynamicSources: initialDynamicCombined
+  }, 'Initial sources collected');
 
   // Create iterator with only static seed sources
   const querySourceIterator = new QuerySourceIterator({
@@ -861,6 +994,173 @@ async function getSources(sourceTerms: any[]): Promise<QuerySourceIterator> {
   return querySourceIterator;
 }
 
+async function parseSparqlEvaluationPipeline(pipelineDescription: string): Promise<{ query: string; sources: any[] }> {
+  logger.debug({ pipelineDescriptionLength: pipelineDescription.length }, 'Parsing pipeline description')
+  const pipelineParsingEngine = new QueryEngine();
+  const pipelineDescriptionStore = new Store();
+  const parser = new Parser();
+
+  await new Promise<void>(
+    (resolve, reject) => {
+      parser.parse(pipelineDescription, (error, quad, _prefixes) => {
+        if (error) {
+          reject('Error parsing pipeline description: ' + error);
+          return;
+        }
+        if (quad) {
+          pipelineDescriptionStore.addQuad(quad);
+        } else {
+          resolve();
+        }
+      });
+    }
+  );
+
+  const queryInfoStream = await pipelineParsingEngine.queryBindings(`
+PREFIX fno: <https://w3id.org/function/ontology#>
+PREFIX trans: <http://localhost:5000/config/transformations#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+SELECT ?queryString ?source ?endpoint ?variable WHERE {
+    ?execution a fno:Execution .
+    ?execution fno:executes trans:SPARQLEvaluation .
+    ?execution trans:queryString ?queryString .
+    ?execution trans:sources ?sourceElement .
+    ?sourceElement (rdf:rest*/rdf:first) ?source .
+    OPTIONAL {
+        ?source a trans:SPARQLQueryResultSource .
+        ?source trans:sparqlQueryResult ?endpoint .
+        ?source trans:extractVariables ?variablesElement .
+        ?variablesElement (rdf:rest*/rdf:first) ?variable .
+    }
+}
+  `, {
+    sources: [
+      pipelineDescriptionStore
+    ]
+  })
+
+  const queryInfo: {query: string, sources: any[]} = await new Promise(
+    (resolve, reject) => {
+      let queryString: string | undefined = undefined
+      let sources: any[] | undefined = undefined;
+      const dynamicSourceMap: Map<string, { endpoint: string, variables: string[] }> = new Map();
+      queryInfoStream.on('data', (data) => {
+        const queryTerm = data.get('queryString');
+        if (queryString === undefined && queryTerm?.value !== undefined) {
+          queryString = queryTerm.value;
+        }
+        if (queryTerm?.value === queryString) {
+          const sourceNode: any = data.get('source');
+          if (!sourceNode) {
+            return;
+          }
+
+          const endpointTerm: any = data.get('endpoint');
+          const variableTerm: any = data.get('variable');
+          let sourceTerm: any = sourceNode;
+          if (endpointTerm) {
+            const key = `${sourceNode.termType}:${sourceNode.value ?? ''}`;
+            let entry = dynamicSourceMap.get(key);
+            if (!entry) {
+              entry = { endpoint: endpointTerm.value, variables: [] };
+              dynamicSourceMap.set(key, entry);
+              if (!sources) {
+                sources = [ entry ];
+              } else {
+                sources.push(entry);
+              }
+            }
+            if (variableTerm?.value && !entry.variables.includes(variableTerm.value)) {
+              entry.variables.push(variableTerm.value);
+            }
+          } else {
+            if (!sources) {
+              sources = [ sourceTerm ];
+            } else {
+              sources.push(sourceTerm);
+            }
+            return;
+          }
+        }
+      });
+      queryInfoStream.on('end', () => {
+        if (queryString === undefined) {
+          reject(new Error('No query string found in the pipeline description.'));
+          return
+        }
+        if (sources === undefined) {
+          reject(new Error('No sources found in the pipeline description.'));
+          return
+        }
+        resolve({ query: queryString, sources: sources });
+      });
+      queryInfoStream.on('error', (error) => {
+        reject(error);
+      });
+    }
+  );
+  queryInfoStream.destroy();
+
+  return { query: queryInfo.query, sources: queryInfo.sources };
+}
+
+async function evaluateSparqlEvaluationPipelineOnce(
+  pipelineDescription: string,
+  options: { timeoutMs?: number } = {}
+): Promise<Map<string, { bindings: any, count: number }>> {
+  const queryInfo = await parseSparqlEvaluationPipeline(pipelineDescription);
+  const sourceIterator = await getSources(queryInfo.sources);
+  const queryEngine = new QueryEngineInc();
+  const deferredEvaluationTrigger = new EventEmitter();
+  const bindingsStream = await queryEngine.queryBindings(queryInfo.query, {
+    // @ts-ignore
+    sources: [sourceIterator],
+    fetch: customFetch,
+    deferredEvaluationTrigger,
+  });
+
+  const view = new Map<string, { bindings: any, count: number }>();
+  const timeoutMs = options.timeoutMs ?? 2_000;
+
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => resolve(), timeoutMs);
+
+    bindingsStream.on('data', (bindings: any) => {
+      const key = bindings.toString();
+      if (isAddition(bindings)) {
+        if (view.has(key)) {
+          view.get(key)!.count++;
+        } else {
+          view.set(key, { bindings, count: 1 });
+        }
+      } else if (view.has(key)) {
+        const existingElement = view.get(key)!;
+        existingElement.count--;
+        if (existingElement.count <= 0) {
+          view.delete(key);
+        }
+      }
+      clearTimeout(timeout);
+      resolve();
+    });
+    bindingsStream.on('end', () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    bindingsStream.on('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    setImmediate(() => deferredEvaluationTrigger.emit('update'));
+  });
+
+  bindingsStream.destroy();
+  sourceIterator.destroy();
+
+  return view;
+}
+
 function getSourceValue(term: any): string | undefined {
   if (!term) {
     return undefined;
@@ -970,7 +1270,19 @@ function bindingToSparqlJson(bindings: any) {
   };
 }
 
-export { getSources, getSourceValue, collectSourcesFromBindingObject, SSEConnectionManager, UpToDateTimeout, materializedViewToSparqlJson, bindingToSparqlJson, logger, customFetch };
+export {
+  getSources,
+  getSourceValue,
+  collectSourcesFromBindingObject,
+  SSEConnectionManager,
+  UpToDateTimeout,
+  materializedViewToSparqlJson,
+  bindingToSparqlJson,
+  logger,
+  customFetch,
+  parseSparqlEvaluationPipeline,
+  evaluateSparqlEvaluationPipelineOnce
+};
 
 if (require.main === module) {
   let isShuttingDown = false;
@@ -987,6 +1299,7 @@ if (require.main === module) {
     }
 
     try {
+      await cleanupUpstreamDerivations();
       await deregisterWithAggregator();
     } catch (error) {
       logger.error({ error }, 'Error during deregistration');

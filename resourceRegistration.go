@@ -247,8 +247,8 @@ func handleResourceUpdate(w http.ResponseWriter, r *http.Request) {
 	resourceID := fmt.Sprintf("%s://%s:%s/%s%s", Protocol, Host, ServerPort, actorID, existing.Endpoint)
 	var resourceRelations interface{}
 	if len(existing.Sources) > 0 {
-		resourceRelations = map[string][]Source{
-			"prov:wasDerivedFrom": existing.Sources,
+		resourceRelations = map[string]interface{}{
+			"derived_from": existing.Sources,
 		}
 	}
 	if err := auth.CreateResource(resourceID, existing.Scopes, resourceRelations); err != nil {
@@ -367,8 +367,8 @@ func registerResourceWithUMA(actorID string, registration *ResourceRegistration)
 	// Build resource relations from sources if provided
 	var resourceRelations interface{}
 	if len(registration.Sources) > 0 {
-		resourceRelations = map[string][]Source{
-			"prov:wasDerivedFrom": registration.Sources,
+		resourceRelations = map[string]interface{}{
+			"derived_from": registration.Sources,
 		}
 	}
 

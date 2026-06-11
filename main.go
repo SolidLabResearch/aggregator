@@ -95,22 +95,6 @@ func main() {
 		logrus.WithError(err).Warn("Failed to deploy cleanup daemon - cleanup will use inline fallback")
 	}
 
-	// Validate and warn about Solid OIDC configuration
-	if *webId == "" || *email == "" || *password == "" {
-		logrus.Warn("⚠️  WARNING: Solid OIDC configuration incomplete")
-		if *webId == "" {
-			logrus.Warn("⚠️  Missing webid (set --webid or WEBID)")
-		}
-		if *email == "" {
-			logrus.Warn("⚠️  Missing email (set --email or EMAIL)")
-		}
-		if *password == "" {
-			logrus.Warn("⚠️  Missing password (set --password or PASSWORD)")
-		}
-		logrus.Warn("⚠️  UMA proxy will run WITHOUT authentication - requests will be passed through as-is")
-	}
-
-	// Setup proxy with Solid OIDC configuration
 	proxyConfig := proxy.ProxyConfig{
 		WebId:    *webId,
 		Email:    *email,
@@ -120,6 +104,7 @@ func main() {
 	proxy.SetupProxy(Clientset, proxyConfig)
 
 	serverMux := http.NewServeMux()
+	RegisterServerMetadataEndpoints(serverMux)
 
 	go func() {
 		logrus.WithFields(logrus.Fields{"port": ServerPort}).Info("Server listening")

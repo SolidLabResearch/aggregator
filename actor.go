@@ -1,6 +1,7 @@
 package main
 
 import (
+	"aggregator/auth"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -22,7 +23,16 @@ func InitializeKubernetes(mux *http.ServeMux) {
 type Actor struct {
 	Id                  string `json:"id"`
 	PipelineDescription string `json:"pipelineDescription"`
+	CreatedAt           time.Time
+	Services            map[string]AggregatorService
+	AuthorizationServer string
+	OIDCToken           string
+	etagServices        int
 	pod                 *v1.Pod
+}
+
+func createLogicalActor() Actor {
+	return Actor{Id: uuid.New().String(), CreatedAt: time.Now().UTC(), Services: make(map[string]AggregatorService)}
 }
 
 // TODO This needs to be more generic and extensible
@@ -75,8 +85,12 @@ func createActor(pipelineDescription string) (Actor, error) {
 		},
 	}
 
-	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	pod, err := Clientset.CoreV1().Pods("default").Create(ctx, podScafolding, metav1.CreateOptions{})
+	if err != nil {
+		return Actor{}, fmt.Errorf("failed to create pod: %v", err)
+	}
 
 	serviceName := "id-" + id + "-service"
 	svc := &v1.Service{
@@ -98,14 +112,17 @@ func createActor(pipelineDescription string) (Actor, error) {
 	}
 
 	_, err = Clientset.CoreV1().Services("default").Create(ctx, svc, metav1.CreateOptions{})
-
 	if err != nil {
-		return Actor{}, fmt.Errorf("failed to create pod: %v", err)
+		return Actor{}, fmt.Errorf("failed to create service %s: %v", serviceName, err)
 	}
 
-	watcher, _ := Clientset.CoreV1().Pods("default").Watch(ctx, metav1.ListOptions{
+	watcher, err := Clientset.CoreV1().Pods("default").Watch(context.Background(), metav1.ListOptions{
 		FieldSelector: fmt.Sprintf("metadata.name=%s", id),
 	})
+	if err != nil {
+		return Actor{}, fmt.Errorf("failed to watch pod %s: %v", id, err)
+	}
+	defer watcher.Stop()
 
 	nodes, err := Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -139,16 +156,35 @@ func createActor(pipelineDescription string) (Actor, error) {
 		return Actor{}, fmt.Errorf("no NodePort found for service %s", serviceName)
 	}
 
-	for event := range watcher.ResultChan() {
-		pod := event.Object.(*v1.Pod)
-		if pod.Status.Phase == v1.PodRunning {
-			break
-		} else if pod.Status.Phase == v1.PodFailed {
-			return Actor{}, fmt.Errorf("pod failed to start: %v", pod.Status.Reason)
+	podReadyDeadline := time.After(120 * time.Second)
+	for {
+		select {
+		case event, ok := <-watcher.ResultChan():
+			if !ok {
+				return Actor{}, fmt.Errorf("pod watch ended before pod %s became ready", id)
+			}
+			pod := event.Object.(*v1.Pod)
+			if pod.Status.Phase == v1.PodFailed {
+				return Actor{}, fmt.Errorf("pod failed to start: %v", pod.Status.Reason)
+			}
+			if isPodReady(pod) {
+				goto podReady
+			}
+		case <-podReadyDeadline:
+			return Actor{}, fmt.Errorf("pod %s did not become ready within 120s", id)
 		}
 	}
 
-	logrus.WithFields(logrus.Fields{"url": fmt.Sprintf("http://%s:%d", nodeIp, nodePort)}).Info("Pod is running")
+podReady:
+	backendURL := fmt.Sprintf("http://%s:%d/", nodeIp, nodePort)
+	if err := waitForBackendReachable(backendURL, 60*time.Second); err != nil {
+		return Actor{}, fmt.Errorf("actor backend %s did not become reachable: %v", backendURL, err)
+	}
+
+	registerLegacyActorResource(id, nodeIp, nodePort, "/", []auth.ResourceScope{auth.ScopeRead})
+	registerLegacyActorResource(id, nodeIp, nodePort, "/events", []auth.ResourceScope{auth.ScopeContinuousRead})
+
+	logrus.WithFields(logrus.Fields{"url": backendURL}).Info("Pod backend is reachable")
 
 	serverMux.HandleFunc("/"+id+"/", AuthProxyInstance.HandleAllRequests)
 
@@ -157,10 +193,73 @@ func createActor(pipelineDescription string) (Actor, error) {
 	actor := Actor{
 		Id:                  id,
 		PipelineDescription: pipelineDescription,
+		CreatedAt:           time.Now().UTC(),
+		Services:            make(map[string]AggregatorService),
 		pod:                 pod,
 	}
 
 	return actor, nil
+}
+
+func isPodReady(pod *v1.Pod) bool {
+	if pod.Status.Phase != v1.PodRunning {
+		return false
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == v1.PodReady && condition.Status == v1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+func waitForBackendReachable(backendURL string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+
+	for time.Now().Before(deadline) {
+		response, err := http.Get(backendURL)
+		if err == nil {
+			_ = response.Body.Close()
+			if response.StatusCode < http.StatusInternalServerError {
+				return nil
+			}
+			lastErr = fmt.Errorf("backend returned status %d", response.StatusCode)
+		} else {
+			lastErr = err
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("timed out")
+}
+
+func registerLegacyActorResource(actorID string, nodeIP string, nodePort int, endpoint string, scopes []auth.ResourceScope) {
+	normalizedEndpoint := endpoint
+	if normalizedEndpoint == "" {
+		normalizedEndpoint = "/"
+	}
+	registeredResources[actorID+normalizedEndpoint] = &ResourceRegistration{
+		PodName:     actorID,
+		PodIP:       nodeIP,
+		Port:        nodePort,
+		Endpoint:    normalizedEndpoint,
+		Scopes:      scopes,
+		Description: "Legacy actor endpoint",
+	}
+
+	resourceID := fmt.Sprintf("%s://%s:%s/%s%s", Protocol, Host, ServerPort, actorID, normalizedEndpoint)
+	for _, scope := range scopes {
+		if scope == auth.ScopeContinuousRead || scope == auth.ScopeContinuousWrite || scope == auth.ScopeContinuousDuplex {
+			auth.AddStreamingResource(resourceID, scope)
+		}
+	}
+	if err := auth.CreateResource(resourceID, scopes, nil); err != nil {
+		logrus.WithFields(logrus.Fields{"actor_id": actorID, "endpoint": normalizedEndpoint, "err": err}).Debug("Failed to pre-register legacy actor resource with UMA")
+	}
 }
 
 func (actor Actor) Stop() {

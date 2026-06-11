@@ -26,6 +26,7 @@ type SolidAuth struct {
 	mu                  sync.RWMutex
 	refreshTimer        *time.Timer
 	umaPermissionTokens map[string]UmaTokenEntry
+	derivations         map[string]DerivationEntry
 	refreshing          bool
 	refreshCond         *sync.Cond
 }
@@ -37,11 +38,25 @@ type UmaTokenEntry struct {
 	ExpiresAt   time.Time
 }
 
+type ManagementAccessToken struct {
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
+}
+
+type DerivationEntry struct {
+	SourceURL               string
+	Issuer                  string
+	DerivationResourceID    string
+	ManagementAccessToken   ManagementAccessToken
+	ResourceRegistrationURL string
+}
+
 // NewSolidAuth creates a new SolidAuth instance
 func NewSolidAuth(webId string) *SolidAuth {
 	sa := &SolidAuth{
 		webId:               webId,
 		umaPermissionTokens: make(map[string]UmaTokenEntry),
+		derivations:         make(map[string]DerivationEntry),
 	}
 	sa.refreshCond = sync.NewCond(&sa.mu)
 	return sa
@@ -368,6 +383,43 @@ func (sa *SolidAuth) deleteUmaToken(method, resourceURL string) {
 	sa.mu.Lock()
 	defer sa.mu.Unlock()
 	delete(sa.umaPermissionTokens, sa.buildUmaKey(method, resourceURL))
+}
+
+func (sa *SolidAuth) storeDerivation(resourceURL string, entry DerivationEntry) {
+	sa.mu.Lock()
+	defer sa.mu.Unlock()
+	sa.derivations[resourceURL] = entry
+}
+
+func (sa *SolidAuth) listDerivations(resourceURL string) []DerivationEntry {
+	sa.mu.RLock()
+	defer sa.mu.RUnlock()
+
+	if resourceURL != "" {
+		entry, ok := sa.derivations[resourceURL]
+		if !ok {
+			return nil
+		}
+		return []DerivationEntry{entry}
+	}
+
+	entries := make([]DerivationEntry, 0, len(sa.derivations))
+	for _, entry := range sa.derivations {
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+func (sa *SolidAuth) deleteDerivation(resourceURL string) {
+	sa.mu.Lock()
+	defer sa.mu.Unlock()
+	delete(sa.derivations, resourceURL)
+}
+
+func (sa *SolidAuth) clearDerivations() {
+	sa.mu.Lock()
+	defer sa.mu.Unlock()
+	sa.derivations = make(map[string]DerivationEntry)
 }
 
 // clearUmaCache clears UMA permission token cache

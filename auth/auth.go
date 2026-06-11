@@ -15,57 +15,37 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"os"
 	"runtime/debug"
 	"strings"
 	"sync"
 )
 
-const AS_ISSUER = "http://localhost:4000/uma"
+var AS_ISSUER = getEnv("AS_ISSUER", "http://localhost:4000/uma")
+
+var (
+	fetchTicketForIssuer = fetchTicket
+	verifyTicketForToken = VerifyTicket
+)
+
+func getEnv(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
+}
 
 func AuthorizeRequest(response http.ResponseWriter, request *http.Request, extraPermissions []Permission) bool {
 	if request.Header.Get("Authorization") == "" {
 		logrus.WithFields(logrus.Fields{"method": request.Method, "path": request.URL.Path}).Warn("🔐 Authorization header missing")
-		scheme := "http"
-		if request.TLS != nil {
-			scheme = "https"
-		}
-		completeURL := fmt.Sprintf("%s://%s%s", scheme, request.Host, request.URL.Path)
-		logrus.WithFields(logrus.Fields{"url": completeURL}).Info("🎫 Creating ticket")
-
-		ticketPermissions := make(map[string][]string)
-		ticketPermissions[completeURL] = BuildPermissions(completeURL, request.Method).ResourceScopes
-		if extraPermissions != nil {
-			logrus.WithFields(logrus.Fields{"count": len(extraPermissions)}).Debug("➕ Adding extra permissions")
-			for _, permission := range extraPermissions {
-				ticketPermissions[permission.ResourceID] = permission.ResourceScopes
-				logrus.WithFields(logrus.Fields{"resource_id": permission.ResourceID, "scopes": permission.ResourceScopes}).Debug("Extra permission")
-			}
-		}
-		ticket, err := fetchTicket(ticketPermissions, AS_ISSUER)
-		if err != nil {
-			logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Error while retrieving ticket")
-			http.Error(response, "error while retrieving ticket: "+err.Error(), http.StatusInternalServerError)
-			return false
-		}
-		if ticket == "" {
-			logrus.Info("✅ No ticket needed - access granted immediately")
-			return true
-		}
-		logrus.WithFields(logrus.Fields{"url": completeURL, "as_uri": AS_ISSUER}).Info("🎫 Ticket created successfully, sending WWW-Authenticate header")
-		response.Header().Set(
-			"WWW-Authenticate",
-			fmt.Sprintf(`UMA as_uri="%s", ticket="%s"`, AS_ISSUER, ticket),
-		)
-		response.WriteHeader(http.StatusUnauthorized)
-		return false
+		return requestUMATicket(response, request, extraPermissions)
 	}
 
 	logrus.WithFields(logrus.Fields{"method": request.Method, "path": request.URL.Path}).Info("🔍 Verifying authorization token")
-	permission, err := VerifyTicket(request.Header.Get("Authorization"), []string{"http://localhost:4000/uma"})
+	permission, err := verifyTicketForToken(request.Header.Get("Authorization"), []string{AS_ISSUER})
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Error while verifying ticket")
-		response.WriteHeader(http.StatusUnauthorized)
-		return false
+		return requestUMATicket(response, request, extraPermissions)
 	}
 
 	scheme := "http"
@@ -80,6 +60,7 @@ func AuthorizeRequest(response http.ResponseWriter, request *http.Request, extra
 		logrus.WithFields(logrus.Fields{"url": completeURL, "resource_id": resourceId}).Debug("📋 Found resource ID")
 	} else {
 		logrus.WithFields(logrus.Fields{"url": completeURL}).Warn("⚠️ No resource ID found in idIndex")
+		http.Error(response, "Resource is not registered with UMA", http.StatusNotFound)
 		return false
 	}
 
@@ -89,8 +70,48 @@ func AuthorizeRequest(response http.ResponseWriter, request *http.Request, extra
 	}
 
 	logrus.WithFields(logrus.Fields{"resource_id": idIndex[completeURL], "permissions": permission}).Warn("❌ No matching permission found")
-	response.WriteHeader(http.StatusBadRequest)
+	return requestUMATicket(response, request, extraPermissions)
+}
+
+func requestUMATicket(response http.ResponseWriter, request *http.Request, extraPermissions []Permission) bool {
+	completeURL := requestURL(request)
+	logrus.WithFields(logrus.Fields{"url": completeURL}).Info("🎫 Creating UMA ticket")
+
+	ticketPermissions := make(map[string][]string)
+	permission := BuildPermissions(completeURL, request.Method)
+	ticketPermissions[permission.ResourceID] = permission.ResourceScopes
+	if extraPermissions != nil {
+		logrus.WithFields(logrus.Fields{"count": len(extraPermissions)}).Debug("➕ Adding extra permissions")
+		for _, permission := range extraPermissions {
+			ticketPermissions[permission.ResourceID] = permission.ResourceScopes
+			logrus.WithFields(logrus.Fields{"resource_id": permission.ResourceID, "scopes": permission.ResourceScopes}).Debug("Extra permission")
+		}
+	}
+	ticket, err := fetchTicketForIssuer(ticketPermissions, AS_ISSUER)
+	if err != nil {
+		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Error while retrieving ticket")
+		http.Error(response, "error while retrieving ticket: "+err.Error(), http.StatusInternalServerError)
+		return false
+	}
+	if ticket == "" {
+		logrus.Info("✅ No ticket needed - access granted immediately")
+		return true
+	}
+	logrus.WithFields(logrus.Fields{"url": completeURL, "as_uri": AS_ISSUER}).Info("🎫 Ticket created successfully, sending WWW-Authenticate header")
+	response.Header().Set(
+		"WWW-Authenticate",
+		fmt.Sprintf(`UMA as_uri="%s", ticket="%s"`, AS_ISSUER, ticket),
+	)
+	response.WriteHeader(http.StatusUnauthorized)
 	return false
+}
+
+func requestURL(request *http.Request) string {
+	scheme := "http"
+	if request.TLS != nil {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s%s", scheme, request.Host, request.URL.Path)
 }
 
 type UmaConfig struct {
@@ -573,14 +594,25 @@ var idIndex = make(map[string]string)
 type ResourceScope string
 
 const (
-	ScopeRead             ResourceScope = "urn:example:css:modes:read"
-	ScopeAppend           ResourceScope = "urn:example:css:modes:append"
-	ScopeCreate           ResourceScope = "urn:example:css:modes:create"
-	ScopeDelete           ResourceScope = "urn:example:css:modes:delete"
-	ScopeWrite            ResourceScope = "urn:example:css:modes:write"
-	ScopeContinuousRead   ResourceScope = "urn:example:css:modes:continuous:read"
-	ScopeContinuousWrite  ResourceScope = "urn:example:css:modes:continuous:write"
-	ScopeContinuousDuplex ResourceScope = "urn:example:css:modes:continuous:duplex"
+	ScopeRead               ResourceScope = "urn:knows:uma:scopes:read"
+	ScopeAppend             ResourceScope = "urn:knows:uma:scopes:append"
+	ScopeCreate             ResourceScope = "urn:knows:uma:scopes:create"
+	ScopeDelete             ResourceScope = "urn:knows:uma:scopes:delete"
+	ScopeWrite              ResourceScope = "urn:knows:uma:scopes:write"
+	ScopeContinuousRead     ResourceScope = "urn:knows:uma:scopes:continuous:read"
+	ScopeContinuousWrite    ResourceScope = "urn:knows:uma:scopes:continuous:write"
+	ScopeContinuousDuplex   ResourceScope = "urn:knows:uma:scopes:continuous:duplex"
+	ScopeDerivationCreation ResourceScope = "urn:knows:uma:scopes:derivation-creation"
+	ScopeDerivationRead     ResourceScope = "urn:knows:uma:scopes:derivation-read"
+
+	legacyScopeRead             ResourceScope = "urn:example:css:modes:read"
+	legacyScopeAppend           ResourceScope = "urn:example:css:modes:append"
+	legacyScopeCreate           ResourceScope = "urn:example:css:modes:create"
+	legacyScopeDelete           ResourceScope = "urn:example:css:modes:delete"
+	legacyScopeWrite            ResourceScope = "urn:example:css:modes:write"
+	legacyScopeContinuousRead   ResourceScope = "urn:example:css:modes:continuous:read"
+	legacyScopeContinuousWrite  ResourceScope = "urn:example:css:modes:continuous:write"
+	legacyScopeContinuousDuplex ResourceScope = "urn:example:css:modes:continuous:duplex"
 )
 
 func CreateResource(resourceId string, resourceScopes []ResourceScope, resourceRelations interface{}) error {
@@ -594,7 +626,7 @@ func CreateResource(resourceId string, resourceScopes []ResourceScope, resourceR
 	endpoint := config.resourceRegistrationEndpoint
 	method := "POST"
 	if knownUmaId != "" {
-		endpoint = endpoint + knownUmaId
+		endpoint = joinRegistrationEndpoint(endpoint, knownUmaId)
 		method = "PUT"
 	}
 
@@ -610,7 +642,13 @@ func CreateResource(resourceId string, resourceScopes []ResourceScope, resourceR
 	}
 
 	if resourceRelations != nil {
-		description["resource_relations"] = resourceRelations
+		if relations, ok := resourceRelations.(map[string]interface{}); ok {
+			for key, value := range relations {
+				description[key] = value
+			}
+		} else {
+			description["resource_relations"] = resourceRelations
+		}
 	}
 
 	jsonData, err := json.Marshal(description)
@@ -673,21 +711,21 @@ func CreateResource(resourceId string, resourceScopes []ResourceScope, resourceR
 }
 
 func DeleteResource(resourceId string) {
-	config, err := fetchUmaConfig(AS_ISSUER)
-	if err != nil {
-		logrus.WithFields(logrus.Fields{"err": err}).Error("Error while retrieving UMA configuration")
-		return
-	}
-
 	authId := idIndex[resourceId]
 	if authId == "" {
 		logrus.WithFields(logrus.Fields{"resource_id": resourceId}).Warn("Resource not found in local index")
 		return
 	}
 
+	config, err := fetchUmaConfig(AS_ISSUER)
+	if err != nil {
+		logrus.WithFields(logrus.Fields{"err": err}).Error("Error while retrieving UMA configuration")
+		return
+	}
+
 	req, err := http.NewRequest(
 		"DELETE",
-		config.resourceRegistrationEndpoint+"/"+authId,
+		joinRegistrationEndpoint(config.resourceRegistrationEndpoint, authId),
 		nil,
 	)
 	if err != nil {
@@ -731,7 +769,7 @@ func DeleteAllResources() {
 
 		req, err := http.NewRequest(
 			"DELETE",
-			config.resourceRegistrationEndpoint+authId,
+			joinRegistrationEndpoint(config.resourceRegistrationEndpoint, authId),
 			&bytes.Buffer{},
 		)
 		if err != nil {
@@ -760,6 +798,10 @@ func DeleteAllResources() {
 		logrus.WithFields(logrus.Fields{"resource_id": resourceId, "uma_id": authId}).Info("Resource deleted successfully")
 	}
 	idIndex = make(map[string]string)
+}
+
+func joinRegistrationEndpoint(endpoint, id string) string {
+	return strings.TrimRight(endpoint, "/") + "/" + strings.TrimLeft(id, "/")
 }
 
 var (
@@ -814,8 +856,12 @@ func BuildPermissions(resourceURL, method string) Permission {
 	}
 
 	logrus.WithFields(logrus.Fields{"resource_id": resourceURL, "scopes": scopes[0]}).Debug("Build permissions")
+	resourceID := resourceURL
+	if registeredID := idIndex[resourceURL]; registeredID != "" {
+		resourceID = registeredID
+	}
 	return Permission{
-		ResourceID:     resourceURL,
+		ResourceID:     resourceID,
 		ResourceScopes: scopes,
 	}
 }
@@ -825,7 +871,7 @@ func CheckPermission(resourceURL, method string, permission []Permission) bool {
 	if res, ok := IsStreamingResource(resourceURL); ok {
 		for _, perm := range permission {
 			if perm.ResourceID == resourceURL {
-				if contains(perm.ResourceScopes, string(res.Scope)) {
+				if hasScope(perm.ResourceScopes, res.Scope) {
 					logrus.Info("✅ Authorization successful - user has streaming permissions")
 					return true
 				}
@@ -841,28 +887,28 @@ func CheckPermission(resourceURL, method string, permission []Permission) bool {
 			switch method {
 			case http.MethodGet, http.MethodHead:
 				logrus.WithFields(logrus.Fields{"method": method}).Debug("📖 Checking for 'read' scope")
-				if contains(perm.ResourceScopes, string(ScopeRead)) {
+				if hasScope(perm.ResourceScopes, ScopeRead) {
 					logrus.Info("✅ Authorization successful - user has read permissions")
 					return true
 				}
 				break
 			case http.MethodPost:
 				logrus.WithFields(logrus.Fields{"method": method}).Debug("🔧 Checking for 'create' scope")
-				if contains(perm.ResourceScopes, string(ScopeCreate)) {
+				if hasScope(perm.ResourceScopes, ScopeCreate) {
 					logrus.Info("✅ Authorization successful - user has modify permissions")
 					return true
 				}
 				break
 			case http.MethodPatch, http.MethodPut:
 				logrus.WithFields(logrus.Fields{"method": method}).Debug("🔧 Checking for 'write' scope")
-				if contains(perm.ResourceScopes, string(ScopeWrite)) {
+				if hasScope(perm.ResourceScopes, ScopeWrite) {
 					logrus.Info("✅ Authorization successful - user has modify permissions")
 					return true
 				}
 				break
 			case http.MethodDelete:
 				logrus.WithFields(logrus.Fields{"method": method}).Debug("🔧 Checking for 'delete' scope")
-				if contains(perm.ResourceScopes, string(ScopeDelete)) {
+				if hasScope(perm.ResourceScopes, ScopeDelete) {
 					logrus.Info("✅ Authorization successful - user has modify permissions")
 					return true
 				}
@@ -874,4 +920,39 @@ func CheckPermission(resourceURL, method string, permission []Permission) bool {
 	}
 	logrus.WithFields(logrus.Fields{"resource_id": resourceURL, "method": method}).Warn("❌ Authorization failed - no matching resource ID & scope found in permissions")
 	return false
+}
+
+func hasScope(scopes []string, required ResourceScope) bool {
+	if contains(scopes, string(required)) {
+		return true
+	}
+	for _, alias := range legacyAliases(required) {
+		if contains(scopes, string(alias)) {
+			return true
+		}
+	}
+	return false
+}
+
+func legacyAliases(scope ResourceScope) []ResourceScope {
+	switch scope {
+	case ScopeRead:
+		return []ResourceScope{legacyScopeRead}
+	case ScopeAppend:
+		return []ResourceScope{legacyScopeAppend}
+	case ScopeCreate:
+		return []ResourceScope{legacyScopeCreate}
+	case ScopeDelete:
+		return []ResourceScope{legacyScopeDelete}
+	case ScopeWrite:
+		return []ResourceScope{legacyScopeWrite}
+	case ScopeContinuousRead:
+		return []ResourceScope{legacyScopeContinuousRead}
+	case ScopeContinuousWrite:
+		return []ResourceScope{legacyScopeContinuousWrite}
+	case ScopeContinuousDuplex:
+		return []ResourceScope{legacyScopeContinuousDuplex}
+	default:
+		return nil
+	}
 }

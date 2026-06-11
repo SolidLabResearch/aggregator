@@ -56,13 +56,13 @@ func main() {
 			logrus.Info("✅ Solid OIDC authentication initialized successfully")
 		}
 	} else {
-		logrus.Warn("⚠️ WEBID, EMAIL, and/or PASSWORD not set")
-		logrus.Warn("⚠️ Solid OIDC disabled - proxy will not perform authentication")
+		logrus.Info("No static Solid OIDC credentials configured; proxy will forward requests without adding authentication")
 	}
 
 	http.HandleFunc("/", Handler)
 	http.HandleFunc("/fetch", FetchHandler)
 	http.HandleFunc("/sse", SSEHandler)
+	http.HandleFunc("/derivations", DerivationsHandler)
 	go func() {
 		logrus.WithFields(logrus.Fields{"port": 8080}).Info("HTTP proxy listening")
 		if err := http.ListenAndServe(":8080", nil); err != nil {
@@ -308,39 +308,17 @@ func SSEHandler(w http.ResponseWriter, r *http.Request) {
 	logrus.WithFields(logrus.Fields{"as_uri": asUri, "service_endpoint": serviceEndpoint}).Debug("🔐 Retrieved UMA endpoints")
 
 	// Step 4: Get UMA2 token endpoint
-	uma2ConfigReq, err := createRequestWithRedirect("GET", asUri+"/.well-known/uma2-configuration", nil)
-	if err != nil {
-		http.Error(w, "Failed to create UMA config request: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-
-	uma2ConfigResp, err := throttledDo(uma2ConfigReq)
+	uma2Config, err := fetchUMA2Config(asUri)
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to get UMA2 configuration")
 		http.Error(w, "Failed to get UMA2 configuration: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer uma2ConfigResp.Body.Close()
-
-	if uma2ConfigResp.StatusCode != http.StatusOK {
-		logrus.WithFields(logrus.Fields{"status": uma2ConfigResp.StatusCode}).Error("❌ UMA2 configuration request failed")
-		http.Error(w, "UMA2 configuration unavailable", http.StatusBadGateway)
-		return
-	}
-
-	var uma2Config struct {
-		TokenEndpoint string `json:"token_endpoint"`
-	}
-	if err := json.NewDecoder(uma2ConfigResp.Body).Decode(&uma2Config); err != nil {
-		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to decode UMA2 configuration")
-		http.Error(w, "Failed to decode UMA2 configuration: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 
 	tokenEndpoint := uma2Config.TokenEndpoint
 
 	// Step 5: Get access token with claim gathering
-	accessToken, tokenType, _, _, err := fetchAccessToken(tokenEndpoint, ticket, nil)
+	accessToken, tokenType, _, _, _, err := fetchAccessToken(tokenEndpoint, ticket, nil)
 	if err != nil {
 		logrus.WithFields(logrus.Fields{"err": err}).Error("❌ Failed to fetch access token")
 		http.Error(w, "Failed to fetch access token: "+err.Error(), http.StatusBadGateway)
@@ -436,6 +414,45 @@ func SSEHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+func DerivationsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if solidAuth == nil {
+		http.Error(w, "Authentication not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	var request struct {
+		ResourceURL string `json:"resource_url"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&request)
+	}
+
+	entries := solidAuth.listDerivations(request.ResourceURL)
+	failures := []string{}
+	for _, entry := range entries {
+		if err := deleteUpstreamDerivationResource(entry); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %s", entry.DerivationResourceID, err.Error()))
+			continue
+		}
+		solidAuth.deleteDerivation(entry.SourceURL)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	status := http.StatusOK
+	if len(failures) > 0 {
+		status = http.StatusBadGateway
+	}
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"deleted":  len(entries) - len(failures),
+		"failures": failures,
+	})
 }
 
 // MITM handler

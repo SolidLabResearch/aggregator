@@ -12,7 +12,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"github.com/sirupsen/logrus"
-	"io"
 	"math/big"
 	"net/http"
 	"os"
@@ -30,6 +29,8 @@ var (
 	// We'll define a KID (key ID) so verifiers know which key to use.
 	keyID = "demo-key-1"
 )
+
+var HTTP_SIGNATURE_CREDENTIAL = getEnv("HTTP_SIGNATURE_CREDENTIAL", "http://localhost:5000")
 
 // Jwk represents a single JSON Web Key in a JWKS.
 type Jwk struct {
@@ -145,34 +146,31 @@ func makeJWKFromRSAPrivateKey(kid string) (Jwk, error) {
 }
 
 func doSignedRequest(req *http.Request) (*http.Response, error) {
-	// 1) Put your domain in the Authorization header as cred="..."
-	//    The Node server uses that to fetch your JWK from JWKS
-	req.Header.Set("Authorization", fmt.Sprintf(`HttpSig cred=%q`, "http://localhost:5000"))
-
-	label := "sig1"
-
-	body, err := io.ReadAll(req.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read body of outgoing request: %w", err)
+	if err := signHTTPRequest(req); err != nil {
+		return nil, err
 	}
-	h := sha256.Sum256(body)
-	digestVal := "sha-256=" + base64.StdEncoding.EncodeToString(h[:])
-	req.Header.Set("Content-Digest", digestVal)
+	return httpclient.DefaultClient.Do(req)
+}
 
-	dateVal := time.Now().UTC().Format(http.TimeFormat)
-	req.Header.Set("Date", dateVal)
+func signHTTPRequest(req *http.Request) error {
+	req.Header.Set("Authorization", fmt.Sprintf(`HttpSig cred=%q`, HTTP_SIGNATURE_CREDENTIAL))
 
+	label := "sig"
 	created := time.Now().Unix()
 	signatureInputValue := fmt.Sprintf(
-		`%s=("content-digest" "date");keyid=%q;alg=%q;created=%d`,
+		`%s=("@target-uri" "@method");keyid=%q;alg=%q;created=%d`,
 		label, keyID, "RS256", created,
 	)
 	req.Header.Set("Signature-Input", signatureInputValue)
 
+	method := req.Method
+	if method == "" {
+		method = http.MethodGet
+	}
 	canonical := fmt.Sprintf(
-		"\"content-digest\": %s\n\"date\": %s\n\"@signature-params\": (\"content-digest\" \"date\");keyid=%q;alg=%q;created=%d",
-		digestVal,
-		dateVal,
+		"\"@target-uri\": %s\n\"@method\": %s\n\"@signature-params\": (\"@target-uri\" \"@method\");keyid=%q;alg=%q;created=%d",
+		req.URL.String(),
+		method,
 		keyID,
 		"RS256",
 		created,
@@ -181,13 +179,12 @@ func doSignedRequest(req *http.Request) (*http.Response, error) {
 	hash := sha256.Sum256([]byte(canonical))
 	sigBytes, err := rsa.SignPKCS1v15(rand.Reader, rsaPrivateKey, crypto.SHA256, hash[:])
 	if err != nil {
-		return nil, fmt.Errorf("failed to sign: %w", err)
+		return fmt.Errorf("failed to sign: %w", err)
 	}
 
 	sigB64 := base64.StdEncoding.EncodeToString(sigBytes)
 	signatureValue := fmt.Sprintf(`%s=:%s:`, label, sigB64)
 
 	req.Header.Set("Signature", signatureValue)
-
-	return httpclient.DefaultClient.Do(req)
+	return nil
 }
