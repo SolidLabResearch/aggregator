@@ -199,8 +199,8 @@
     "@comunica/runner": "4.1.0",
     "@comunica/runner-cli": "4.1.0",
     "@comunica/query-sparql": "4.1.0",
-    "@incremunica/query-sparql-incremental": "2.2.4",
-    "@incremunica/user-tools": "2.2.4",
+    "@incremunica/query-sparql-incremental": "2.3.5",
+    "@incremunica/user-tools": "2.3.2",
     "n3": "^1.26.0",
     "pino": "^9.1.0"
   },
