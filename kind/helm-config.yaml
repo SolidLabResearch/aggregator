@@ -7,7 +7,7 @@ auth:
   oidc:
     clientId: aggregator-server
     server: https://pacsoi-idp.faqir.org/realms/kvasir
-    clientSecret: 5yUwofhAohc9px5B1ufBvEALJVxygaMu
+    clientSecret: <client credentials>
   allowedRegistrationTypes:
     - device_code
 
@@ -75,8 +75,8 @@ transformations:
 
         <Pacsoi>
           a fno:Function ;
-          fno:expects ( <Sources> <WeightSlice> <ProcedureSlice> ) ;
-          fno:returns ( <WeightDistribution> ) .
+          fno:expects ( <Sources> <WeightSlice> <OxfordSlice> <BariatricProcedureSlice> <KneeProcedureSlice> ) ;
+          fno:returns ( <WeightDistribution> <OxfordDistribution> ) .
         
         <Sources>
           a fno:Parameter ;
@@ -90,22 +90,43 @@ transformations:
           fno:predicate <weight-slice> ;
           fno:required "true"^^xsd:boolean .
         
-        <ProcedureSlice>
+        <OxfordSlice>
           a fno:Parameter ;
           fno:type xsd:string ;
-          fno:predicate <procedure-slice> ;
+          fno:predicate <oxford-slice> ;
+          fno:required "true"^^xsd:boolean .
+        
+        <BariatricProcedureSlice>
+          a fno:Parameter ;
+          fno:type xsd:string ;
+          fno:predicate <bar-procedure-slice> ;
+          fno:required "true"^^xsd:boolean .
+        
+        <KneeProcedureSlice>
+          a fno:Parameter ;
+          fno:type xsd:string ;
+          fno:predicate <knee-procedure-slice> ;
           fno:required "true"^^xsd:boolean .
         
         <WeightDistribution>
           a fno:Output ;
           fno:predicate <w-dist> .
+        
+        <OxfordDistribution>
+          a fno:Output ;
+          fno:predicate <o-dist> .
       inputMapping:
         sources: SOURCES
         weight-slice: WEIGHT_SLICE
-        procedure-slice: PROCEDURE_SLICE
+        oxford-slice: OXFORD_SLICE
+        bar-procedure-slice: BAR_PROCEDURE_SLICE
+        knee-procedure-slice: KNEE_PROCEDURE_SLICE
       outputMapping:
         w-dist:
           port: 3000
           path: /w-dist
+        o-dist:
+          port: 3000
+          path: /o-dist
 
 loglevel: debug
