@@ -176,23 +176,33 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 	logrus.Info("Recieved request to register a service")
 
 	var body string
+	var err error
+
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusInternalServerError)
+		return
+	}
 
 	contentType := r.Header.Get("Content-Type")
 	if strings.Contains(contentType, "text/turtle") {
-		// Handle Turtle content
-		bodyBytes, err := io.ReadAll(r.Body)
+		body = string(bodyBytes)
+	} else if strings.Contains(contentType, "application/ld+json") {
+		// Convert JSON-LD into support n-quads format
+		body, err = util.JsonLDToNQuads(bodyBytes)
 		if err != nil {
-			http.Error(w, "Failed to read request body", http.StatusInternalServerError)
+			http.Error(w, "Invalid JSON-LD request", http.StatusBadRequest)
+			logrus.WithError(err).Error("Failed to convert JSON-LD to N_Quads")
 			return
 		}
-		body = string(bodyBytes)
+		contentType = "application/n-quads"
 	} else {
-		http.Error(w, "Unsupported Content-Type. Only text/turtle is supported", http.StatusUnsupportedMediaType)
+		http.Error(w, "Unsupported Content-Type", http.StatusUnsupportedMediaType)
 		return
 	}
 
 	// Parse request description
-	service, err := services.ParseRequestBody(body)
+	service, err := services.ParseRequestBody(body, contentType)
 	if err != nil {
 		logrus.WithError(err).Errorf("Failed to parse body")
 		http.Error(w, "Failed to parse body", http.StatusInternalServerError)

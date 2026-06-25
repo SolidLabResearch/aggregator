@@ -40,13 +40,13 @@ func ValidServicePath(uri string) (string, string, error) {
 	return servicePath, serviceId, nil
 }
 
-func ParseRequestBody(fno string) (*model.Service, error) {
+func ParseRequestBody(fno string, format string) (*model.Service, error) {
 	log := logrus.WithField("func", "ParseRequestBody")
 	log.WithField("body_length", len(fno)).Debug("Starting to parse FnO description")
 
 	quadStream, errChan := rdfgo.Parse(
 		strings.NewReader(fno),
-		rdfgo.ParserOptions{Format: "text/turtle"},
+		rdfgo.ParserOptions{Format: format},
 	)
 
 	go func() {
@@ -61,108 +61,63 @@ func ParseRequestBody(fno string) (*model.Service, error) {
 	store.Import(quadStream)
 	log.Debug("Imported quads into store")
 
-	// Find the Service
+	// Find and parse the Service Request
 	var service *model.Service
-	for svcQuery := range store.Match(nil, rdfgo.IRI.RDF.Type, model.Agg("Service"), nil) {
-		svcSubject := svcQuery.GetSubject().ToString()
-		log.WithField("service_uri", svcSubject).Debug("Found agg:Service triple")
+	for reqQuery := range store.Match(nil, rdfgo.IRI.RDF.Type, model.Agg("ServiceRequest"), nil) {
+		// TODO blank node service request
+		// Validate requested URI
+		requestedPath := strings.Trim(reqQuery.GetSubject().ToString(), "<>")
+		log.WithField("requested uri", requestedPath).Debug("Found aggr:ServiceRequest")
 
 		if service != nil {
-			log.Error("Multiple agg:Service subjects found; expected exactly one")
-			return nil, errors.New("multiple agg:Service found; expected exactly one")
+			log.Error("Multiple aggr:ServiceRequest found; expected exactly one")
+			return nil, errors.New("multiple aggr:ServiceRequest found; expected exactly one")
 		}
 
-		// Verify exactly one agg:applies exists
-		appCount := 0
-		for range store.Match(nil, model.Agg("applies"), nil, nil) {
-			appCount++
-		}
-		if appCount == 0 {
-			log.Error("No agg:applies triple found")
-			return nil, errors.New("no agg:applies found")
-		}
-		if appCount > 1 {
-			log.Error("Multiple agg:applies triples found; expected exactly one")
-			return nil, errors.New("multiple agg:applies found; expected exactly one")
-		}
-
-		// Find the transformation via fnoc:applies
+		// Find the transformation via aggr:performs
 		var tf *model.Transformation
 		var svcConfig *model.ServiceConfiguration
-		for tfQuery := range store.Match(nil, model.FnOC("applies"), nil, nil) {
+		for tfQuery := range store.Match(nil, model.Agg("performs"), nil, nil) {
 			if tf != nil {
-				log.Error("Multiple fnoc:applies triples found; expected exactly one")
-				return nil, errors.New("multiple fnoc:applies found; expected exactly one")
+				log.Error("Multiple aggr:performs triples found; expected exactly one")
+				return nil, errors.New("multiple aggr:performs triples found; expected exactly one")
 			}
 			tfUri := strings.Trim(tfQuery.GetObject().ToString(), "<>")
-			log.WithField("transformation_uri", tfUri).Debug("Found fnoc:applies triple, loading transformation")
+			log.WithField("transformation_uri", tfUri).Debug("Found aggr:performs triple, loading transformation")
 
+			// Load transformation configuration
 			var err error
 			tf, svcConfig, err = model.LoadTransformation(tfUri)
 			if err != nil {
 				log.WithError(err).WithField("transformation_uri", tfUri).Error("Failed to load transformation")
 				return nil, err
 			}
-			log.WithFields(logrus.Fields{
-				"transformation_uri":    tfUri,
-				"transformation_params": len(tf.Params),
-			}).Debug("Successfully loaded transformation")
+			log.WithField("transformation_uri", tfUri).Debug("Successfully loaded transformation")
 		}
 
 		if tf == nil {
-			log.Error("No fnoc:applies triple found")
-			return nil, errors.New("no transformation applied")
+			log.Error("No aggr:performs triple found")
+			return nil, errors.New("no valid transformation was requested using aggr:performs")
 		}
 
-		// Collect parameter bindings — each binding node has exactly one boundParameter and one boundToTerm
+		// Bind inputs using predicates
 		bindings := make(map[string]rdfgo.ITerm)
-		for bindingQuery := range store.Match(nil, model.FnOC("parameterBinding"), nil, nil) {
-			bindingNode := bindingQuery.GetObject()
-			bindingLabel := bindingNode.ToString()
-			log.WithField("binding_node", bindingLabel).Debug("Found fnoc:parameterBinding triple")
-
-			// Get boundParameter for this binding node
-			var paramUri string
-			for paramQuery := range store.Match(bindingNode, model.FnOC("boundParameter"), nil, nil) {
-				paramUri = strings.Trim(paramQuery.GetObject().ToString(), "<>")
-				log.WithFields(logrus.Fields{
-					"binding_node": bindingLabel,
-					"param_uri":    paramUri,
-				}).Debug("Found fnoc:boundParameter")
-			}
-
-			// Get boundToTerm for this binding node
-			for valueQuery := range store.Match(bindingNode, model.FnOC("boundToTerm"), nil, nil) {
-				value := valueQuery.GetObject()
-				log.WithFields(logrus.Fields{
-					"binding_node": bindingLabel,
-					"param_uri":    paramUri,
-					"value":        value.ToString(),
-				}).Debug("Found fnoc:boundToTerm, binding parameter")
-
-				// Get parameter predicate
-				predUri, exists := tf.Params[paramUri]
-				if !exists {
-					log.WithFields(logrus.Fields{
-						"binding_node": bindingLabel,
-						"param_uri":    paramUri,
-					}).Error("No predicate found for parameter")
-					return nil, fmt.Errorf("no predicate found for parameter %q", paramUri)
-				}
-				bindings[predUri] = value
+		for _, pred := range tf.Params {
+			for predQuery := range store.Match(reqQuery.GetSubject(), rdfgo.NewNamedNode(pred), nil, nil) {
+				bindings[pred] = predQuery.GetObject()
 			}
 		}
 
 		if len(bindings) != len(tf.Params) {
 			log.WithFields(logrus.Fields{
-				"params_provided": len(bindings),
-				"params_expected": len(tf.Params),
+				"inputs_provided": len(bindings),
+				"inputs_expected": len(tf.Params),
 			}).Error("Parameter count mismatch")
 			return nil, fmt.Errorf("not enough inputs provided: %d (expected: %d)", len(bindings), len(tf.Params))
 		}
 
 		service = &model.Service{
-			FullPath: strings.Trim(svcQuery.GetSubject().ToString(), "<>"),
+			FullPath: requestedPath,
 			Application: &model.Application{
 				Transformation: tf,
 				Bindings:       bindings,
@@ -173,8 +128,8 @@ func ParseRequestBody(fno string) (*model.Service, error) {
 	}
 
 	if service == nil {
-		log.Error("No agg:Service triple found in FnO description")
-		return nil, errors.New("no agg:Service found in FnO description")
+		log.Error("Unable to build aggr:Service from request")
+		return nil, errors.New("Unable to build aggr:Service from request")
 	}
 
 	log.WithField("service_uri", service.FullPath).Info("Successfully parsed FnO description")
