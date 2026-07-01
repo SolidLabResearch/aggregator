@@ -6,7 +6,7 @@ Seting up an aggregator is done using the endpoint advocated with `registration_
 
 ## Device Code Flow
 
-The **Device Code Flow** is currently supported only for the **OIDC flow**. This requires a standard OpenID Connect Identity Provider (for example, Keycloak—see [Keycloak Authentication](/docs/kss-setup.md#setting-up-the-aggregator-server-authentication)).
+The **Device Code Flow** is currently supported only for the **OIDC flow**. This requires a standard OpenID Connect Identity Provider (for example, Keycloak—see [Keycloak Authentication](/docs/kss-setup.md#setting-up-keycloak)).
 
 The aggregator must be configured to support the Device Code Flow:
 
@@ -18,9 +18,8 @@ auth:
 
 ---
 
-### 1. Initate Device Registration
+### 1. Initiate Device Registration
 
-To create an aggregator for a user, start by initiating device registration:
 ```http
 POST /registration
 Content-Type: application/json
@@ -31,23 +30,31 @@ Content-Type: application/json
 }
 ```
 
-#### Response
+#### Responses
+
+✅ **202 Accepted**
 
 ```json
 {
-  state: <state>,
-  user_code: <user_code>,
-  verification_uri: <verification_uri>,
-  verification_uri_complete: <verification_uri_complete>
+  "state": "<state>",
+  "user_code": "<user_code>",
+  "verification_uri": "<verification_uri>",
+  "verification_uri_complete": "<verification_uri_complete>",
+  "expires_in": "<expires_in>",
+  "interval": "<interval>"
 }
 ```
-
-#### Field descriptions:
 
 - `state`: Unique identifier for tracking the registration process
 - `user_code`: Code the user must enter to authorize
 - `verification_uri`: URL where the user completes authorization
 - `verification_uri_complete`: Pre-filled URL including the user code
+- `expires_in`: Seconds until the device code expires
+- `interval`: Minimum seconds to wait between polling requests
+
+❌ **500 Internal Server Error**
+
+Returned if the authorization server is unreachable or misconfigured.
 
 ---
 
@@ -56,14 +63,15 @@ Content-Type: application/json
 The user must complete the following steps:
 
 1. Navigate to `verification_uri` (or use `verification_uri_complete`)
-2. Enter the user_code (if not already included)
+2. Enter the `user_code` (if not already included)
 3. Log in or register with the Identity Provider
 4. Grant consent to the aggregator
 
 ---
+
 ### 3. Finalizing Registration
 
-While the user is completing authorization, your application should poll the registration endpoint using the `state`:
+While the user is completing authorization, poll the registration endpoint using the `state` returned in step 1. Wait at least `interval` seconds between requests.
 
 ```http
 POST /registration
@@ -73,42 +81,87 @@ Content-Type: application/json
   "registration_type": "device_code",
   "state": "<state>"
 }
-
 ```
 
-#### Possible Responses
+#### Responses
 
-⏳ **Pending**
+⏳ **202 Accepted**
 
-```http
-HTTP/1.1 202 Accepted
-```
+Returned while the user has not yet completed authorization or the aggregator is still being deployed. Continue polling.
 
-Returned when:
-  - The user has not yet completed authorization
-  - The aggregator is still being deployed
+✅ **201 Created**
 
----
-
-✅ **Success**
-
-```http
-HTTP/1.1 200 OK
-Content-Type: application/json
+```json
 {
-  aggregator: <aggregator-base-iri>
+  "aggregator_id": "<aggregator-id>",
+  "aggregator": "<aggregator-base-iri>",
+  "subject": "<user-id>",
+  "idp": "<oidc-server>"
 }
 ```
 
-Returns the location of the newly deployed aggregator.
+❌ **400 Bad Request**
+
+Returned if the `state` is invalid or not found.
+
+❌ **500 Internal Server Error**
+
+Returned if the aggregator server fails to fetch the token, store credentials, or deploy the aggregator.
 
 ---
 
-❌ **Error**
+## Token Exchange Flow
+
+The **Token Exchange Flow** is currently supported only for the **OIDC flow**. This requires a standard OpenID Connect Identity Provider (for example, Keycloak—see [Keycloak Authentication](/docs/kss-setup.md#setting-up-keycloak)).
+
+The aggregator must be configured to support the Token Exchange Flow:
+
+```yaml
+auth:
+  allowedRegistrationTypes:
+    - token_exchange
+```
+
+---
+
+### Initiate Token Exchange Registration
+
+The subject token must:
+- Be obtained from the Identity Provider via an interactive login (authorization code flow)
+- Include `openid` and `offline_access` scopes
+- Have the aggregator client registered as an audience
 
 ```http
-HTTP/1.1 400 Bad Request
+POST /registration
+Content-Type: application/json
+Authorization: Bearer <subject-token>
+
+{
+  "registration_type": "token_exchange",
+  "authorization_server": "<UMA instance>"
+}
 ```
+
+#### Responses
+
+✅ **201 Created**
+
+```json
+{
+  "aggregator_id": "<aggregator-id>",
+  "aggregator": "<aggregator-base-iri>",
+  "subject": "<user-id>",
+  "idp": "<oidc-server>"
+}
+```
+
+🔒 **401 Unauthorized**
+
+Returned if the subject token is missing, invalid, expired, or lacks the required scopes or audience.
+
+❌ **500 Internal Server Error**
+
+Returned if the aggregator server fails to exchange the token, store credentials, or deploy the aggregator.
 
 ## Authorization Code Flow
 

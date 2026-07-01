@@ -106,7 +106,7 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 	// Validate registration_type
 	if req.RegistrationType == "" {
 		log.WithField("stage", "validation").
-			Error("Missing registration_type")
+			Warn("Missing registration_type")
 		http.Error(w, "registration_type is required", http.StatusBadRequest)
 		return
 	}

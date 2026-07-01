@@ -34,6 +34,8 @@ HTTP/1.1 204 No Content
 
 Returned when the Aggregator was succesfully deleted.
 
+---
+
 🔒 **Unauthorized**
 
 ```http
@@ -41,6 +43,8 @@ HTTP/1.1 401 Unauthorized
 ```
 
 Returned when missing an `Authorization` Header or providing invalid credentials
+
+---
 
 ❌ **Forbidden**
 

@@ -69,15 +69,40 @@ You now have a running Kvasir Server with one or more pods.
 
 ## Setting up Keycloak
 
-You must register two clients with keycloak:
-  - **Aggregator Server Client**
-    - Confidential client
-    - Supports atleast the Device Code Authorization Grant
-  - **Demo Client**: The client used to interact with the aggregator and UMA server.
-    - Confidential client + Direct access grants if there is no UI
-    - Public client if there is a UI
-  
-For more information see [this](https://kvasir.pages.ilabt.imec.be/kvasir-server/authentication.html) documentation.
+Register two clients in Keycloak:
+
+- **Aggregator Server Client** — used by the aggregator server to authenticate and manage aggregators.
+  - Confidential client with Service Account Roles enabled
+- **Demo Client** — used to interact with the aggregator and UMA server.
+  - Confidential client with Direct Access Grants enabled (if no UI)
+  - Public client (if there is a UI)
+
+Both must support atleast the `openid` and `offline_access` scopes.
+
+### Aggregator Server Client
+
+#### Service Account Roles
+
+The aggregator server authenticates using its own client credentials, so **Service Account Roles** must be enabled.
+
+#### Registration Flow
+
+When a server deploys an aggregator, it must obtain a refresh token that identifies the aggregator's owner. This is done through a registration flow. Two flows are supported — the client must be configured to support at least one:
+
+| Flow | Required Grant Type |
+|---|---|
+| `device_code` | Device Authorization Grant |
+| `token_exchange` | Token Exchange |
+
+#### Token Exchange (additional setup)
+
+When using `token_exchange`, two extra steps are required:
+
+1. **Enable refresh tokens for client credentials grant** — the aggregator client must have *"Use Refresh Tokens For Client Credentials Grant"* enabled:
+   > Clients → `agg-client` → Advanced → OpenID Connect Compatibility Modes
+
+2. **Add the aggregator client to the Demo Client's token audience** — the access token issued to the Demo Client must include the aggregator server client ID in its `aud` claim, otherwise Keycloak will reject the exchange:
+   > Clients → `demo-client` → Client scopes → `<aggregator aud scope>` → Add mapper → Audience → set *Included Client Audience* to the aggregator server client ID
 
 ## Configure a Kvasir Pod
 
@@ -150,4 +175,5 @@ auth:
     clientSecret: <aggregator server secret>
   allowedRegistrationTypes:
     - device_code
+    - token_exchange
 ```

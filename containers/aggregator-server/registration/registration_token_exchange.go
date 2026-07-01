@@ -21,12 +21,12 @@ func handleTokenExchangeFlow(w http.ResponseWriter, req model.RegistrationReques
 	oidcConfig, err := fetchOIDCConfig(model.OIDCServer)
 	if err != nil {
 		logrus.WithError(err).Warnf("Unable to fetch OIDC configuration for %s", model.OIDCServer)
-		http.Error(w, "Authorization failed", http.StatusInternalServerError)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	if oidcConfig.TokenEndpoint == "" {
 		logrus.Warn("Missing token endpoint in OIDC config")
-		http.Error(w, "Authorization failed", http.StatusInternalServerError)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	logrus.Debugf("OIDC Token Endpoint: %s", oidcConfig.TokenEndpoint)
@@ -44,7 +44,7 @@ func handleTokenExchangeFlow(w http.ResponseWriter, req model.RegistrationReques
 	exchangeReq, err := http.NewRequest(http.MethodPost, oidcConfig.TokenEndpoint, strings.NewReader(formData.Encode()))
 	if err != nil {
 		logrus.WithError(err).Warnf("Unable to create token exchange request for %s", oidcConfig.TokenEndpoint)
-		http.Error(w, "Authorization failed", http.StatusInternalServerError)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	exchangeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -54,7 +54,7 @@ func handleTokenExchangeFlow(w http.ResponseWriter, req model.RegistrationReques
 	resp, err := model.HttpClient.Do(exchangeReq)
 	if err != nil {
 		logrus.WithError(err).Warnf("Unable to execute token exchange request for %s", oidcConfig.TokenEndpoint)
-		http.Error(w, "Authorization failed", http.StatusInternalServerError)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	defer resp.Body.Close()
@@ -62,7 +62,7 @@ func handleTokenExchangeFlow(w http.ResponseWriter, req model.RegistrationReques
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logrus.WithError(err).Warn("Failed to read token exchange response body")
-		http.Error(w, "Authorization failed", http.StatusInternalServerError)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
@@ -71,7 +71,7 @@ func handleTokenExchangeFlow(w http.ResponseWriter, req model.RegistrationReques
 			"status": resp.StatusCode,
 			"body":   string(body),
 		}).Warn("Token exchange request failed")
-		http.Error(w, "Authorization failed", http.StatusInternalServerError)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
@@ -79,16 +79,16 @@ func handleTokenExchangeFlow(w http.ResponseWriter, req model.RegistrationReques
 	var tokenResponse TokenResponse
 	if err := json.Unmarshal(body, &tokenResponse); err != nil {
 		logrus.WithError(err).Warn("Failed to decode token exchange response")
-		http.Error(w, "Authorization failed", http.StatusInternalServerError)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	logrus.Debugf("Token exchange response: %+v", tokenResponse)
+	//logrus.Debugf("Token exchange response: %+v", tokenResponse)
 
 	// Validate the exchanged token
 	subject, err := validateExchangedToken(tokenResponse.AccessToken)
 	if err != nil {
 		logrus.WithError(err).Warn("Exchanged token validation failed")
-		http.Error(w, "Authorization failed", http.StatusInternalServerError)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -103,7 +103,7 @@ func handleTokenExchangeFlow(w http.ResponseWriter, req model.RegistrationReques
 		model.OIDCClientSecret,
 	); err != nil {
 		logrus.WithError(err).Warn("Failed to upsert tokens")
-		http.Error(w, "Authorization failed", http.StatusInternalServerError)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 

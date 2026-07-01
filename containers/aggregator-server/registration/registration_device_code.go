@@ -49,8 +49,9 @@ type DeviceSession struct {
 	Interval   time.Duration
 	ExpiresAt  time.Time
 
-	Status DeviceFlowStatus
-	Error  string
+	Status    DeviceFlowStatus
+	ErrorCode int
+	Error     string
 
 	// Result fields
 	ResultAggregatorID string
@@ -82,12 +83,12 @@ func handleDeviceCodeFlowStart(w http.ResponseWriter, req model.RegistrationRequ
 	oidcConfig, err := fetchOIDCConfig(model.OIDCServer)
 	if err != nil {
 		logrus.WithError(err).Warnf("Unable to fetch OIDC configuration for %s", model.OIDCServer)
-		http.Error(w, "Authorization failed", http.StatusInternalServerError)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	if oidcConfig.DeviceAuthorizationEndpoint == "" {
 		logrus.Warn("Missing device authorization endpoint in OIDC config")
-		http.Error(w, "Authorization failed", http.StatusInternalServerError)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	logrus.Debugf("OIDC Device Authorization Endpoint: %s", oidcConfig.DeviceAuthorizationEndpoint)
@@ -101,7 +102,7 @@ func handleDeviceCodeFlowStart(w http.ResponseWriter, req model.RegistrationRequ
 	)
 	if err != nil {
 		logrus.WithError(err).Warn("Failed to request device code from authorization server")
-		http.Error(w, "Unable to authorize", http.StatusInternalServerError)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	defer resp.Body.Close()
@@ -110,14 +111,14 @@ func handleDeviceCodeFlowStart(w http.ResponseWriter, req model.RegistrationRequ
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		logrus.Warn("Failed to request device code from authorization server")
 		logrus.Debugf("Raw device code response with code %s: %s", resp.Status, string(body))
-		http.Error(w, "Unable to authorize", http.StatusInternalServerError)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
 	var deviceResp DeviceCodeResponse
 	if err := json.Unmarshal(body, &deviceResp); err != nil {
 		logrus.WithError(err).Warnf("Failed to parse device code response: %s", string(body))
-		http.Error(w, "Unable to authorize", http.StatusInternalServerError)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
@@ -156,7 +157,7 @@ func handleDeviceCodeFlowStart(w http.ResponseWriter, req model.RegistrationRequ
 	w.WriteHeader(http.StatusAccepted)
 	if err := json.NewEncoder(w).Encode(respJSON); err != nil {
 		logrus.WithError(err).Error("Failed to write device code start response")
-		http.Error(w, "Unable to authorize", http.StatusInternalServerError)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	logrus.Debugf("Sent device code start response for DeviceCode=%s", deviceResp.DeviceCode)
@@ -179,7 +180,7 @@ func processDeviceCodeFlow(session *DeviceSession, oidcConfig *model.OIDCConfig)
 
 		resp, err := model.HttpClient.Do(req)
 		if err != nil {
-			setSessionError(session, "Token request failed")
+			setSessionError(session, http.StatusInternalServerError, "Internal Server Error")
 			return
 		}
 		defer resp.Body.Close()
@@ -189,7 +190,7 @@ func processDeviceCodeFlow(session *DeviceSession, oidcConfig *model.OIDCConfig)
 
 		if resp.StatusCode == http.StatusOK {
 			if err := json.Unmarshal(body, &tok); err != nil {
-				setSessionError(session, "Invalid token response")
+				setSessionError(session, http.StatusInternalServerError, "Internal Server Error")
 				return
 			}
 			break
@@ -201,7 +202,7 @@ func processDeviceCodeFlow(session *DeviceSession, oidcConfig *model.OIDCConfig)
 	// Validate access token and extract user ID
 	userID, err := validateDeviceToken(tok.AccessToken)
 	if err != nil {
-		setSessionError(session, "Invalid access token")
+		setSessionError(session, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
 
@@ -215,13 +216,13 @@ func processDeviceCodeFlow(session *DeviceSession, oidcConfig *model.OIDCConfig)
 		// Check if aggregator exists and user is authorized to update it
 		inst, err := instance.GetAggregatorInstance(aggregatorID)
 		if err != nil {
-			setSessionError(session, "Aggregator not found")
+			setSessionError(session, http.StatusNotFound, "Not Found")
 			return
 		}
 
 		// Is user authorized to update this aggregator?
 		if !inst.HasOwnership(userID) {
-			setSessionError(session, "Not authorized to update this aggregator")
+			setSessionError(session, http.StatusForbidden, "Forbidden")
 			return
 		}
 
@@ -237,7 +238,7 @@ func processDeviceCodeFlow(session *DeviceSession, oidcConfig *model.OIDCConfig)
 			model.OIDCClientId,
 			model.OIDCClientSecret,
 		); err != nil {
-			setSessionError(session, "Failed to store tokens in token service")
+			setSessionError(session, http.StatusInternalServerError, "Internal Server Error")
 			return
 		}
 
@@ -254,7 +255,7 @@ func processDeviceCodeFlow(session *DeviceSession, oidcConfig *model.OIDCConfig)
 			ctx,
 		)
 		if err != nil {
-			setSessionError(session, "Failed to deploy aggregator")
+			setSessionError(session, http.StatusInternalServerError, "Internal Server Error")
 			return
 		}
 
@@ -296,7 +297,7 @@ func handleDeviceCodeFlowFinish(w http.ResponseWriter, req model.RegistrationReq
 		return
 
 	case StatusError:
-		http.Error(w, session.Error, http.StatusBadRequest)
+		http.Error(w, session.Error, session.ErrorCode)
 		return
 
 	case StatusDone:
@@ -403,9 +404,10 @@ func generateState() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
 
-func setSessionError(session *DeviceSession, msg string) {
+func setSessionError(session *DeviceSession, code int, msg string) {
 	sessionsLock.Lock()
 	defer sessionsLock.Unlock()
 	session.Status = StatusError
 	session.Error = msg
+	session.ErrorCode = code
 }
