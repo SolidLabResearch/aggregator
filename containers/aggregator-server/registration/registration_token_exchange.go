@@ -94,6 +94,28 @@ func handleTokenExchangeFlow(w http.ResponseWriter, req model.RegistrationReques
 
 	logrus.Debugf("Exchanged token validated successfully, subject: %s", subject)
 
+	var aggregatorID string
+	var baseURL string
+	if req.AggregatorID != "" {
+		// Check if aggregator exists and user is authorized to update it
+		inst, err := instance.GetAggregatorInstance(aggregatorID)
+		if err != nil {
+			logrus.WithError(err).Warnf("Aggregator not found: %s", req.AggregatorID)
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+
+		if !inst.HasOwnership(subject) {
+			logrus.WithField("requester", subject).Warnf("Ownership check failed for aggregator %s", req.AggregatorID)
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		aggregatorID = inst.AggregatorID
+		baseURL = inst.BaseURL
+		logrus.Debugf("Ownership verified for aggregator %s by user %s", req.AggregatorID, subject)
+	}
+
 	// Upsert tokens
 	if err := upsertTokens(
 		subject,
@@ -107,36 +129,39 @@ func handleTokenExchangeFlow(w http.ResponseWriter, req model.RegistrationReques
 		return
 	}
 
-	// Deploy aggregator
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	if aggregatorID != "" {
+		// Deploy aggregator
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 
-	aggregatorID, err := instance.DeployAggregator(
-		subject,
-		req.AuthorizationServer,
-		"",
-		ctx,
-	)
-	if err != nil {
-		logrus.WithError(err).Warn("Failed to deploy aggregator")
-		http.Error(w, "Aggregator deployment failed", http.StatusInternalServerError)
-		return
+		aggregatorID, err := instance.DeployAggregator(
+			subject,
+			req.AuthorizationServer,
+			"",
+			ctx,
+		)
+		if err != nil {
+			logrus.WithError(err).Warn("Failed to deploy aggregator")
+			http.Error(w, "Aggregator deployment failed", http.StatusInternalServerError)
+			return
+		}
+
+		// Create aggregator record
+		inst := instance.CreateAggregatorInstanceRecord(
+			subject,
+			"token_exchange",
+			req.AuthorizationServer,
+			aggregatorID,
+		)
+		baseURL = inst.BaseURL
+
+		logrus.Debugf("Aggregator deployed successfully at: %s", inst.BaseURL)
 	}
-
-	// Create aggregator record
-	inst := instance.CreateAggregatorInstanceRecord(
-		subject,
-		"token_exchange",
-		req.AuthorizationServer,
-		aggregatorID,
-	)
-
-	logrus.Debugf("Aggregator deployed successfully at: %s", inst.BaseURL)
 
 	// Respond with aggregator details
 	regResp := model.RegistrationResponse{
 		AggregatorID: aggregatorID,
-		Aggregator:   inst.BaseURL,
+		Aggregator:   baseURL,
 		Subject:      subject,
 		IDP:          model.OIDCServer,
 	}
