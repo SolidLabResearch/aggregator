@@ -2,7 +2,9 @@
 
 This document will show how to deploy an Aggregator on a running Aggregator Server.
 
-Seting up an aggregator is done using the endpoint advocated with `registration_endpoint` at the discovery endpoint. The rest of this document assumes this endpoint is at `/registration`.
+Setting up an aggregator is done using the endpoint advocated with `registration_endpoint` at the discovery endpoint. The rest of this document assumes this endpoint is at `/registration`.
+
+Updating an existing aggregator is done by including the `aggregator_id` field in any registration request. See [Updating Aggregators](updating-aggregators.md) for more details.
 
 ## Device Code Flow
 
