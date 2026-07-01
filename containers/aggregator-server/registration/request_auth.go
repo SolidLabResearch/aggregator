@@ -38,7 +38,7 @@ func authenticateRequest(r *http.Request) (issuer string, id string, mode string
 	if err != nil {
 		return "", "", "", err
 	}
-	logrus.WithField("token", tokenString).Debug("Authenticating request with token")
+	// logrus.WithField("token", tokenString).Debug("Authenticating request with token")
 
 	// Production mode: full token validation
 	// Parse token to extract issuer (needed to get JWKS URL)

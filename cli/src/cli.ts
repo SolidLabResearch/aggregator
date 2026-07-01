@@ -14,11 +14,12 @@ program
 
 program
   .command("register-user")
-  .description("Register a user via device flow")
+  .description("Register a user via registration flow")
+  .requiredOption("--flow <flow>", "Registration flow to use (device_code, token_exchange)")
   .option("--set-active", "Set the new aggregator as active")
   .action(async (opts) => {
     const { main } = await import("./register-user.js");
-    await main({ setActive: opts.setActive });
+    await main(opts.flow, { setActive: opts.setActive });
   });
 
 program

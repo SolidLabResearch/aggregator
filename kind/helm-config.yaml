@@ -7,9 +7,10 @@ auth:
   oidc:
     clientId: aggregator-server
     server: https://pacsoi-idp.faqir.org/realms/kvasir
-    clientSecret: <client credentials>
+    clientSecret: 5yUwofhAohc9px5B1ufBvEALJVxygaMu
   allowedRegistrationTypes:
     - device_code
+    - token_exchange
 
 ingressClassName: aggregator-traefik
 

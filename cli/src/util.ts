@@ -103,7 +103,7 @@ export class KeycloakOIDCAuth {
             password: this.password,
             client_id: this.clientId,
             client_secret: this.clientSecret,
-            scope: "openid offline_access",
+            scope: "openid offline_access Aggregator_as_audience",
         });
 
         const response = await fetch(this.tokenEndpoint, {

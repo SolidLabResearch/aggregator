@@ -162,6 +162,15 @@ func handleRegistrationPost(w http.ResponseWriter, r *http.Request) {
 
 	// Route to authenticated flows
 	switch registrationType {
+	case "token_exchange":
+		log.Info("Routing to token_exchange flow")
+		subjectToken, err := extractBearerToken(r)
+		if err != nil {
+			log.WithError(err).Warn("Failed to extract subject token from Authorization header")
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		handleTokenExchangeFlow(w, req, subjectToken)
 	case "provision":
 		log.Info("Routing to provision flow")
 		handleProvisionFlow(w, req, id)

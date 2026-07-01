@@ -41,7 +41,8 @@
               "authorization_code",
               "device_code",
               "provision",
-              "client_credentials"
+              "client_credentials",
+              "token_exchange"
             ]
           }
         },

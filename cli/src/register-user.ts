@@ -1,106 +1,38 @@
 import { config, updateConfig } from "./config.js";
-
-type DeviceCodeStart = {
-  state: string,
-  interval: number,
-  verification_uri: string,
-  verification_uri_complete: string,
-  user_code: string
-}
+import { doDeviceCodeFlow } from "./device_code.js";
+import { doTokenExchange } from "./token_exchange.js";
 
 type RegisterdResponse = {
   aggregator: string,
   subject: string
 }
 
-const REGISTRATION = config.server.host + config.server.reg;
-console.log(`Register user at Server "${REGISTRATION}"`);
+export async function main(flow: string, opts: { setActive?: boolean } = {}) {
+  // 1️⃣ Start registration flow
+  let data: RegisterdResponse
+  switch (flow) {
+    case "device_code":
+      data = await doDeviceCodeFlow();
+      break;
+    case "token_exchange":
+      data = await doTokenExchange();
+      break;
+    default:
+      throw new Error(`Unsupported registration flow: ${flow}`);
+  }
+  
+  const aggId: string = data.aggregator;
+  console.log("\n✅ Aggregator ready:", aggId);
+  const aggregators = { ...config.aggregators };
+  if (!aggregators[aggId]) {
+    aggregators[aggId] = { id: aggId, services: {} };
+  }
 
-function wait(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-export async function main(opts: { setActive?: boolean } = {}) {
-  // 1️⃣ Start device flow
-  const startResp = await fetch(REGISTRATION, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      registration_type: "device_code",
-      authorization_server: config.auth.uma,
-    }),
+  updateConfig({
+    aggregators,
+    ...(opts.setActive ? { activeAggregator: aggId } : {}),
   });
 
-  if (startResp.status !== 202) {
-    throw new Error(`Device flow start failed: ${startResp.statusText}`);
-  }
-
-  const startData = (await startResp.json()) as DeviceCodeStart;
-
-  const {
-    state,
-    interval = 5,
-    verification_uri,
-    verification_uri_complete,
-    user_code,
-  } = startData;
-
-  console.log("====== DEVICE FLOW ======");
-  if (user_code) console.log("User code:", user_code);
-
-  if (verification_uri_complete) {
-    console.log("Open this URL in your browser:");
-    console.log(verification_uri_complete.replace("host.docker.internal", "localhost"));
-  } else if (verification_uri) {
-    console.log("Verification URI:", verification_uri.replace("host.docker.internal", "localhost"));
-  }
-
-  console.log("=========================");
-  console.log("Polling for completion...");
-
-  // 2️⃣ Poll using state
-  while (true) {
-    await wait(interval * 1000);
-
-    const finishResp = await fetch(REGISTRATION, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        registration_type: "device_code",
-        state: state,
-      }),
-    });
-
-    if (finishResp.status === 202) {
-      process.stdout.write(".");
-      continue;
-    }
-
-    if (finishResp.status === 201) {
-      const data = (await finishResp.json()) as RegisterdResponse;
-      const aggId: string = data.aggregator;
-      console.log("\n✅ Aggregator ready:", aggId);
-
-      const aggregators = { ...config.aggregators };
-      if (!aggregators[aggId]) {
-        aggregators[aggId] = { id: aggId, services: {} };
-      }
-
-      updateConfig({
-        aggregators,
-        ...(opts.setActive ? { activeAggregator: aggId } : {}),
-      });
-
-      console.log(`✅ Aggregator "${aggId}" added to config.`);
-      if (opts.setActive) console.log(`✅ Set as active aggregator.`);
-      break;
-    }
-
-    if (finishResp.status === 400) {
-      const errorText = await finishResp.text();
-      throw new Error(`Device flow failed: ${errorText}`);
-    }
-
-    throw new Error(`Unexpected response: ${finishResp.status}`);
-  }
+  console.log(`✅ Aggregator "${aggId}" added to config.`);
+  if (opts.setActive) console.log(`✅ Set as active aggregator.`);
 }
