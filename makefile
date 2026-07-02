@@ -21,6 +21,9 @@ VALUES_FLAGS  := -f $(CONFIG_DIR)/$(CONFIG) \
                  $(foreach f,$(SERVICE_FILES),-f $(f)) \
                  $(foreach f,$(FNO_FILES),-f $(f))
 
+GITHUB_ORG=knows-aggregator
+GITHUB_PROJECT=k8s-aggregator
+
 # ------------------------
 # Aggregator deployment
 # ------------------------
@@ -143,6 +146,21 @@ kind-stop-traefik:
 	@kubectl delete namespace aggregator-traefik --ignore-not-found
 	@echo "✅ Traefik has been removed!"
 
+slices-start-traefik:
+	@echo "📄 Deploying Traefik Ingress Controller on Slices..."
+	@kubectl config use-context admin@aggregator-cluster
+	@helm repo add traefik https://traefik.github.io/charts || true
+	@helm repo update
+	@helm upgrade --install traefik traefik/traefik \
+		--namespace traefik --create-namespace \
+		--set ingressClass.enabled=true \
+		--set ingressClass.name=traefik \
+		--set ports.web.nodePort=30080 \
+		--set ports.websecure.nodePort=30443 \
+		--set service.type=NodePort
+	@kubectl rollout status deployment traefik -n traefik --timeout=180s
+	@echo "✅ Traefik deployment is ready!"
+
 
 # ------------------------
 # Container targets
@@ -177,6 +195,19 @@ containers-load:
 	fi
 
 containers-all: containers-build containers-load
+
+containers-push: containers-build
+	@echo "📤 Pushing Docker images to ghcr.io..."
+	@if [ -n "$(CONTAINER)" ]; then \
+		docker tag "$(CONTAINER):latest" "ghcr.io/$(GITHUB_ORG)/$(GITHUB_PROJECT)/$(CONTAINER):latest"; \
+		docker push "ghcr.io/$(GITHUB_ORG)/$(GITHUB_PROJECT)/$(CONTAINER):latest"; \
+	else \
+		for dir in containers/*; do \
+			name=$$(basename $$dir); \
+			docker tag "$$name:latest" "ghcr.io/$(GITHUB_ORG)/$(GITHUB_PROJECT)/$$name:latest"; \
+			docker push "ghcr.io/$(GITHUB_ORG)/$(GITHUB_PROJECT)/$$name:latest"; \
+		done \
+	fi
 
 # ------------------------
 # Local host / DNS configuration
@@ -253,3 +284,23 @@ kind-dashboard:
 	@echo "🔑 Dashboard token:"
 	@kubectl get secret admin-user -n kubernetes-dashboard -o go-template="{{.data.token | base64decode}}"
 	@kubectl -n kubernetes-dashboard port-forward svc/kubernetes-dashboard-kong-proxy 8443:443 --address=0.0.0.0
+
+slices-dashboard:
+	@echo "🚀 Deploying Kubernetes Dashboard on Slices cluster..."
+	@kubectl config use-context admin@aggregator-cluster
+	@helm repo add kubernetes-dashboard https://kubernetes-retired.github.io/dashboard/ || true
+	@helm repo update
+	@helm upgrade --install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard \
+		--namespace kubernetes-dashboard --create-namespace \
+		--set app.ingress.enabled=false
+	@kubectl apply -f slices/dashboard/admin.yaml
+	@kubectl apply -f slices/dashboard/ingress.yaml
+	@kubectl wait --namespace kubernetes-dashboard \
+		--for=condition=ready pod \
+		--selector=app.kubernetes.io/instance=kubernetes-dashboard \
+		--timeout=180s
+	@echo "🔑 Dashboard token:"
+	@kubectl get secret admin-user -n kubernetes-dashboard \
+		-o go-template="{{.data.token | base64decode}}"
+	@echo ""
+	@echo "🌐 Access at: https://193.191.169.51"

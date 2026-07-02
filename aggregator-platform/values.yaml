@@ -61,6 +61,18 @@ tokenService:
   
   terminationGracePeriodSeconds: 60
 
+aggregator:
+  image:
+    repository: aggregator
+    tag: latest
+    pullPolicy: Never
+
+egress-uma:
+  image:
+    repository: egress-uma
+    tag: latest
+    pullPolicy: Never
+
 tls:
   enabled: false
 

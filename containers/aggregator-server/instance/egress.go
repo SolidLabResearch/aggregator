@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/sirupsen/logrus"
 	appsv1 "k8s.io/api/apps/v1"
@@ -12,6 +13,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
+
+var EgressUmaImage = os.Getenv("EGRESS-UMA_IMAGE") + ":" + os.Getenv("EGRESS-UMA_TAG")
+var EgressUmaPullPolicy = os.Getenv("EGRESS-UMA_PULL_POLICY")
 
 func ensureEgress(
 	aggregatorId string,
@@ -84,8 +88,8 @@ func ensureEgressDeployment(aggregatorId string, replicas int32, ownerID string,
 					Containers: []corev1.Container{
 						{
 							Name:            "egress-uma",
-							Image:           "egress-uma",
-							ImagePullPolicy: corev1.PullNever,
+							Image:           EgressUmaImage,
+							ImagePullPolicy: corev1.PullPolicy(EgressUmaPullPolicy),
 							Ports: []corev1.ContainerPort{
 								{ContainerPort: 8080},
 							},

@@ -4,6 +4,7 @@ import (
 	"aggregator/model"
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -13,6 +14,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 )
+
+var AggregatorImage = os.Getenv("AGGREGATOR_IMAGE") + ":" + os.Getenv("AGGREGATOR_TAG")
+var AggregatorPullPolicy = os.Getenv("AGGREGATOR_PULL_POLICY")
 
 func ensureDeployment(
 	aggregatorId string,
@@ -158,8 +162,8 @@ func ensureDeployment(
 					Containers: []corev1.Container{
 						{
 							Name:            aggName,
-							Image:           "aggregator",
-							ImagePullPolicy: corev1.PullNever,
+							Image:           AggregatorImage,
+							ImagePullPolicy: corev1.PullPolicy(AggregatorPullPolicy),
 							Ports: []corev1.ContainerPort{
 								{ContainerPort: 5000},
 							},

@@ -27,6 +27,14 @@ data:
 
   CLIENT_CRED_ID: {{ .Values.auth.client_credentials.clientId }}
 
+  AGGREGATOR_IMAGE: {{ .Values.aggregator.image.repository }}
+  AGGREGATOR_TAG: {{ .Values.aggregator.image.tag }}
+  AGGREGATOR_PULL_POLICY: {{ .Values.aggregator.image.pullPolicy }}
+
+  EGRESS-UMA_IMAGE: {{ .Values.egress-uma.image.repository }}
+  EGRESS-UMA_TAG: {{ .Values.egress-uma.image.tag }}
+  EGRESS-UMA_PULL_POLICY: {{ .Values.egress-uma.image.pullPolicy }}
+
   INGRESS_CLASS_NAME: {{ .Values.ingressClassName }}
   {{- if .Values.tls.enabled }}
   TLS_SECRET: {{ .Values.tls.secretName }}
