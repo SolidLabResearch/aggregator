@@ -303,4 +303,4 @@ slices-dashboard:
 	@kubectl get secret admin-user -n kubernetes-dashboard \
 		-o go-template="{{.data.token | base64decode}}"
 	@echo ""
-	@echo "🌐 Access at: https://193.191.169.51"
+	@echo "🌐 Access at: https://dashboard.aggregator.pacsoi.knows.idlab.ugent.be"
