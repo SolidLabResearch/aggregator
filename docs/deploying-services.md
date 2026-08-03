@@ -15,38 +15,38 @@ Before proceeding, make sure you have:
 The examples in this guide assume the following configuration:
 
 - Aggregator Server: `http://aggregator.local`
-- Transformation catalog endpoint: `http://aggregator.local/transformations`
+- Deployment catalog endpoint: `http://aggregator.local/deployments`
 - Aggregator instance: `http://aggregator.local/agg1`
 - Service collection endpoint: `http://aggregator.local/agg1/services`
 
-## 1. Check Supported Transformations
+## 1. Check Supported Deployment Functions
 
-Before deploying a service, verify which transformations are supported by the Aggregator Server.
+Before deploying a service, verify which deployment functions are supported by the Aggregator Server.
 
 ### Request
 
 ```http
-GET http://aggregator.local/transformations
+GET http://aggregator.local/deployments
 Accept: text/turtle
 ```
 
 ### Example Response
 
 ```turtle
-@base <http://aggregator.example.org/transformations#> .
-@prefix aggr: <https://spec.knows.idlab.ugent.be/aggregator-protocol/latest/#> .
+@base <http://aggregator.example.org/deployments#> .
+@prefix aggr: <https://w3id.org/aggregator#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix fno: <https://w3id.org/function/ontology#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<> a aggr:TransformationCatalog ;
-    dct:title "Aggregator transformations" ;
-    aggr:hasTransformation <IncrementalKvasir> .
+<> a aggr:DeploymentCatalog ;
+    dct:title "Aggregator deployment functions" ;
+    aggr:hasDeploymentFunction <DeployIncrementalKvasir> .
 
-<IncrementalKvasir>
+<DeployIncrementalKvasir>
   a fno:Function ;
   fno:expects ( <Query> <Sources> <Schema> <Context> ) ;
-  fno:returns ( <QueryResult> ) .
+  fno:returns ( <DeployedService> ) .
 
 <Query>
   a fno:Parameter ;
@@ -72,18 +72,19 @@ Accept: text/turtle
   fno:predicate <context> ;
   fno:required "true"^^xsd:boolean .
 
-<QueryResult>
+<DeployedService>
   a fno:Output ;
-  fno:predicate <result> .
+  fno:predicate <service> ;
+  fno:type aggr:Service .
 ```
 
-This response describes the available transformations, including their required inputs and outputs.
+This response describes the available deployment functions and their required inputs.
 
 ## 2. Create a Service
 
-To deploy a service, send a request to the Aggregator’s service collection endpoint. The request must be an `fno:Execution` that specifies:
+To deploy a service, send an `aggr:ServiceRequest` to the Aggregator’s service collection endpoint. It specifies:
 
-- The transformation to execute
+- The deployment function to invoke
 - The required input parameters
 
 ### Request
@@ -92,15 +93,15 @@ To deploy a service, send a request to the Aggregator’s service collection end
 POST http://aggregator.local/agg1/services
 Content-Type: text/turtle
 
-@prefix fno: <https://w3id.org/function/ontology#> .
-@prefix tf: <http://aggregator.example.org/transformations#> .
+@prefix aggr: <https://w3id.org/aggregator#> .
+@prefix deploy: <http://aggregator.example.org/deployments#> .
 
-<http://aggregator.local/agg1/my-service> a fno:Execution ;
-  fno:executes tf:IncrementalKvasir ;
-  tf:query "SELECT ?s WHERE { ?s a <http://example.org/Person> }" ;
-  tf:sources "http://example.org/kvasir" ;
-  tf:schema "...schema definition..." ;
-  tf:context "...context definition..." .
+<http://aggregator.local/agg1/my-service> a aggr:ServiceRequest ;
+  aggr:deploymentFunction deploy:DeployIncrementalKvasir ;
+  deploy:query "SELECT ?s WHERE { ?s a <http://example.org/Person> }" ;
+  deploy:sources "http://example.org/kvasir" ;
+  deploy:schema "...schema definition..." ;
+  deploy:context "...context definition..." .
 ```
 
 ---
@@ -113,22 +114,26 @@ If the request is successful, the Aggregator responds with:
 ### Example Response
 
 ```turtle
-@prefix aggr: <https://spec.knows.idlab.ugent.be/aggregator-protocol/latest/#> .
-@prefix fno: <https://w3id.org/function/ontology#> .
-@prefix tf: <http://aggregator.example.org/transformations#> .
+@prefix aggr: <https://w3id.org/aggregator#> .
+@prefix dcat: <http://www.w3.org/ns/dcat#> .
+@prefix deploy: <http://aggregator.example.org/deployments#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
 <http://aggregator.local/agg1/my-service>
-  a aggr:Service ;
-  a fno:Execution ;
+  a aggr:Service, dcat:DataService ;
   aggr:status "running" ;
   aggr:createdAt "2024-01-01T12:00:00Z"^^xsd:dateTime ;
-  fno:executes tf:IncrementalKvasir ;
-  tf:query "SELECT ?s WHERE { ?s a <http://example.org/Person> }" ;
-  tf:sources "http://example.org/kvasir" ;
-  tf:schema "...schema definition..." ;
-  tf:context "...context definition..." ;
-  tf:result <http://aggregator.local/agg1/my-service/result> .
+  aggr:deploymentFunction deploy:DeployIncrementalKvasir ;
+  dcat:servesDataset <http://aggregator.local/agg1/my-service#result> .
+
+<http://aggregator.local/agg1/my-service#result>
+  a dcat:Dataset ;
+  dcat:distribution <http://aggregator.local/agg1/my-service#result-distribution> .
+
+<http://aggregator.local/agg1/my-service#result-distribution>
+  a dcat:Distribution ;
+  dcat:accessURL <http://aggregator.local/agg1/my-service/result> ;
+  dcat:accessService <http://aggregator.local/agg1/my-service> .
 ```
 
 ## 3. Monitor Service Status

@@ -1,16 +1,17 @@
 fnoDescriptions:
   pacsoi:
-    type: function
+    type: deployment-function
     serviceConfigurationRef:
       name: pacsoi
     description: |
       @prefix fno: <https://w3id.org/function/ontology#> .
+      @prefix aggr: <https://w3id.org/aggregator#> .
       @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
       <Pacsoi>
         a fno:Function ;
         fno:expects ( <Sources> <WeightSlice> <ProcedureSlice> ) ;
-        fno:returns ( <WeightDistribution> ) .
+        fno:returns ( <DeployedService> ) .
 
       <Sources>
         a fno:Parameter ;
@@ -30,6 +31,7 @@ fnoDescriptions:
         fno:predicate <procedure-slice> ;
         fno:required "true"^^xsd:boolean .
 
-      <WeightDistribution>
+      <DeployedService>
         a fno:Output ;
-        fno:predicate <w-dist> .
+        fno:predicate <service> ;
+        fno:type aggr:Service .

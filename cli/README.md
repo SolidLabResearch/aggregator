@@ -1,6 +1,6 @@
 # agg
 
-A CLI tool for interacting with an Aggregator Server. It supports registering users via device flow, managing aggregators and services, and fetching service descriptions and outputs.
+A CLI tool for interacting with an Aggregator Server. It supports registering users via device flow, managing aggregators and services, and fetching service descriptions and dataset distributions.
 
 ## Installation
 
@@ -46,23 +46,25 @@ agg set-config ./my-config.json
   "aggregators": {
     "https://aggregator.example.org/some-id": {
       "id": "https://aggregator.example.org/some-id",
-      "services": [
-        {
+      "services": {
+        "my-svc": {
           "name": "my-svc",
-          "tf": "MyTransformation",
+          "deploymentFunction": "DeployExample",
           "params": {
             "sources": "https://..."
           },
-          "outputs": ["w-dist"]
+          "datasets": {
+            "result": "/result"
+          }
         }
-      ]
+      }
     }
   },
-  "aggregator": {
-    "server": "https://aggregator.example.org",
-    "tf": "/transformations",
+  "server": {
+    "host": "https://aggregator.example.org",
+    "deploymentCatalog": "/deployments",
     "svc": "/services",
-    "reg": "/register"
+    "reg": "/registration"
   },
   "auth": {
     "username": "user@example.org",
@@ -70,14 +72,15 @@ agg set-config ./my-config.json
     "clientId": "my-client",
     "clientSecret": "my-secret",
     "idp": "https://idp.example.org",
-    "realm": "my-realm",
     "uma": "https://uma.example.org"
   },
   "service": {
     "name": "my-svc",
-    "tf": "MyTransformation",
+    "deploymentFunction": "DeployExample",
     "params": {},
-    "outputs": ["w-dist"]
+    "datasets": {
+      "result": "/result"
+    }
   }
 }
 ```
@@ -154,19 +157,19 @@ Create a service on the active aggregator using the service configuration. On su
 
 ```bash
 agg create-service                                        # use config defaults
-agg create-service --name my-svc --tf MyTransformation    # override name and tf
+agg create-service --name my-svc --deployment-function DeployExample
 agg create-service --param sources=https://... \
                    --param weight-slice=abc               # override params (repeatable)
-agg create-service --outputs w-dist,other                 # override outputs
+agg create-service --dataset result=/result               # override datasets
 agg create-service --agg https://aggregator.example.org/other-id  # use specific aggregator
 ```
 
 | Option | Description |
 |---|---|
 | `--name <name>` | Service name (overrides config) |
-| `--tf <tf>` | Transformation ID (overrides config) |
-| `--outputs <outputs>` | Comma-separated list of outputs (overrides config) |
-| `--param <key=value>` | Parameter as `key=value`, can be repeated |
+| `--deployment-function <id>` | Deployment function ID (overrides config) |
+| `--dataset <id=path>` | Dataset distribution access path; repeatable |
+| `--param <key=value>` | Function parameter predicate and value; repeatable |
 | `--agg <id>` | Aggregator ID to use instead of the active one |
 
 #### `agg get-service`
@@ -184,19 +187,19 @@ agg get-service --agg https://aggregator.example.org/id  # specific aggregator
 | `--svc <name>` | Service name (overrides active) |
 | `--agg <id>` | Aggregator ID to use instead of the active one |
 
-#### `agg get-output`
+#### `agg get-dataset`
 
-Fetch outputs of a service from the active aggregator. By default fetches all outputs registered for the service.
+Fetch dataset distributions from the active aggregator. By default it fetches every dataset configured for the service. `get-output` remains an alias.
 
 ```bash
-agg get-output                          # fetch all outputs
-agg get-output --outputs w-dist         # fetch a subset
-agg get-output --svc my-svc --agg <id>  # specific service and aggregator
+agg get-dataset                                  # fetch all datasets
+agg get-dataset --datasets result                # fetch a subset
+agg get-dataset --svc my-svc --agg <id>          # specific service and aggregator
 ```
 
 | Option | Description |
 |---|---|
-| `--outputs <outputs>` | Comma-separated subset of outputs to fetch |
+| `--datasets <ids>` | Comma-separated subset of dataset IDs to fetch |
 | `--svc <name>` | Service name (overrides active) |
 | `--agg <id>` | Aggregator ID to use instead of the active one |
 

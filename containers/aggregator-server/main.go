@@ -164,10 +164,10 @@ func main() {
 	}
 
 	// Read spec configuration
-	model.TransformationCatalog = os.Getenv("TRANSFORMATION_CATALOG")
-	if model.TransformationCatalog == "" {
-		logrus.Warn("Environment variable TRANSFORMATION_CATALOG was not set. default=/transformations")
-		model.TransformationCatalog = "/transformations"
+	model.DeploymentCatalog = os.Getenv("DEPLOYMENT_CATALOG")
+	if model.DeploymentCatalog == "" {
+		logrus.Warn("Environment variable DEPLOYMENT_CATALOG was not set. default=/deployments")
+		model.DeploymentCatalog = "/deployments"
 	}
 	model.ServiceCollection = os.Getenv("SERVICE_COLLECTION")
 	if model.ServiceCollection == "" {
@@ -184,7 +184,7 @@ func main() {
 	serverMux := http.NewServeMux()
 
 	// Configuration endpoint
-	err = config.InitTransformationsConfiguration(serverMux)
+	err = config.InitDeploymentCatalogConfiguration(serverMux)
 	if err != nil {
 		logrus.WithError(err).Warn("Failed to set up configuration endpoint (UMA might be down)")
 	}

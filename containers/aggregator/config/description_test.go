@@ -35,10 +35,20 @@ func TestHandleAggregatorDescription(t *testing.T) {
 	origClientset := model.Clientset
 	origProtocol := model.Protocol
 	origExternalHost := model.ExternalHost
+	origExternalHTTPPort := model.ExternalHttpPort
+	origID := model.ID
+	origNamespace := model.Namespace
+	origDeploymentCatalog := model.DeploymentCatalog
+	origServiceCollection := model.ServiceCollection
 	t.Cleanup(func() {
 		model.Clientset = origClientset
 		model.Protocol = origProtocol
 		model.ExternalHost = origExternalHost
+		model.ExternalHttpPort = origExternalHTTPPort
+		model.ID = origID
+		model.Namespace = origNamespace
+		model.DeploymentCatalog = origDeploymentCatalog
+		model.ServiceCollection = origServiceCollection
 	})
 
 	tokenExpiry := time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339)
@@ -54,6 +64,11 @@ func TestHandleAggregatorDescription(t *testing.T) {
 
 	model.Protocol = "http"
 	model.ExternalHost = "aggregator.test"
+	model.ExternalHttpPort = "80"
+	model.ID = "config/test-ns"
+	model.Namespace = "test-ns"
+	model.DeploymentCatalog = "/deployments"
+	model.ServiceCollection = "/services"
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	recorder := httptest.NewRecorder()
@@ -73,8 +88,8 @@ func TestHandleAggregatorDescription(t *testing.T) {
 	if desc.ID != "http://aggregator.test/config/test-ns" {
 		t.Fatalf("unexpected id: %s", desc.ID)
 	}
-	if desc.TransformationCatalog != "http://aggregator.test/config/test-ns/transformations" {
-		t.Fatalf("unexpected transformation_catalog: %s", desc.TransformationCatalog)
+	if desc.DeploymentCatalog != "http://aggregator.test/config/test-ns/deployments" {
+		t.Fatalf("unexpected deployment_catalog: %s", desc.DeploymentCatalog)
 	}
 	if desc.ServiceCollection != "http://aggregator.test/config/test-ns/services" {
 		t.Fatalf("unexpected service_collection: %s", desc.ServiceCollection)

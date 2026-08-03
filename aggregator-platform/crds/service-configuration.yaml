@@ -21,7 +21,7 @@ spec:
           properties:
             spec:
               type: object
-              required: [serviceMapping]
+              required: [datasets, serviceMapping]
               properties:
 
                 # -------------------------------------------------------
@@ -58,40 +58,34 @@ spec:
                           Identifier used in the orchestration spec as $(id).
                           
                 # -------------------------------------------------------
-                # Output mapping
+                # Exposed datasets
                 # -------------------------------------------------------
-                outputMapping:
+                datasets:
                   type: object
+                  minProperties: 1
                   description: >
-                    Keys reference predicates defined for the FnO Output.
+                    Datasets exposed by the deployed service. Keys are local
+                    dataset identifiers and are not FnO output predicates.
                   additionalProperties:
                     type: object
                     properties:
-                      dataset:
+                      title:
+                        type: string
+                      description:
+                        type: string
+                      extraProperties:
                         type: object
                         description: >
-                          Metadata for the generated dcat:Dataset.
-                          A dataset is always generated for each output.
-                        properties:
-                          title:
-                            type: string
-                          description:
-                            type: string
-                          extraProperties:
-                            type: object
-                            description: >
-                              Additional RDF properties as prefixed name →
-                              literal or URI string.
-                              e.g. "dct:license": "https://..."
-                              e.g. "dct:accrualPeriodicity": "freq:daily"
-                            additionalProperties:
-                              type: string
+                          Additional RDF properties as prefixed name → literal
+                          or URI string.
+                        additionalProperties:
+                          type: string
 
                       distribution:
                         type: object
                         description: >
-                          If absent, output is abstract — no dcat:Distribution
-                          is generated. If present, a distribution is generated
+                          If absent, the dataset is not exposed for consumption
+                          and no dcat:Distribution is generated. If present, a distribution is generated
                           and linked to the dataset.
                         properties:
                           title:
@@ -101,7 +95,7 @@ spec:
                           access:
                             type: object
                             description: >
-                              Describes how to reach this output and which
+                              Describes how to reach this dataset and which
                               DCAT URL predicate to generate.
                             required: [urlType, servicePort]
                             properties:

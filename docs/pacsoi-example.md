@@ -77,16 +77,15 @@ POST /doc-aggregator/services
 Host: https://aggregator.local:5443
 Content-Type: text/turtle
 
-@prefix tf: <https://aggregator.local:5443/transformations#> .
+@prefix aggr: <https://w3id.org/aggregator#> .
+@prefix deploy: <https://aggregator.local:5443/deployments#> .
 
 <https://aggregator.local:5443/doc-aggregator/Pacsoi-Service> 
-  a fno:Execution ;
-  fno:executes tf:Pacsoi> ;
-  tf:sources <http://localhost:8080/doctor/PatientSlice> ;
-  tf:metadata "MetadataSlice" ;
-  tf:procedure "ProcedureSlice" ;
-  tf:weights "WeightObservationsSlice" ;
-  tf:qrs "OxfordQuestionnaireResponseSlice" ;
+  a aggr:ServiceRequest ;
+  aggr:deploymentFunction deploy:Pacsoi ;
+  deploy:sources <http://localhost:8080/doctor/PatientSlice> ;
+  deploy:weight-slice "WeightObservationsSlice" ;
+  deploy:procedure-slice "ProcedureSlice" .
 ```
 
 ### Access Aggregator Service

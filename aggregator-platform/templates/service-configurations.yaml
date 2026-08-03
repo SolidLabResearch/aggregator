@@ -14,9 +14,9 @@ spec:
   inputMapping:
     {{- toYaml $config.inputMapping | nindent 4 }}
   {{- end }}
-  {{- if $config.outputMapping }}
-  outputMapping:
-    {{- toYaml $config.outputMapping | nindent 4 }}
+  {{- if $config.datasets }}
+  datasets:
+    {{- toYaml $config.datasets | nindent 4 }}
   {{- end }}
   serviceMapping:
     {{- toYaml $config.serviceMapping | nindent 4 }}

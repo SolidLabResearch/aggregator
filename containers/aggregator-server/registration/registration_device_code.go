@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -51,9 +52,11 @@ type DeviceSession struct {
 	AggregatorID        string
 	AuthorizationServer string
 
-	DeviceCode string
-	Interval   time.Duration
-	ExpiresAt  time.Time
+	DeviceCode   string
+	Interval     time.Duration
+	ExpiresAt    time.Time
+	ClientID     string
+	ClientSecret string
 
 	Status DeviceFlowStatus
 	Type   DeviceFlowType
@@ -112,42 +115,31 @@ func handleDeviceCodeFlowStart(w http.ResponseWriter, RegReq model.RegistrationR
 	log.WithField("device_authorization_endpoint", oidcConfig.DeviceAuthorizationEndpoint).
 		Debug("Fetched OIDC configuration")
 
-	// Determine flow type and resolve client credentials
-	var aggregatorID, clientID, clientSecret string
+	// Device-code flows use the statically configured Aggregator Server client.
+	clientID := model.OIDCClientId
+	clientSecret := model.OIDCClientSecret
+	if clientID == "" || clientSecret == "" {
+		log.Error("Aggregator Server OIDC client credentials are not configured")
+		http.Error(w, "Authorization failed", http.StatusInternalServerError)
+		return
+	}
+
+	var aggregatorID string
 	var flowType DeviceFlowType
 
 	if RegReq.AggregatorID != "" {
-		// Update flow — reuse existing client credentials
+		// Update flow — reuse the aggregator ID and the static platform client.
 		aggregatorID = RegReq.AggregatorID
 		flowType = FlowUpdate
-		log.WithField("flow_type", flowType).Info("Detected update flow; fetching existing client credentials")
-
-		clientID, clientSecret, err = getClientCredentials(aggregatorID)
-		if err != nil {
-			log.WithError(err).Errorf("Failed to retrieve client credentials for aggregator %s", aggregatorID)
-			http.Error(w, "Authorization failed", http.StatusInternalServerError)
-			return
-		}
-		log.WithField("client_id", clientID).Debug("Retrieved existing client credentials")
+		log.WithField("flow_type", flowType).Info("Detected update flow; using configured OIDC client")
 	} else {
-		// Create flow — register a new OIDC client
+		// Create flow — assign an aggregator ID without registering an OIDC client.
 		flowType = FlowCreate
-		log.WithField("flow_type", flowType).Info("Detected create flow; registering new OIDC client")
-
-		aggregatorID, clientID, clientSecret, err = registerAggregatorClient(
-			ctx,
-			oidcConfig,
-			[]string{"urn:ietf:params:oauth:grant-type:device_code"},
-		)
-		if err != nil {
-			log.WithError(err).Error("Failed to register new OIDC client for device code flow")
-			http.Error(w, "Authorization failed", http.StatusInternalServerError)
-			return
-		}
+		aggregatorID = uuid.New().String()
 		log.WithFields(logrus.Fields{
 			"aggregator_id": aggregatorID,
 			"client_id":     clientID,
-		}).Info("Registered new OIDC client")
+		}).Info("Detected create flow; using configured OIDC client")
 	}
 
 	// Request device code from authorization server
@@ -211,6 +203,8 @@ func handleDeviceCodeFlowStart(w http.ResponseWriter, RegReq model.RegistrationR
 		DeviceCode:          deviceResp.DeviceCode,
 		Interval:            time.Duration(deviceResp.Interval) * time.Second,
 		ExpiresAt:           time.Now().Add(time.Duration(deviceResp.ExpiresIn) * time.Second),
+		ClientID:            clientID,
+		ClientSecret:        clientSecret,
 		Status:              StatusPending,
 		Type:                flowType,
 	}
@@ -260,10 +254,10 @@ func processDeviceCodeFlow(session *DeviceSession, oidcConfig *model.OIDCConfig)
 	var tok TokenResponse
 	pollCount := 0
 
-	// Extract client credentials
-	clientID, clientSecret, err := getClientCredentials(session.AggregatorID)
-	if err != nil {
-		log.WithError(err).Error("Failed to retrieve client credentials after token grant")
+	clientID := session.ClientID
+	clientSecret := session.ClientSecret
+	if clientID == "" || clientSecret == "" {
+		log.Error("Device session is missing configured OIDC client credentials")
 		setSessionError(session, "Authorization failed")
 		return
 	}

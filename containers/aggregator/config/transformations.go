@@ -10,25 +10,25 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type TransformationCatalog struct {
-	etagTransformations int
-	transformations     string
+type DeploymentCatalog struct {
+	etag        int
+	description string
 }
 
-func InitTransformationCatalog(mux *http.ServeMux) error {
-	logrus.Debugf("Initializing transformation catalog at %s", model.TransformationCatalog)
+func InitDeploymentCatalog(mux *http.ServeMux) error {
+	logrus.Debugf("Initializing deployment catalog at %s", model.DeploymentCatalog)
 
-	catalog := TransformationCatalog{
-		etagTransformations: 0,
-		transformations:     hardcodedInstanceTransformations,
+	catalog := DeploymentCatalog{
+		etag:        0,
+		description: hardcodedInstanceDeployments,
 	}
 
 	// Register HTTP handler
-	mux.HandleFunc(model.TransformationCatalog, catalog.HandleTransformationsEndpoint)
-	logrus.Infof("Handler registered at %s", model.TransformationCatalog)
+	mux.HandleFunc(model.DeploymentCatalog, catalog.HandleDeploymentsEndpoint)
+	logrus.Infof("Handler registered at %s", model.DeploymentCatalog)
 
 	// Register catalog resource and policy
-	fullURL := model.ExternalBaseURL() + model.TransformationCatalog
+	fullURL := model.ExternalBaseURL() + model.DeploymentCatalog
 	if err := auth.RegisterResource(fullURL, []model.Scope{model.Read}); err != nil {
 		return fmt.Errorf("failed to register resource %s: %w", fullURL, err)
 	}
@@ -36,45 +36,39 @@ func InitTransformationCatalog(mux *http.ServeMux) error {
 		return fmt.Errorf("failed to define policy for resource %s: %w", fullURL, err)
 	}
 
-	logrus.Infof("Initialized transformation catalog at %s", model.TransformationCatalog)
+	logrus.Infof("Initialized deployment catalog at %s", model.DeploymentCatalog)
 	return nil
 }
 
-// HandleTransformationsEndpoint handles requests to the /transformations endpoint
-func (catalog TransformationCatalog) HandleTransformationsEndpoint(w http.ResponseWriter, r *http.Request) {
+func (catalog DeploymentCatalog) HandleDeploymentsEndpoint(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "HEAD":
-		catalog.headAvailableTransformations(w, r)
+		catalog.head(w, r)
 	case "GET":
-		catalog.getAvailableTransformations(w, r)
+		catalog.get(w, r)
 	default:
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 	}
 }
 
-// getAvailableTransformations HEAD /transformations retrieves all available transformations
-func (catalog *TransformationCatalog) headAvailableTransformations(w http.ResponseWriter, _ *http.Request) {
+func (catalog *DeploymentCatalog) head(w http.ResponseWriter, _ *http.Request) {
 	header := w.Header()
-	header.Set("ETag", strconv.Itoa(catalog.etagTransformations))
+	header.Set("ETag", strconv.Itoa(catalog.etag))
 	header.Set("Content-Type", "text/turtle")
 }
 
-// getAvailableTransformations GET /transformations retrieves all available transformations
-func (catalog *TransformationCatalog) getAvailableTransformations(w http.ResponseWriter, _ *http.Request) {
+func (catalog *DeploymentCatalog) get(w http.ResponseWriter, _ *http.Request) {
 	header := w.Header()
-	header.Set("ETag", strconv.Itoa(catalog.etagTransformations))
+	header.Set("ETag", strconv.Itoa(catalog.etag))
 	header.Set("Content-Type", "text/turtle")
-	_, err := w.Write([]byte(catalog.transformations))
+	_, err := w.Write([]byte(catalog.description))
 	if err != nil {
 		http.Error(w, "error when writing body", http.StatusInternalServerError)
 	}
 }
 
-const hardcodedInstanceTransformations = `
-@base <http://localhost:5000/transformations#> .
-@prefix fno: <https://w3id.org/function/ontology#> .
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+const hardcodedInstanceDeployments = `
+@prefix aggr: <https://w3id.org/aggregator#> .
 
-# Placeholder for user-specific transformations
+<> a aggr:DeploymentCatalog .
 `

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -14,9 +15,15 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
+const kubernetesServiceNamePrefix = "service-"
+
+func NewKubernetesName() string {
+	return kubernetesServiceNamePrefix + uuid.NewString()
+}
+
 func buildSubstitutionMap(
 	sc *model.ServiceConfiguration,
-	app *model.Application,
+	app *model.DeploymentRequest,
 ) (map[string]string, error) {
 
 	values := make(map[string]string)
@@ -176,6 +183,24 @@ func injectNamespace(obj interface{}, namespace string) error {
 	return nil
 }
 
+func injectName(obj interface{}, name string) error {
+	if name == "" {
+		return fmt.Errorf("kubernetes resource name is required")
+	}
+
+	switch r := obj.(type) {
+	case *appsv1.Deployment:
+		r.Name = name
+	case *batchv1.Job:
+		r.Name = name
+	case *batchv1.CronJob:
+		r.Name = name
+	default:
+		return fmt.Errorf("unsupported object type")
+	}
+	return nil
+}
+
 func injectLabels(obj interface{}, service *model.Service) error {
 
 	labels := map[string]string{
@@ -219,11 +244,11 @@ func mergeLabels(meta *metav1.ObjectMeta, labels map[string]string) {
 func extractServicePorts(sc *model.ServiceConfiguration) []int32 {
 	portSet := make(map[int32]struct{})
 
-	for _, output := range sc.Spec.OutputMapping {
-		if output.Distribution != nil &&
-			output.Distribution.Access != nil {
+	for _, dataset := range sc.Spec.Datasets {
+		if dataset.Distribution != nil &&
+			dataset.Distribution.Access != nil {
 
-			port := int32(output.Distribution.Access.ServicePort)
+			port := int32(dataset.Distribution.Access.ServicePort)
 			if port > 0 {
 				portSet[port] = struct{}{}
 			}

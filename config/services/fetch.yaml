@@ -4,10 +4,9 @@ serviceConfigurations:
       ":url":
         id: URL
     
-    outputMapping:
-      ":content":
-        dataset:
-          title: "Fetched Content"
+    datasets:
+      content:
+        title: "Fetched Content"
         distribution:
           access:
             urlType: accessURL

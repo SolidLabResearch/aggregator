@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"ingress-uma/model"
+	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -236,7 +238,15 @@ func requestCredentials(data AggregatorAuthData) (Credentials, error) {
 
 func DeleteCredentials() {
 	logrus.Info("Starting credential cleanup")
-	for data := range serverCredentials {
+
+	mu.Lock()
+	registrations := make(map[AggregatorAuthData]Credentials, len(serverCredentials))
+	for data, creds := range serverCredentials {
+		registrations[data] = creds
+	}
+	mu.Unlock()
+
+	for data, creds := range registrations {
 		log := logrus.WithFields(logrus.Fields{
 			"aggregator_id": data.AggregatorID,
 			"user_id":       data.UserID,
@@ -244,16 +254,15 @@ func DeleteCredentials() {
 			"component":     "credential_cleanup",
 		})
 
-		mu.Lock()
-		creds, _ := serverCredentials[data]
-		mu.Unlock()
-
 		config, err := fetchUmaConfig(data.AuthzServer)
 		if err != nil {
 			log.WithError(err).Error("Failed to fetch UMA configuration for cleanup")
 			continue
 		}
-		req, err := http.NewRequest("DELETE", config.RegistrationEndpoint+creds.ClientID, nil)
+
+		registrationEndpoint := strings.TrimRight(config.RegistrationEndpoint, "/")
+		deleteURL := registrationEndpoint + "/" + url.PathEscape(creds.ClientID)
+		req, err := http.NewRequest(http.MethodDelete, deleteURL, nil)
 		if err != nil {
 			log.WithError(err).Error("Failed to create client deletion request")
 			continue
@@ -265,8 +274,24 @@ func DeleteCredentials() {
 			log.WithError(err).Error("HTTP request to AS failed during cleanup")
 			continue
 		}
-		defer resp.Body.Close()
-		log.WithField("status_code", resp.StatusCode).Info("Successfully deleted client credentials")
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			log.WithError(readErr).Error("Failed to read client deletion response")
+			continue
+		}
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			log.WithFields(logrus.Fields{
+				"status_code": resp.StatusCode,
+				"response":    string(bodyBytes),
+			}).Error("Failed to delete client credentials")
+			continue
+		}
+
+		log.WithFields(logrus.Fields{
+			"client_id":   creds.ClientID,
+			"status_code": resp.StatusCode,
+		}).Info("Successfully deleted client credentials")
 
 		mu.Lock()
 		delete(serverCredentials, data)

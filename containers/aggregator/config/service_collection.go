@@ -227,7 +227,7 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 
 	service.AggPath = aggPath
 	service.InstanceID = serviceId
-	service.NamespaceID = serviceId + "-" + model.ID
+	service.KubernetesName = services.NewKubernetesName()
 
 	// Create service
 	err = services.DeployAggregatorService(service)
@@ -258,14 +258,17 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Create output endpoints
+	// Create dataset distribution endpoints
 	seen := make(map[string]bool)
 
-	for pred, output := range service.Configuration.Spec.OutputMapping {
+	for datasetID, dataset := range service.Configuration.Spec.Datasets {
+		if dataset.Distribution == nil || dataset.Distribution.Access == nil {
+			continue
+		}
 
-		externalPath := output.Distribution.Access.ExternalPath
+		externalPath := dataset.Distribution.Access.ExternalPath
 		if externalPath == "" {
-			errMsg := fmt.Sprintf("externalPath is required for output %s", pred)
+			errMsg := fmt.Sprintf("externalPath is required for dataset %s", datasetID)
 			logrus.Error(errMsg)
 			http.Error(w, errMsg, http.StatusInternalServerError)
 			return
@@ -283,8 +286,8 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 
 		// Build forward URL at registration time, nil if abstract
 		var forwardURL string
-		if output.Distribution != nil && output.Distribution.Access != nil {
-			access := output.Distribution.Access
+		if dataset.Distribution != nil && dataset.Distribution.Access != nil {
+			access := dataset.Distribution.Access
 			internalPath := access.InternalPath
 			if internalPath == "" {
 				internalPath = "/"
@@ -295,7 +298,7 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 			forwardURL = fmt.Sprintf(
 				"%s://%s.%s.svc.cluster.local:%d%s",
 				access.Protocol,
-				service.NamespaceID,
+				service.KubernetesName,
 				model.Namespace,
 				access.ServicePort,
 				internalPath,
@@ -306,16 +309,17 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 			collec.HandleServiceOutput(w, r, forwardURL)
 		}, []model.Scope{model.Read, model.Write})
 		if err != nil {
-			logrus.WithError(err).Errorf("Error registering handler for output %s", pred)
+			logrus.WithError(err).Errorf("Error registering handler for dataset %s", datasetID)
 			http.Error(w, "Failed to create service from request", http.StatusInternalServerError)
 			return
 		}
 
-		logrus.Infof("Registered endpoint: %s → %s", pred, path)
+		logrus.Infof("Registered dataset endpoint: %s → %s", datasetID, path)
 	}
 
 	// Return service information
 	w.Header().Set("Content-Type", "text/turtle")
+	w.Header().Set("Location", service.FullPath)
 
 	service.InitDescription()
 	repr, err := service.Description.FnORepresentation()

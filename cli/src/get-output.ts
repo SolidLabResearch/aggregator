@@ -1,7 +1,7 @@
 import { KeycloakOIDCAuth } from "./util.js";
 import { config } from "./config.js";
 
-export async function main(opts: { agg?: string, svc?: string, outputs?: string[] } = {}) {
+export async function main(opts: { agg?: string, svc?: string, datasets?: string[] } = {}) {
   const aggId = opts.agg ?? config.activeAggregator;
   if (!aggId) throw new Error("No active aggregator. Use --agg or run `agg set-active`.");
 
@@ -14,7 +14,7 @@ export async function main(opts: { agg?: string, svc?: string, outputs?: string[
   const svc = agg.services[svcName];
   if (!svc) throw new Error(`Service "${svcName}" not found on Aggregator "${aggId}"`);
 
-  const outputs = opts.outputs ?? svc.outputs;
+  const datasetIDs = opts.datasets ?? Object.keys(svc.datasets);
 
   console.log("=== Initializing Keycloak Authentication ===");
   const auth = new KeycloakOIDCAuth();
@@ -23,10 +23,15 @@ export async function main(opts: { agg?: string, svc?: string, outputs?: string[
   console.log("🔐 Auth initialized successfully.");
   const umaFetch = auth.createUMAFetch();
 
-  for (const output of outputs) {
-    const OUTPUT_ENDPOINT = `${agg.id}/${svc.name}/${output}`;
+  for (const datasetID of datasetIDs) {
+    const accessPath = svc.datasets[datasetID];
+    if (!accessPath) {
+      throw new Error(`Dataset "${datasetID}" has no configured distribution access path.`);
+    }
+    const normalizedPath = accessPath.startsWith("/") ? accessPath : `/${accessPath}`;
+    const OUTPUT_ENDPOINT = `${agg.id}${config.server.svc}/${svc.name}${normalizedPath}`;
 
-    console.log(`\n=== Fetching output: ${output} ===`);
+    console.log(`\n=== Fetching dataset distribution: ${datasetID} ===`);
     console.log(`➡️  Endpoint: ${OUTPUT_ENDPOINT}\n`);
 
     try {
@@ -35,7 +40,7 @@ export async function main(opts: { agg?: string, svc?: string, outputs?: string[
       console.log("📄 Response body:\n");
       console.log(await response.text() || "(empty response)");
     } catch (err: any) {
-      console.error(`\n❌ Failed to fetch output "${output}":`);
+      console.error(`\n❌ Failed to fetch dataset "${datasetID}":`);
       console.error(err?.message || err);
     }
   }

@@ -6,22 +6,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/maartyman/rdfgo"
 )
 
 var DateTime = rdfgo.NewNamedNode("http://www.w3.org/2001/XMLSchema#dateTime")
 
 func Agg(id string) rdfgo.INamedNode {
-	return rdfgo.NewNamedNode(`https://spec.knows.idlab.ugent.be/aggregator-protocol/latest/#` + id)
+	return rdfgo.NewNamedNode(`https://w3id.org/aggregator#` + id)
 }
 
 func FnO(id string) rdfgo.INamedNode {
 	return rdfgo.NewNamedNode(`https://w3id.org/function/ontology#` + id)
-}
-
-func FnOC(id string) rdfgo.INamedNode {
-	return rdfgo.NewNamedNode(`https://w3id.org/function/vocabulary/composition#` + id)
 }
 
 func Dcat(id string) rdfgo.INamedNode {
@@ -38,24 +33,36 @@ func Prov(id string) rdfgo.INamedNode {
 
 type ServiceDescription struct {
 	Service  rdfgo.Store
-	Outputs  map[string]rdfgo.Store
+	Datasets map[string]rdfgo.Store
 	Prefixes map[string]string
 }
 
 func (service *Service) InitDescription() error {
 	description := ServiceDescription{
 		Service:  rdfgo.NewStore(),
-		Outputs:  make(map[string]rdfgo.Store),
+		Datasets: make(map[string]rdfgo.Store),
 		Prefixes: service.Configuration.Spec.Prefixes,
 	}
 
-	svcNode := rdfgo.NewNamedNode(service.FullPath + "#" + "service")
+	svcNode := rdfgo.NewNamedNode(service.FullPath)
 
 	// service is a agg:Service
 	quad, err := rdfgo.NewQuad(
 		svcNode,
 		rdfgo.IRI.RDF.Type,
 		Agg("Service"),
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	description.Service.AddQuad(quad)
+
+	// The service description conforms to the Aggregator Protocol.
+	quad, err = rdfgo.NewQuad(
+		svcNode,
+		Dct("conformsTo"),
+		rdfgo.NewNamedNode("https://w3id.org/aggregator#"),
 		nil,
 	)
 	if err != nil {
@@ -112,11 +119,11 @@ func (service *Service) InitDescription() error {
 	}
 	description.Service.AddQuad(quad)
 
-	// service performs
+	// Record the deployment function that produced the service.
 	quad, err = rdfgo.NewQuad(
 		svcNode,
-		Agg("performs"),
-		rdfgo.NewNamedNode(service.Application.Transformation.URI),
+		Agg("deploymentFunction"),
+		rdfgo.NewNamedNode(service.Deployment.Function.URI),
 		nil,
 	)
 	if err != nil {
@@ -124,80 +131,14 @@ func (service *Service) InitDescription() error {
 	}
 	description.Service.AddQuad(quad)
 
-	// service applies
-	appNode := rdfgo.NewBlankNode(uuid.New().String())
-	quad, err = rdfgo.NewQuad(
-		svcNode,
-		Agg("applies"),
-		appNode,
-		nil,
-	)
-	if err != nil {
-		return err
-	}
-	description.Service.AddQuad(quad)
+	// DATASETS
+	for datasetID, dataset := range service.Configuration.Spec.Datasets {
 
-	// APPLICATION DETAILS
-	// application applies transformation
-	quad, err = rdfgo.NewQuad(
-		appNode,
-		FnOC("applies"),
-		rdfgo.NewNamedNode(service.Application.Transformation.URI),
-		nil,
-	)
-	if err != nil {
-		return err
-	}
-	description.Service.AddQuad(quad)
-
-	// application binds parameters
-	for param, value := range service.Application.Bindings {
-		bindingNode := rdfgo.NewBlankNode(uuid.New().String())
-		quad, err = rdfgo.NewQuad(
-			appNode,
-			FnOC("parameterBinding"),
-			bindingNode,
-			nil,
-		)
-		if err != nil {
-			return err
-		}
-		description.Service.AddQuad(quad)
-
-		// application parameterBinding boundParameter
-		quad, err = rdfgo.NewQuad(
-			bindingNode,
-			FnOC("boundParameter"),
-			rdfgo.NewNamedNode(param),
-			nil,
-		)
-		if err != nil {
-			return err
-		}
-		description.Service.AddQuad(quad)
-
-		// application parameterBinding boundToTerm
-		quad, err = rdfgo.NewQuad(
-			bindingNode,
-			FnOC("boundToTerm"),
-			value,
-			nil,
-		)
-		if err != nil {
-			return err
-		}
-		description.Service.AddQuad(quad)
-	}
-
-	// OUTPUTS
-	for pred, output := range service.Configuration.Spec.OutputMapping {
-
-		id := uuid.New().String()
 		outputStore := rdfgo.NewStore()
-		description.Outputs[pred] = outputStore
+		description.Datasets[datasetID] = outputStore
 
 		// Dataset node
-		datasetNode := rdfgo.NewNamedNode(service.FullPath + "#" + id + "Dataset")
+		datasetNode := rdfgo.NewNamedNode(service.FullPath + "#" + datasetID)
 
 		quad, err := rdfgo.NewQuad(
 			datasetNode,
@@ -223,53 +164,50 @@ func (service *Service) InitDescription() error {
 		outputStore.AddQuad(quad)
 
 		// DATASET METADATA
-		if output.Dataset != nil {
-
-			if output.Dataset.Title != "" {
-				quad, err = rdfgo.NewQuad(
-					datasetNode,
-					Dct("title"),
-					rdfgo.NewStringLiteral(output.Dataset.Title, "en"),
-					nil,
-				)
-				if err != nil {
-					return err
-				}
-				outputStore.AddQuad(quad)
+		if dataset.Title != "" {
+			quad, err = rdfgo.NewQuad(
+				datasetNode,
+				Dct("title"),
+				rdfgo.NewStringLiteral(dataset.Title, "en"),
+				nil,
+			)
+			if err != nil {
+				return err
 			}
+			outputStore.AddQuad(quad)
+		}
 
-			if output.Dataset.Description != "" {
-				quad, err = rdfgo.NewQuad(
-					datasetNode,
-					Dct("description"),
-					rdfgo.NewStringLiteral(output.Dataset.Description, "en"),
-					nil,
-				)
-				if err != nil {
-					return err
-				}
-				outputStore.AddQuad(quad)
+		if dataset.Description != "" {
+			quad, err = rdfgo.NewQuad(
+				datasetNode,
+				Dct("description"),
+				rdfgo.NewStringLiteral(dataset.Description, "en"),
+				nil,
+			)
+			if err != nil {
+				return err
 			}
+			outputStore.AddQuad(quad)
+		}
 
-			// Extra RDF properties
-			for predURI, val := range output.Dataset.ExtraProperties {
-				quad, err = rdfgo.NewQuad(
-					datasetNode,
-					rdfgo.NewNamedNode(predURI),
-					util.StringToTerm(val),
-					nil,
-				)
-				if err != nil {
-					return err
-				}
-				outputStore.AddQuad(quad)
+		// Extra RDF properties
+		for predURI, val := range dataset.ExtraProperties {
+			quad, err = rdfgo.NewQuad(
+				datasetNode,
+				rdfgo.NewNamedNode(predURI),
+				util.StringToTerm(val),
+				nil,
+			)
+			if err != nil {
+				return err
 			}
+			outputStore.AddQuad(quad)
 		}
 
 		// DISTRIBUTION
-		if output.Distribution != nil && output.Distribution.Access != nil {
+		if dataset.Distribution != nil && dataset.Distribution.Access != nil {
 
-			distNode := rdfgo.NewNamedNode(service.FullPath + "#" + id + "Distribution")
+			distNode := rdfgo.NewNamedNode(service.FullPath + "#" + datasetID + "-distribution")
 
 			// rdf:type
 			quad, err = rdfgo.NewQuad(
@@ -296,11 +234,11 @@ func (service *Service) InitDescription() error {
 			outputStore.AddQuad(quad)
 
 			// Distribution metadata
-			if output.Distribution.Title != "" {
+			if dataset.Distribution.Title != "" {
 				quad, err = rdfgo.NewQuad(
 					distNode,
 					Dct("title"),
-					rdfgo.NewStringLiteral(output.Distribution.Title, "en"),
+					rdfgo.NewStringLiteral(dataset.Distribution.Title, "en"),
 					nil,
 				)
 				if err != nil {
@@ -309,11 +247,11 @@ func (service *Service) InitDescription() error {
 				outputStore.AddQuad(quad)
 			}
 
-			if output.Distribution.Description != "" {
+			if dataset.Distribution.Description != "" {
 				quad, err = rdfgo.NewQuad(
 					distNode,
 					Dct("description"),
-					rdfgo.NewStringLiteral(output.Distribution.Description, "en"),
+					rdfgo.NewStringLiteral(dataset.Distribution.Description, "en"),
 					nil,
 				)
 				if err != nil {
@@ -323,7 +261,7 @@ func (service *Service) InitDescription() error {
 			}
 
 			// Access URL
-			access := output.Distribution.Access
+			access := dataset.Distribution.Access
 
 			externalPath := access.ExternalPath
 			if !strings.HasPrefix(externalPath, "/") {
@@ -361,7 +299,7 @@ func (service *Service) InitDescription() error {
 			outputStore.AddQuad(quad)
 
 			// Distribution extra RDF
-			for predURI, val := range output.Distribution.ExtraProperties {
+			for predURI, val := range dataset.Distribution.ExtraProperties {
 				quad, err = rdfgo.NewQuad(
 					distNode,
 					rdfgo.NewNamedNode(predURI),
@@ -395,9 +333,9 @@ func (description *ServiceDescription) FnORepresentation() ([]byte, error) {
 		return nil, err
 	}
 
-	// Write outputs
-	for _, outputStore := range description.Outputs {
-		stream := outputStore.Match(nil, nil, nil, nil)
+	// Write datasets
+	for _, datasetStore := range description.Datasets {
+		stream := datasetStore.Match(nil, nil, nil, nil)
 		_, err := rdfgo.Write(stream, &buf, rdfgo.WriterOptions{
 			Format:   "turtle",
 			Prefixes: description.Prefixes,

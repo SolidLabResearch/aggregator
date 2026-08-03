@@ -1,6 +1,6 @@
 package model
 
-type Transformation struct {
+type DeploymentFunction struct {
 	ID  string
 	URI string
 	FNO string

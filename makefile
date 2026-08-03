@@ -2,7 +2,7 @@
         containers-build containers-load containers-all \
         kind-generate-egress-key-pair kind-generate-ingress-key kind-generate-aggregator-key-pair kind-generate-keys \
         kind-start-traefik \
-        kind-deploy deploy kind-undeploy undeploy \
+        kind-deploy deploy kind-undeploy undeploy slices-deploy slices-deploy-tunnel slices-undeploy slices-configure-proxy \
 			  configure-etc-hosts clean-etc-hosts configure-coredns \
 				kind-dashboard \
         docker-clean deploy integration-test unit-test
@@ -23,6 +23,7 @@ VALUES_FLAGS  := -f $(CONFIG_DIR)/$(CONFIG) \
 
 GITHUB_ORG=knows-aggregator
 GITHUB_PROJECT=k8s-aggregator
+SLICES_CONTEXT ?= admin@aggregator-cluster
 
 # ------------------------
 # Aggregator deployment
@@ -40,6 +41,25 @@ kind-deploy:
 	$(MAKE) configure-etc-hosts HOSTS="aggregator.local wsl.local"
 	$(MAKE) deploy CONFIG=$(CONFIG_FILE)
 
+slices-deploy:
+	@echo "📄 Deploying aggregator application to Slices..."
+	@helm upgrade --install aggregator-platform ./aggregator-platform \
+		-f $(CONFIG_DIR)/slices.yaml \
+		$(foreach f,$(SERVICE_FILES),-f $(f)) \
+		$(foreach f,$(FNO_FILES),-f $(f)) \
+		--kube-context $(SLICES_CONTEXT) \
+		-n aggregator-platform --create-namespace
+	@kubectl --context $(SLICES_CONTEXT) rollout status \
+		deployment/aggregator-server \
+		-n aggregator-platform --timeout=120s
+	@echo "✅ Aggregator application successfully deployed to Slices!"
+
+slices-configure-proxy:
+	@./slices/configure-proxy.sh
+
+slices-deploy-tunnel:
+	@./slices/deploy-tunnel.sh
+
 undeploy:
 	@echo "🧹 Stopping aggregator deployment..."
 	@if kind get clusters 2>/dev/null | grep -q "aggregator"; then \
@@ -53,8 +73,21 @@ undeploy:
 	fi
 	@echo "✅ Aggregator deployment stopped!"
 
-kind-undeploy: 
+kind-undeploy:
 	$(MAKE) clean-etc-hosts HOSTS="aggregator.local wsl.local" undeploy
+
+slices-undeploy:
+	@echo "🧹 Stopping aggregator deployment on Slices..."
+	@helm uninstall aggregator-platform \
+		--kube-context $(SLICES_CONTEXT) \
+		-n aggregator-platform --ignore-not-found
+	@kubectl --context $(SLICES_CONTEXT) delete namespace \
+		aggregator-platform --ignore-not-found
+	@kubectl --context $(SLICES_CONTEXT) delete crd \
+		serviceconfigurations.aggregator.example.org --ignore-not-found
+	@kubectl --context $(SLICES_CONTEXT) delete crd \
+		fnodescriptions.aggregator.example.org --ignore-not-found
+	@echo "✅ Aggregator deployment removed from Slices!"
 
 # ------------------------
 # Local cluster setup

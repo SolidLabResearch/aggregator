@@ -74,12 +74,12 @@ func main() {
 	model.ProvisionID = os.Getenv("PROVISION_ID")
 
 	// Read spec configuration
-	model.TransformationCatalog = os.Getenv("TRANSFORMATION_CATALOG")
-	if model.TransformationCatalog == "" {
-		logrus.Fatal("Environment variable TRANSFORMATION_CATALOG must be set.")
+	model.DeploymentCatalog = os.Getenv("DEPLOYMENT_CATALOG")
+	if model.DeploymentCatalog == "" {
+		logrus.Fatal("Environment variable DEPLOYMENT_CATALOG must be set.")
 	}
 	model.ServiceCollection = os.Getenv("SERVICE_COLLECTION")
-	if model.TransformationCatalog == "" {
+	if model.ServiceCollection == "" {
 		logrus.Fatal("Environment variable SERVICE_COLLECTION must be set")
 	}
 
@@ -117,10 +117,10 @@ func main() {
 		logrus.WithError(err).Fatalf("Failed to set up service collection endpoint")
 	}
 
-	// Initialize transformation catalog
-	err = config.InitTransformationCatalog(serverMux)
+	// Initialize deployment catalog
+	err = config.InitDeploymentCatalog(serverMux)
 	if err != nil {
-		logrus.WithError(err).Fatalf("Failed to set up transformation catalog endpoint")
+		logrus.WithError(err).Fatalf("Failed to set up deployment catalog endpoint")
 	}
 
 	// Health check endpoint

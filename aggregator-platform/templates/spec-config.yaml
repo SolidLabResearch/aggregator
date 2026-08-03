@@ -8,6 +8,6 @@ metadata:
   annotations:
     {{- include "aggregator.annotations" $ | nindent 4 }}
 data:
-  TRANSFORMATION_CATALOG: {{ .Values.spec.transformation_catalog }}
-  SERVICE_COLLECTION: {{ .Values.spec.service_collection }}
-  REGISTRATION: {{ .Values.spec.registration }}
+  DEPLOYMENT_CATALOG: {{ .Values.spec.deployment_catalog | quote }}
+  SERVICE_COLLECTION: {{ .Values.spec.service_collection | quote }}
+  REGISTRATION: {{ .Values.spec.registration | quote }}

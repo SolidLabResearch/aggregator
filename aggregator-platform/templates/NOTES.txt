@@ -19,9 +19,9 @@ http://{{ .Values.external.host }}
 Manage transformations:
 
 {{- if .Values.tls.enabled }}
-- https://{{ .Values.external.host }}{{ .Values.spec.transformation_catalog }}
+- https://{{ .Values.external.host }}{{ .Values.spec.deployment_catalog }}
 {{- else }}
-- http://{{ .Values.external.host }}{{ .Values.spec.transformation_catalog }}
+- http://{{ .Values.external.host }}{{ .Values.spec.deployment_catalog }}
 {{- end }}
 
 ----------------------------------------------------------

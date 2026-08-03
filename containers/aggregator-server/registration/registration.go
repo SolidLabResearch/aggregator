@@ -250,7 +250,9 @@ func handleRegistrationDelete(w http.ResponseWriter, r *http.Request) {
 
 	// Delete user tokens
 	if inst.RegistrationType != "none" {
-		deleteTokens(inst.OwnerID)
+		if err := deleteTokens(inst.AggregatorID); err != nil {
+			logrus.WithError(err).WithField("aggregator_id", inst.AggregatorID).Error("Failed to delete aggregator tokens")
+		}
 	}
 
 	// Delete from storage

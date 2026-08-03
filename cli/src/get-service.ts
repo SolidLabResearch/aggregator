@@ -14,7 +14,7 @@ export async function main(opts: { agg?: string, svc?: string } = {}) {
   const svc = agg.services[svcName];
   if (!svc) throw new Error(`Service "${svcName}" not found on Aggregator "${aggId}"`);
 
-  const SERVICE_ENDPOINT = `${agg.id}/${svc.name}`;
+  const SERVICE_ENDPOINT = `${agg.id}${config.server.svc}/${svc.name}`;
 
   console.log("=== Initializing Keycloak Authentication ===");
   const auth = new KeycloakOIDCAuth();

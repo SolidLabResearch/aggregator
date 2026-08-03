@@ -7,7 +7,7 @@ auth:
 
 spec:
   service_collection: /services
-  transformation_catalog: /transformations
+  deployment_catalog: /deployments
   registration: /registration
 
 fnoDescriptions: {}
@@ -67,7 +67,7 @@ aggregator:
     tag: latest
     pullPolicy: Never
 
-egress-uma:
+egressUma:
   image:
     repository: egress-uma
     tag: latest

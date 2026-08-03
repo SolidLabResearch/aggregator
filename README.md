@@ -41,16 +41,16 @@ POST http(s)://<host>/registration
 More on registration flows in the [documentation](/docs/deploying-aggregators.md)
 
 ---
-### Transformation Catalog
+### Deployment Catalog
 
-Retrieve the list of available **FnO transformations** supported by the platform.
+Retrieve the available FnO functions for deploying services.
 
 Default endpoint:
 ```
-GET http(s)://<host>/transformations
+GET http(s)://<host>/deployments
 ```
 
-More on transformations in the [documentation](/docs/creating-services.md)
+More on deployment functions in the [documentation](/docs/creating-services.md)
 
 ---
 ### Aggregator Description

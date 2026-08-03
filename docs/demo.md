@@ -174,19 +174,17 @@ npm run register-user
 
 ## 4. Creating a service inside the aggregator
 
-To create a service inside an aggregator, you send an FnO Execution to the aggregator’s service collection endpoint (UMA-protected):
+To create a service inside an aggregator, send an `aggr:ServiceRequest` to the aggregator’s service collection endpoint (UMA-protected):
 
 ```pgsql
 POST https://aggregator.local/<aggregator-id>/services
 Content-Type: text/turtle
 
-@prefix trans: <https://aggregator.local/transformations#>.
-@prefix fno: <https://w3id.org/function/ontology#>.
-@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#>.
+@prefix aggr: <https://w3id.org/aggregator#>.
+@prefix deploy: <https://aggregator.local/deployments#>.
 
-<https://aggregator.local/<aggregator-id>/service-id> a fno:Execution;
-    fno:executes <Fno Function>;
+<https://aggregator.local/<aggregator-id>/service-id> a aggr:ServiceRequest;
+    aggr:deploymentFunction <deployment function>;
     <input predicate> "<input value>";
     ...
 ```
@@ -194,13 +192,11 @@ Content-Type: text/turtle
 ---
 ### Example
 ```
-@prefix trans: <https://aggregator.local/transformations#>.
-@prefix fno: <https://w3id.org/function/ontology#>.
-@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#>.
+@prefix aggr: <https://w3id.org/aggregator#>.
+@prefix deploy: <https://aggregator.local/deployments#>.
 
-<https://aggregator.local/15359d0a-df50-4083-8c88-b457ec7d2399/pacsoi-service> a fno:Execution;
-    fno:executes trans:Pacsoi;
+<https://aggregator.local/15359d0a-df50-4083-8c88-b457ec7d2399/pacsoi-service> a aggr:ServiceRequest;
+    aggr:deploymentFunction deploy:Pacsoi;
 ```
 
 ---

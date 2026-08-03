@@ -5,3 +5,15 @@
 logs/*
 temp
 cli-config*.json
+slices/
+slices-venv/
+
+# Keep generated Slices cluster material private, but track reusable tooling
+# and documentation.
+!slices/
+slices/*
+!slices/configure-proxy.sh
+!slices/deploy-tunnel.sh
+!slices/docs/
+slices/docs/*
+!slices/docs/kubectl.md

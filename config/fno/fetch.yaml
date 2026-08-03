@@ -1,16 +1,17 @@
 fnoDescriptions:
   fetch:
-    type: function
+    type: deployment-function
     serviceConfigurationRef:
       name: fetch
     description: |
       @prefix fno: <https://w3id.org/function/ontology#> .
+      @prefix aggr: <https://w3id.org/aggregator#> .
       @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
       <Fetch>
         a fno:Function ;
         fno:expects ( <URL> ) ;
-        fno:returns ( <Content> ) .
+        fno:returns ( <DeployedService> ) .
 
       <URL>
         a fno:Parameter ;
@@ -18,6 +19,7 @@ fnoDescriptions:
         fno:predicate <url> ;
         fno:required "true"^^xsd:boolean .
 
-      <Content>
+      <DeployedService>
         a fno:Output ;
-        fno:predicate <content> .
+        fno:predicate <service> ;
+        fno:type aggr:Service .

@@ -8,10 +8,9 @@ serviceConfigurations:
       ":procedure-slice":
         id: PROCEDURE_SLICE
 
-    outputMapping:
-      ":w-dist":
-        dataset:
-          title: "Weight Distribution"
+    datasets:
+      weight-distribution:
+        title: "Weight Distribution"
 
         distribution:
           access:
@@ -31,23 +30,28 @@ serviceConfigurations:
       orchestration:
         type: Deployment
         spec:
-          replicas: 1
-          selector:
-            matchLabels:
-              app: pacsoi
-          template:
-            metadata:
-              labels:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: pacsoi
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
                 app: pacsoi
-            spec:
-              containers:
-                - name: pacsoi
-                  image: pacsoi-service
-                  imagePullPolicy: Never
-                  env:
-                    - name: SOURCES
-                      value: "$(SOURCES)"
-                    - name: WEIGHT_SLICE
-                      value: "$(WEIGHT_SLICE)"
-                    - name: PROCEDURE_SLICE
-                      value: "$(PROCEDURE_SLICE)"
+            template:
+              metadata:
+                labels:
+                  app: pacsoi
+              spec:
+                containers:
+                  - name: pacsoi
+                    image: pacsoi-service
+                    imagePullPolicy: Never
+                    env:
+                      - name: SOURCES
+                        value: "$(SOURCES)"
+                      - name: WEIGHT_SLICE
+                        value: "$(WEIGHT_SLICE)"
+                      - name: PROCEDURE_SLICE
+                        value: "$(PROCEDURE_SLICE)"

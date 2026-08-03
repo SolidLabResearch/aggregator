@@ -39,7 +39,7 @@ var Namespace string
 
 // Aggregator configuration
 var ServiceCollection string
-var TransformationCatalog string
+var DeploymentCatalog string
 
 var Clientset kubernetes.Interface
 var DynamicClient *dynamic.DynamicClient

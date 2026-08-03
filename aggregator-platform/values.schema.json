@@ -107,6 +107,23 @@
           "if": {
             "properties": {
               "allowedRegistrationTypes": {
+                "contains": { "const": "device_code" }
+              }
+            }
+          },
+          "then": {
+            "required": ["oidc"],
+            "properties": {
+              "oidc": {
+                "required": ["clientId", "clientSecret", "server"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "allowedRegistrationTypes": {
                 "contains": { "const": "provision" }
               }
             }

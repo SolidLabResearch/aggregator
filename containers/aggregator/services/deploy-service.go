@@ -51,7 +51,7 @@ func deploy(
 ) error {
 
 	sc := service.Configuration
-	app := service.Application
+	app := service.Deployment
 
 	// Build substitution values
 	values, err := buildSubstitutionMap(
@@ -88,6 +88,14 @@ func deploy(
 		return err
 	}
 
+	// The requested service ID is an external path identifier. Kubernetes
+	// resources use a separate, internal name to avoid collisions and DNS
+	// label length constraints.
+	err = injectName(obj, service.KubernetesName)
+	if err != nil {
+		return err
+	}
+
 	// Inject labels
 	err = injectLabels(obj, service)
 	if err != nil {
@@ -96,7 +104,7 @@ func deploy(
 
 	// Log final spec
 	if finalBytes, err := json.MarshalIndent(obj, "", "  "); err == nil {
-		logrus.Debugf("Final deployment spec for service %s:\n%s", service.NamespaceID, string(finalBytes))
+		logrus.Debugf("Final deployment spec for service %s:\n%s", service.KubernetesName, string(finalBytes))
 	}
 
 	// Apply
@@ -105,7 +113,7 @@ func deploy(
 		return err
 	}
 
-	logrus.Infof("Service %s deployed successfully", service.NamespaceID)
+	logrus.Infof("Service %s deployed successfully", service.KubernetesName)
 	return nil
 }
 
@@ -114,19 +122,19 @@ func expose(service *model.Service, ctx context.Context) error {
 	// Check if service already exists
 	_, err := model.Clientset.CoreV1().
 		Services(model.Namespace).
-		Get(ctx, service.NamespaceID, metav1.GetOptions{})
+		Get(ctx, service.KubernetesName, metav1.GetOptions{})
 
 	if err == nil {
-		return fmt.Errorf("service %s already exists", service.NamespaceID)
+		return fmt.Errorf("service %s already exists", service.KubernetesName)
 	}
 
 	sc := service.Configuration
 
-	// ✅ Extract ports from outputMapping
+	// Extract ports used by exposed dataset distributions.
 	ports := extractServicePorts(sc)
 
 	if len(ports) == 0 {
-		return fmt.Errorf("no ports defined in outputMapping for service %s", service.NamespaceID)
+		return fmt.Errorf("no distribution ports defined for service %s", service.KubernetesName)
 	}
 
 	// ✅ Build k8s ports
@@ -143,7 +151,7 @@ func expose(service *model.Service, ctx context.Context) error {
 	// ✅ Create Service spec
 	svcSpec := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      service.NamespaceID,
+			Name:      service.KubernetesName,
 			Namespace: model.Namespace,
 			Labels:    labels,
 		},
@@ -167,7 +175,7 @@ func expose(service *model.Service, ctx context.Context) error {
 		return fmt.Errorf("failed to create service: %w", err)
 	}
 
-	logrus.Infof("Service %s created with ports %v", service.NamespaceID, ports)
+	logrus.Infof("Service %s created with ports %v", service.KubernetesName, ports)
 
 	return nil
 }

@@ -41,5 +41,4 @@ spec:
               value: "{{ .Values.external.host }}"
             - name: DISABLE_AUTH
               value: "{{ .Values.ingressUma.disableAuth }}"
-            - name: CLIENT_ID
-              value: "{{ .Values.auth.clientId }}"
+      terminationGracePeriodSeconds: {{ .Values.ingressUma.terminationGracePeriodSeconds }}

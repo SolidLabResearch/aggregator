@@ -27,7 +27,7 @@ type FnoDescription struct {
 }
 
 type FnoDescriptionSpec struct {
-	Type        string `json:"type"`        // function | implementation
+	Type        string `json:"type"`        // deployment-function | implementation
 	Description string `json:"description"` // Turtle RDF
 
 	ServiceConfigurationRef Reference `json:"serviceConfigurationRef,omitempty"`
@@ -68,7 +68,7 @@ func LoadFnoDescription(
 	return &fno, nil
 }
 
-type Transformation struct {
+type DeploymentFunction struct {
 	Base       string            `json:"base,omitempty"`
 	URI        string            `json:"uri"`
 	FnO        string            `json:"-"`
@@ -77,10 +77,10 @@ type Transformation struct {
 	Predicates map[string]string `json:"predicates,omitempty"`
 }
 
-func LoadTransformation(uri string) (*Transformation, *ServiceConfiguration, error) {
-	id, err := util.StripPrefix(uri, ExternalServerURL()+TransformationCatalog+"#")
+func LoadDeploymentFunction(uri string) (*DeploymentFunction, *ServiceConfiguration, error) {
+	id, err := util.StripPrefix(uri, ExternalServerURL()+DeploymentCatalog+"#")
 	if err != nil {
-		return nil, nil, fmt.Errorf("invalid transformation URI %q: %w", uri, err)
+		return nil, nil, fmt.Errorf("invalid deployment function URI %q: %w", uri, err)
 	}
 
 	// Load function description
@@ -103,19 +103,19 @@ func LoadTransformation(uri string) (*Transformation, *ServiceConfiguration, err
 		return nil, nil, fmt.Errorf("failed to load Service Configuration: %w", err)
 	}
 
-	t := &Transformation{
-		Base: ExternalServerURL() + TransformationCatalog + "#",
+	t := &DeploymentFunction{
+		Base: ExternalServerURL() + DeploymentCatalog + "#",
 		URI:  uri,
 		FnO:  fno.Spec.Description,
 	}
 
 	// Parse FnO
-	t.ParseTransformation()
+	t.ParseDeploymentFunction()
 
 	return t, svcConfig, nil
 }
 
-func (tf *Transformation) ParseTransformation() {
+func (tf *DeploymentFunction) ParseDeploymentFunction() {
 	tf.Params = map[string]string{}
 	tf.Outputs = map[string]string{}
 	tf.Predicates = map[string]string{}
@@ -124,14 +124,14 @@ func (tf *Transformation) ParseTransformation() {
 		strings.NewReader(tf.FnO),
 		rdfgo.ParserOptions{
 			Format:  "text/turtle",
-			BaseIRI: ExternalServerURL() + TransformationCatalog + "#",
+			BaseIRI: ExternalServerURL() + DeploymentCatalog + "#",
 		},
 	)
 
 	go func() {
 		for parseErr := range errChan {
 			if parseErr != nil {
-				logrus.WithError(parseErr).Warnf("Error parsing FnO description for <%s>", tf.URI)
+				logrus.WithError(parseErr).Warnf("Error parsing deployment function description for <%s>", tf.URI)
 			}
 		}
 	}()
@@ -164,7 +164,7 @@ func (tf *Transformation) ParseTransformation() {
 	}
 }
 
-type Application struct {
-	Transformation *Transformation
-	Bindings       map[string]rdfgo.ITerm
+type DeploymentRequest struct {
+	Function *DeploymentFunction
+	Bindings map[string]rdfgo.ITerm
 }

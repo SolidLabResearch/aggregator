@@ -13,7 +13,7 @@ type AggregatorServerDescription struct {
 	SupportedRegistrationTypes []string `json:"supported_registration_types"`
 	Version                    string   `json:"version"`
 	ClientIdentifier           string   `json:"client_identifier,omitempty"`
-	TransformationCatalog      string   `json:"transformation_catalog"`
+	DeploymentCatalog          string   `json:"deployment_catalog"`
 }
 
 func InitServerDescription(mux *http.ServeMux) {
@@ -39,7 +39,7 @@ func handleServerDescription(w http.ResponseWriter, r *http.Request) {
 		SupportedRegistrationTypes: supported,
 		Version:                    "1.0.0",
 		ClientIdentifier:           model.SolidClientId,
-		TransformationCatalog:      fmt.Sprintf("%s%s", model.ExternalURL(), model.TransformationCatalog),
+		DeploymentCatalog:          fmt.Sprintf("%s%s", model.ExternalURL(), model.DeploymentCatalog),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

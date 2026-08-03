@@ -16,7 +16,7 @@ func TestDerivedResourceIDs_ServiceLocation(t *testing.T) {
 		"http://aggregator.local:5000/services/ns-123/svc-456",
 		"http://aggregator.local:5000/config/ns-123",
 		"http://aggregator.local:5000/config/ns-123/services",
-		"http://aggregator.local:5000/config/ns-123/transformations",
+		"http://aggregator.local:5000/config/ns-123/deployments",
 		"http://aggregator.local:5000/config/ns-123/services/svc-456",
 	}
 

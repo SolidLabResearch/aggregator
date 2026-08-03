@@ -177,7 +177,7 @@ func ensureDeployment(
 								{Name: "NAMESPACE", Value: model.Namespace},
 								{Name: "USER_ID", Value: userId},
 								{Name: "AS_URL", Value: asURL},
-								{Name: "TRANSFORMATION_CATALOG", Value: model.TransformationCatalog},
+								{Name: "DEPLOYMENT_CATALOG", Value: model.DeploymentCatalog},
 								{Name: "SERVICE_COLLECTION", Value: model.ServiceCollection},
 							},
 							VolumeMounts: []corev1.VolumeMount{

@@ -15,34 +15,34 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-type TransformationsConfigData struct {
-	etagTransformations int
-	transformations     []model.Transformation
-	store               rdfgo.Store
+type DeploymentCatalogConfig struct {
+	etag      int
+	functions []model.DeploymentFunction
+	store     rdfgo.Store
 }
 
-func InitTransformationsConfiguration(mux *http.ServeMux) error {
-	logrus.Info("Initializing transformations configuration")
+func InitDeploymentCatalogConfiguration(mux *http.ServeMux) error {
+	logrus.Info("Initializing deployment catalog configuration")
 
-	tfs, err := loadTransformationCRs()
+	functions, err := loadDeploymentFunctionCRs()
 	if err != nil {
-		return fmt.Errorf("error loading transformation CRs: %w", err)
+		return fmt.Errorf("error loading deployment function CRs: %w", err)
 	}
 
-	config := TransformationsConfigData{
-		etagTransformations: 0,
-		transformations:     tfs,
-		store:               rdfgo.NewStore(),
+	config := DeploymentCatalogConfig{
+		etag:      0,
+		functions: functions,
+		store:     rdfgo.NewStore(),
 	}
 	config.updateCatalog()
 
-	mux.HandleFunc(model.TransformationCatalog, config.HandleTransformationsEndpoint)
+	mux.HandleFunc(model.DeploymentCatalog, config.HandleDeploymentsEndpoint)
 
-	logrus.Info("Transformations configuration initialization completed")
+	logrus.Info("Deployment catalog configuration initialization completed")
 	return nil
 }
 
-func (config TransformationsConfigData) HandleTransformationsEndpoint(w http.ResponseWriter, r *http.Request) {
+func (config DeploymentCatalogConfig) HandleDeploymentsEndpoint(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "HEAD":
 		config.headAvailableTransformations(w, r)
@@ -53,7 +53,7 @@ func (config TransformationsConfigData) HandleTransformationsEndpoint(w http.Res
 	}
 }
 
-func (config *TransformationsConfigData) headAvailableTransformations(w http.ResponseWriter, r *http.Request) {
+func (config *DeploymentCatalogConfig) headAvailableTransformations(w http.ResponseWriter, r *http.Request) {
 	accept := r.Header.Get("Accept")
 	contentType := negotiateContentType(accept, []string{"text/turtle"})
 
@@ -63,11 +63,11 @@ func (config *TransformationsConfigData) headAvailableTransformations(w http.Res
 	}
 
 	header := w.Header()
-	header.Set("ETag", strconv.Itoa(config.etagTransformations))
+	header.Set("ETag", strconv.Itoa(config.etag))
 	header.Set("Content-Type", contentType)
 }
 
-func (config *TransformationsConfigData) getAvailableTransformations(w http.ResponseWriter, r *http.Request) {
+func (config *DeploymentCatalogConfig) getAvailableTransformations(w http.ResponseWriter, r *http.Request) {
 	accept := r.Header.Get("Accept")
 	contentType := negotiateContentType(accept, []string{"text/turtle"})
 
@@ -87,7 +87,7 @@ func (config *TransformationsConfigData) getAvailableTransformations(w http.Resp
 	}
 
 	header := w.Header()
-	header.Set("ETag", strconv.Itoa(config.etagTransformations))
+	header.Set("ETag", strconv.Itoa(config.etag))
 	header.Set("Content-Type", contentType)
 	_, err = w.Write(buf.Bytes())
 	if err != nil {
@@ -95,13 +95,13 @@ func (config *TransformationsConfigData) getAvailableTransformations(w http.Resp
 	}
 }
 
-func (config *TransformationsConfigData) updateCatalog() {
+func (config *DeploymentCatalogConfig) updateCatalog() {
 	config.store.RemoveMatches(nil, nil, nil, nil)
 
 	reader := strings.NewReader(catalogBase)
 	quads, errChan := rdfgo.Parse(reader, rdfgo.ParserOptions{
 		Format:  "turtle",
-		BaseIRI: model.ExternalURL() + model.TransformationCatalog + "#",
+		BaseIRI: model.ExternalURL() + model.DeploymentCatalog + "#",
 	})
 
 	go func() {
@@ -114,18 +114,18 @@ func (config *TransformationsConfigData) updateCatalog() {
 
 	config.store.Import(quads)
 
-	for _, tf := range config.transformations {
+	for _, function := range config.functions {
 		// Parse the FNO description into a temporary store
-		reader := strings.NewReader(tf.FNO)
+		reader := strings.NewReader(function.FNO)
 		quads, errChan := rdfgo.Parse(reader, rdfgo.ParserOptions{
 			Format:  "turtle",
-			BaseIRI: model.ExternalURL() + model.TransformationCatalog + "#",
+			BaseIRI: model.ExternalURL() + model.DeploymentCatalog + "#",
 		})
 
 		go func() {
 			for err := range errChan {
 				if err != nil {
-					logrus.WithError(err).Warn("Error parsing transformation FNO")
+					logrus.WithError(err).Warn("Error parsing deployment function FnO")
 				}
 			}
 		}()
@@ -143,15 +143,15 @@ func (config *TransformationsConfigData) updateCatalog() {
 
 	for function := range functions {
 		config.store.AddQuadFromTerms(
-			rdfgo.NewNamedNode(model.ExternalURL()+model.TransformationCatalog+"#transformation-catalog"),
-			rdfgo.NewNamedNode("https://spec.knows.idlab.ugent.be/aggregator-protocol/latest/#hasTransformation"),
+			rdfgo.NewNamedNode(model.ExternalURL()+model.DeploymentCatalog+"#"),
+			rdfgo.NewNamedNode("https://w3id.org/aggregator#hasDeploymentFunction"),
 			function.GetSubject(),
 			nil,
 		)
 	}
 }
 
-func loadTransformationCRs() ([]model.Transformation, error) {
+func loadDeploymentFunctionCRs() ([]model.DeploymentFunction, error) {
 	gvr := schema.GroupVersionResource{
 		Group:    "aggregator.example.org",
 		Version:  "v1alpha1",
@@ -162,14 +162,14 @@ func loadTransformationCRs() ([]model.Transformation, error) {
 		Resource(gvr).
 		Namespace(model.Namespace).
 		List(context.TODO(), v1.ListOptions{
-			LabelSelector: "aggregator.example.org/fno-type=function",
+			LabelSelector: "aggregator.example.org/fno-type=deployment-function",
 		})
 
 	if err != nil {
 		return nil, err
 	}
 
-	var results []model.Transformation
+	var results []model.DeploymentFunction
 
 	for _, item := range crList.Items {
 		spec, ok := item.Object["spec"].(map[string]interface{})
@@ -177,7 +177,7 @@ func loadTransformationCRs() ([]model.Transformation, error) {
 			continue
 		}
 
-		t := model.Transformation{
+		t := model.DeploymentFunction{
 			ID:  item.GetName(),
 			FNO: getString(spec, "description"),
 			// URI left empty — resolved from FNO description at catalog build time
@@ -197,12 +197,12 @@ func getString(m map[string]interface{}, key string) string {
 }
 
 const catalogBase = `
-@prefix aggr: <https://spec.knows.idlab.ugent.be/aggregator-protocol/latest/#> .
+@prefix aggr: <https://w3id.org/aggregator#> .
 @prefix fno: <https://w3id.org/function/ontology#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 
-<transformation-catalog> a aggr:TransformationCatalog ;
-    dct:title "Aggregator transformations" .
+<> a aggr:DeploymentCatalog ;
+    dct:title "Aggregator deployment functions" .
 `

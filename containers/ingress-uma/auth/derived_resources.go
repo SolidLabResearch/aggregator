@@ -124,7 +124,7 @@ func derivedResourceIDs(location string) []string {
 		resourceID,
 		fmt.Sprintf("%s/config/%s", base, namespace),
 		fmt.Sprintf("%s/config/%s/services", base, namespace),
-		fmt.Sprintf("%s/config/%s/transformations", base, namespace),
+		fmt.Sprintf("%s/config/%s/deployments", base, namespace),
 		fmt.Sprintf("%s/config/%s/services/%s", base, namespace, serviceID),
 	}
 	for _, entry := range resourceIDs {

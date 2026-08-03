@@ -146,6 +146,8 @@ type StoreRequest struct {
 	IDToken      string `json:"id_token"`
 	Expiry       int64  `json:"expiry"`
 	Issuer       string `json:"issuer"`
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret,omitempty"`
 }
 
 func handleUpsert(ctx context.Context, w http.ResponseWriter, r *http.Request) {
@@ -184,13 +186,24 @@ func handleUpsert(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientID, clientSecret, err := getClientCredentials(req.AggregatorID)
-	if err != nil {
-		l.WithError(err).Error("Failed to load client credentials")
-		http.Error(w, "Failed to get client credentials", http.StatusInternalServerError)
-		return
+	clientID := strings.TrimSpace(req.ClientID)
+	clientSecret := req.ClientSecret
+	credentialSource := "request"
+	if clientID == "" {
+		// Backward compatibility for tokens created before callers supplied
+		// credentials directly. Dynamic-registration code may also reuse this.
+		clientID, clientSecret, err = getClientCredentials(req.AggregatorID)
+		if err != nil {
+			l.WithError(err).Error("Failed to resolve client credentials")
+			http.Error(w, "Failed to get client credentials", http.StatusInternalServerError)
+			return
+		}
+		credentialSource = "kubernetes-secret"
 	}
-	l.WithField("client_id", clientID).Debug("Loaded client credentials")
+	l.WithFields(logrus.Fields{
+		"client_id":         clientID,
+		"credential_source": credentialSource,
+	}).Debug("Resolved client credentials")
 
 	oauthConfig := &oauth2.Config{
 		ClientID:     clientID,

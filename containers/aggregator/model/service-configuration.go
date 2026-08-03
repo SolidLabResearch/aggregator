@@ -25,8 +25,8 @@ type ServiceConfiguration struct {
 type ServiceConfigurationSpec struct {
 	Prefixes map[string]string `json:"prefixes,omitempty"`
 
-	InputMapping  map[string]InputMapping  `json:"inputMapping,omitempty"`
-	OutputMapping map[string]OutputMapping `json:"outputMapping,omitempty"`
+	InputMapping map[string]InputMapping `json:"inputMapping,omitempty"`
+	Datasets     map[string]Dataset      `json:"datasets,omitempty"`
 
 	ServiceMapping ServiceMapping `json:"serviceMapping"`
 }
@@ -35,15 +35,11 @@ type InputMapping struct {
 	ID string `json:"id"`
 }
 
-type OutputMapping struct {
-	Dataset      *Dataset      `json:"dataset,omitempty"`
-	Distribution *Distribution `json:"distribution,omitempty"`
-}
-
 type Dataset struct {
 	Title           string            `json:"title,omitempty"`
 	Description     string            `json:"description,omitempty"`
 	ExtraProperties map[string]string `json:"extraProperties,omitempty"`
+	Distribution    *Distribution     `json:"distribution,omitempty"`
 }
 
 type Distribution struct {
@@ -139,7 +135,7 @@ func NormalizeRDF(sc *ServiceConfiguration) {
 		"xsd":    "http://www.w3.org/2001/XMLSchema#",
 	}
 
-	base := ExternalServerURL() + TransformationCatalog + "#"
+	base := ExternalServerURL() + DeploymentCatalog + "#"
 
 	for k, v := range defaults {
 		if _, exists := prefixes[k]; !exists {
@@ -161,23 +157,17 @@ func NormalizeRDF(sc *ServiceConfiguration) {
 		sc.Spec.InputMapping = expandedInput
 	}
 
-	// -------- OUTPUT MAPPING --------
-	for key, output := range sc.Spec.OutputMapping {
+	// -------- DATASETS --------
+	for id, dataset := range sc.Spec.Datasets {
+		dataset.ExtraProperties =
+			util.ExpandRDFMap(dataset.ExtraProperties, prefixes, base)
 
-		// Dataset
-		if output.Dataset != nil {
-			output.Dataset.ExtraProperties =
-				util.ExpandRDFMap(output.Dataset.ExtraProperties, prefixes, base)
+		if dataset.Distribution != nil {
+			dataset.Distribution.ExtraProperties =
+				util.ExpandRDFMap(dataset.Distribution.ExtraProperties, prefixes, base)
 		}
 
-		// Distribution
-		if output.Distribution != nil {
-			output.Distribution.ExtraProperties =
-				util.ExpandRDFMap(output.Distribution.ExtraProperties, prefixes, base)
-		}
-
-		// Reassign (map copy semantics)
-		sc.Spec.OutputMapping[key] = output
+		sc.Spec.Datasets[id] = dataset
 	}
 
 	// -------- DATASERVICE --------

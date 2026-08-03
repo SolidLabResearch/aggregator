@@ -26,15 +26,15 @@ spec:
 
                 type:
                   type: string
-                  enum: [function, implementation]
+                  enum: [deployment-function, implementation]
                   description: >
-                    Whether this describes an fno:Function or
-                    fno:Implementation.
+                    Whether this describes an FnO deployment function or an
+                    explicitly selectable fno:Implementation.
 
                 description:
                   type: string
                   description: >
-                    RDF description of the function or implementation
+                    RDF description of the deployment function or implementation
                     as a Turtle string.
                               
                 serviceConfigurationRef:

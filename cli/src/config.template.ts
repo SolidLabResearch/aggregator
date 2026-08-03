@@ -1,8 +1,8 @@
 export interface ServiceConfig {
   name: string;
-  tf: string;
+  deploymentFunction: string;
   params: Record<string, string>;
-  outputs: string[];
+  datasets: Record<string, string>;
 }
 
 export interface AggregatorConfig {
@@ -29,7 +29,7 @@ export interface Config {
   aggregators: Record<string, AggregatorConfig>;
   server: {
     host: string;
-    tf: string;
+    deploymentCatalog: string;
     svc: string;
     reg: string;
   };
@@ -41,7 +41,7 @@ export interface Config {
 export const defaults: Config = {
   activeAggregator: null,
   aggregators: {},
-  server: { host: "", tf: "/transformations", svc: "/services", reg: "/register" },
+  server: { host: "", deploymentCatalog: "/deployments", svc: "/services", reg: "/registration" },
   auth: { username: "", password: "", clientId: "", clientSecret: "", idp: "", uma: "" },
-  service: { name: "", tf: "", params: {}, outputs: [] },
+  service: { name: "", deploymentFunction: "", params: {}, datasets: {} },
 };

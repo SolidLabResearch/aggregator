@@ -16,12 +16,12 @@ import (
 
 // AggregatorDescription represents the aggregator instance description
 type AggregatorDescription struct {
-	ID                    string `json:"id"`
-	CreatedAt             string `json:"created_at"`
-	LoginStatus           bool   `json:"login_status"`
-	TokenExpiry           string `json:"token_expiry,omitempty"`
-	TransformationCatalog string `json:"transformation_catalog"`
-	ServiceCollection     string `json:"service_collection"`
+	ID                string `json:"id"`
+	CreatedAt         string `json:"created_at"`
+	LoginStatus       bool   `json:"login_status"`
+	TokenExpiry       string `json:"token_expiry,omitempty"`
+	DeploymentCatalog string `json:"deployment_catalog"`
+	ServiceCollection string `json:"service_collection"`
 }
 
 func InitAggregatorDescription(mux *http.ServeMux) error {
@@ -59,12 +59,12 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 
 	// TODO: semantic representations need to be added at some point
 	desc := AggregatorDescription{
-		ID:                    model.ExternalBaseURL(),
-		CreatedAt:             createdAt,
-		LoginStatus:           loginStatus,
-		TokenExpiry:           tokenExpiry,
-		TransformationCatalog: model.ExternalBaseURL() + model.TransformationCatalog,
-		ServiceCollection:     model.ExternalBaseURL() + model.ServiceCollection,
+		ID:                model.ExternalBaseURL(),
+		CreatedAt:         createdAt,
+		LoginStatus:       loginStatus,
+		TokenExpiry:       tokenExpiry,
+		DeploymentCatalog: model.ExternalBaseURL() + model.DeploymentCatalog,
+		ServiceCollection: model.ExternalBaseURL() + model.ServiceCollection,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

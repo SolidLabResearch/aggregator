@@ -7,15 +7,15 @@ import (
 	"testing"
 )
 
-func TestTransformationsHead(t *testing.T) {
-	config := TransformationCatalog{
-		etagTransformations: 7,
-		transformations:     "test-transformations",
+func TestDeploymentsHead(t *testing.T) {
+	config := DeploymentCatalog{
+		etag:        7,
+		description: "test-deployments",
 	}
 
-	req := httptest.NewRequest(http.MethodHead, "/transformations", nil)
+	req := httptest.NewRequest(http.MethodHead, "/deployments", nil)
 	recorder := httptest.NewRecorder()
-	config.HandleTransformationsEndpoint(recorder, req)
+	config.HandleDeploymentsEndpoint(recorder, req)
 
 	resp := recorder.Result()
 	defer resp.Body.Close()
@@ -35,15 +35,15 @@ func TestTransformationsHead(t *testing.T) {
 	}
 }
 
-func TestTransformationsGet(t *testing.T) {
-	config := TransformationCatalog{
-		etagTransformations: 3,
-		transformations:     "test-transformations",
+func TestDeploymentsGet(t *testing.T) {
+	config := DeploymentCatalog{
+		etag:        3,
+		description: "test-deployments",
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/transformations", nil)
+	req := httptest.NewRequest(http.MethodGet, "/deployments", nil)
 	recorder := httptest.NewRecorder()
-	config.HandleTransformationsEndpoint(recorder, req)
+	config.HandleDeploymentsEndpoint(recorder, req)
 
 	resp := recorder.Result()
 	defer resp.Body.Close()
@@ -58,17 +58,17 @@ func TestTransformationsGet(t *testing.T) {
 		t.Fatalf("expected text/turtle, got %s", resp.Header.Get("Content-Type"))
 	}
 	body, _ := io.ReadAll(resp.Body)
-	if string(body) != "test-transformations" {
+	if string(body) != "test-deployments" {
 		t.Fatalf("unexpected body: %q", string(body))
 	}
 }
 
-func TestTransformationsMethodNotAllowed(t *testing.T) {
-	config := TransformationCatalog{}
+func TestDeploymentsMethodNotAllowed(t *testing.T) {
+	config := DeploymentCatalog{}
 
-	req := httptest.NewRequest(http.MethodPost, "/transformations", nil)
+	req := httptest.NewRequest(http.MethodPost, "/deployments", nil)
 	recorder := httptest.NewRecorder()
-	config.HandleTransformationsEndpoint(recorder, req)
+	config.HandleDeploymentsEndpoint(recorder, req)
 
 	resp := recorder.Result()
 	defer resp.Body.Close()

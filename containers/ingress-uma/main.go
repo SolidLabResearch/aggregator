@@ -14,7 +14,6 @@ import (
 
 var ExternalHost = os.Getenv("EXTERNAL_HOST")
 var DisableAuth = strings.ToLower(os.Getenv("DISABLE_AUTH")) == "true"
-var ClientId = os.Getenv("CLIENT_ID")
 
 func init() {
 	// Set up logging
@@ -29,7 +28,7 @@ func init() {
 func main() {
 	mux := http.NewServeMux()
 	// signing.InitSigning(mux, "/keys/private_key.pem", ExternalHost)
-	auth.InitAuth(ExternalHost, DisableAuth, ClientId)
+	auth.InitAuth(ExternalHost, DisableAuth)
 
 	// Synchronize resources (NOT SUPPORTED YET)
 	// err := auth.SynchronizeResources(ASURL)

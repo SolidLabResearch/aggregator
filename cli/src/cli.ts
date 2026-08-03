@@ -64,19 +64,21 @@ program
 program
   .command("create-service")
   .description("Create a service on the aggregator")
-  .option("--name <name>",       "Service name")
-  .option("--tf <tf>",           "Transformation ID")
-  .option("--outputs <outputs>", "Comma-separated outputs")
-  .option("--param <kv>",        "Parameter as key=value, repeatable", collect, [])
-  .option("--agg <id>",          "Aggregator ID to use instead of active")
+  .option("--name <name>", "Service name")
+  .option("--deployment-function <id>", "Deployment function ID")
+  .option("--dataset <kv>", "Dataset access path as id=path, repeatable", collect, [])
+  .option("--param <kv>", "Parameter predicate as key=value, repeatable", collect, [])
+  .option("--agg <id>", "Aggregator ID to use instead of active")
   .action(async (opts) => {
     const { main } = await import("./create-service.js");
     await main({
-      name:    opts.name,
-      tf:      opts.tf,
-      outputs: opts.outputs?.split(","),
+      name: opts.name,
+      deploymentFunction: opts.deploymentFunction,
+      datasets: opts.dataset?.length
+        ? Object.fromEntries(opts.dataset.map(parseKeyValue))
+        : undefined,
       params:  opts.param?.length
-        ? Object.fromEntries(opts.param.map((p: string) => p.split("=")))
+        ? Object.fromEntries(opts.param.map(parseKeyValue))
         : undefined,
       agg: opts.agg,
     });
@@ -103,14 +105,15 @@ program
   });
 
 program
-  .command("get-output")
-  .description("Fetch service outputs")
-  .option("--outputs <outputs>", "Comma-separated subset of outputs")
+  .command("get-dataset")
+  .alias("get-output")
+  .description("Fetch service dataset distributions")
+  .option("--datasets <datasets>", "Comma-separated subset of dataset IDs")
   .option("--agg <id>",          "Aggregator ID to use instead of active")
   .option("--svc <name>",        "Service name to use instead of active")
   .action(async (opts) => {
     const { main } = await import("./get-output.js");
-    await main({ outputs: opts.outputs?.split(","), agg: opts.agg, svc: opts.svc });
+    await main({ datasets: opts.datasets?.split(","), agg: opts.agg, svc: opts.svc });
   });
 
 program
@@ -174,6 +177,14 @@ program
 function collect(val: string, acc: string[]) {
   acc.push(val);
   return acc;
+}
+
+function parseKeyValue(value: string): [string, string] {
+  const separator = value.indexOf("=");
+  if (separator <= 0) {
+    throw new Error(`Expected key=value, received "${value}".`);
+  }
+  return [value.slice(0, separator), value.slice(separator + 1)];
 }
 
 program.parse();

@@ -8,34 +8,34 @@ metadata:
   annotations:
     {{- include "aggregator.annotations" $ | nindent 4 }}
 data:
-  NAMESPACE: {{ .Release.Namespace }}
-  LOG_LEVEL: {{ .Values.loglevel }}
+  NAMESPACE: {{ .Release.Namespace | quote }}
+  LOG_LEVEL: {{ .Values.loglevel | quote }}
 
-  EXTERNAL_HOST: {{ .Values.external.host }}
+  EXTERNAL_HOST: {{ .Values.external.host | quote }}
   EXTERNAL_HTTP_PORT: {{ .Values.external.httpPort | quote }}
   EXTERNAL_HTTPS_PORT: {{ .Values.external.httpsPort | quote }}
 
   ALLOWED_REGISTRATION_TYPES: {{ join "," .Values.auth.allowedRegistrationTypes | quote }}
-  SOLID_OIDC: {{ .Values.auth.solidOidc | quote }}
-  OIDC_CLIENT_ID: {{ .Values.auth.oidc.clientId }}
-  OIDC_SERVER: {{ .Values.auth.oidc.server }}
+  SOLID_OIDC: {{ default "" .Values.auth.solidOidc | quote }}
+  OIDC_CLIENT_ID: {{ default "" .Values.auth.oidc.clientId | quote }}
+  OIDC_SERVER: {{ default "" .Values.auth.oidc.server | quote }}
 
-  PROVISION_CLIENT_ID: {{ .Values.auth.provision.clientId }}
-  PROVISION_CLIENT_SECRET: {{ .Values.auth.provision.clientSecret }}
-  PROVISION_WEBID: {{ .Values.auth.provision.webId }}
-  PROVISION_AUTHORIZATION_SERVER: {{ .Values.auth.provision.authServer }}
+  PROVISION_CLIENT_ID: {{ default "" .Values.auth.provision.clientId | quote }}
+  PROVISION_CLIENT_SECRET: {{ default "" .Values.auth.provision.clientSecret | quote }}
+  PROVISION_WEBID: {{ default "" .Values.auth.provision.webId | quote }}
+  PROVISION_AUTHORIZATION_SERVER: {{ default "" .Values.auth.provision.authServer | quote }}
 
-  CLIENT_CRED_ID: {{ .Values.auth.client_credentials.clientId }}
+  CLIENT_CRED_ID: {{ default "" .Values.auth.client_credentials.clientId | quote }}
 
-  AGGREGATOR_IMAGE: {{ .Values.aggregator.image.repository }}
-  AGGREGATOR_TAG: {{ .Values.aggregator.image.tag }}
-  AGGREGATOR_PULL_POLICY: {{ .Values.aggregator.image.pullPolicy }}
+  AGGREGATOR_IMAGE: {{ .Values.aggregator.image.repository | quote }}
+  AGGREGATOR_TAG: {{ .Values.aggregator.image.tag | quote }}
+  AGGREGATOR_PULL_POLICY: {{ .Values.aggregator.image.pullPolicy | quote }}
 
-  EGRESS-UMA_IMAGE: {{ .Values.egress-uma.image.repository }}
-  EGRESS-UMA_TAG: {{ .Values.egress-uma.image.tag }}
-  EGRESS-UMA_PULL_POLICY: {{ .Values.egress-uma.image.pullPolicy }}
+  EGRESS-UMA_IMAGE: {{ .Values.egressUma.image.repository | quote }}
+  EGRESS-UMA_TAG: {{ .Values.egressUma.image.tag | quote }}
+  EGRESS-UMA_PULL_POLICY: {{ .Values.egressUma.image.pullPolicy | quote }}
 
-  INGRESS_CLASS_NAME: {{ .Values.ingressClassName }}
+  INGRESS_CLASS_NAME: {{ .Values.ingressClassName | quote }}
   {{- if .Values.tls.enabled }}
-  TLS_SECRET: {{ .Values.tls.secretName }}
+  TLS_SECRET: {{ .Values.tls.secretName | quote }}
   {{- end }}
