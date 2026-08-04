@@ -7,7 +7,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -69,33 +68,6 @@ func ensureRoleBindings(aggregatorId string, ctx context.Context) error {
 	_, err := model.Clientset.RbacV1().RoleBindings(model.Namespace).Create(ctx, managerBinding, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create manager RoleBinding: %w", err)
-	}
-
-	// Aggregator can read fno-descriptions and service configurations
-	tfBinding := &rbacv1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("cr-reader-binding-%s", aggregatorId),
-			Namespace: model.Namespace,
-			Labels: map[string]string{
-				"agg.knows.idlab.ugent.be/managed-by": aggregatorId,
-			},
-		},
-		Subjects: []rbacv1.Subject{
-			{
-				Kind:      "ServiceAccount",
-				Name:      saName,
-				Namespace: model.Namespace,
-			},
-		},
-		RoleRef: rbacv1.RoleRef{
-			Kind:     "Role",
-			Name:     "aggregator-cr-reader",
-			APIGroup: "rbac.authorization.k8s.io",
-		},
-	}
-
-	if _, err := model.Clientset.RbacV1().RoleBindings(model.Namespace).Create(ctx, tfBinding, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-		return fmt.Errorf("failed to create Transformation RoleBinding: %w", err)
 	}
 
 	return nil

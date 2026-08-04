@@ -1,102 +1,67 @@
-# Creating Aggregator Services
+# Defining deployable services
 
-This section will explain how to create a service that can run as an Aggregator Service.
+The platform deploys workloads described by Kubernetes custom resources. A
+`DeploymentFunction` is required; a `Profile` is optional.
 
-An aggregator service **MUST** be a Dockerfile that:
-  - accepts input parameters as environment variables
-  - provides output parameters as endpoints
+- `DeploymentFunction` declares the public deployment function, Kubernetes
+  resources, input bindings, and route bindings.
+- `Profile` adds a reusable semantic interface: service parameters, functions,
+  endpoints, datasets, and distributions.
 
-## Using the Egress UMA Proxy
+The Aggregator Server watches these resources and publishes them at
+`/deployments` and `/profiles`. Aggregator instances never read the CRDs
+directly.
 
-When an Aggregator Service sends outbound requests to access UMA Resources, the UMA flow is handled by the `egress-uma-proxy`. A service must use the `HTTP_PROXY`, `http_proxy`, `HTTPS_PROXY` and `https_proxy` environment variables to route outgoing requests to the `egress-uma-proxy`.
+## Start from a working definition
 
-The current `egress-uma-proxy` is still under development and therefore expects a special request format to perform outgoing requests.
+The repository contains runnable examples:
 
-You must specify the target method, url and if applicable body. For example, sending a POST request to `http://example.com/kvasir/query`:
+- `config/deployment-functions/fetch-profiled.yaml`
+- `config/deployment-functions/fetch-unprofiled.yaml`
+- `config/profiles/fetch.yaml`
+- `config/deployment-functions/pacsoi.yaml`
+- `config/profiles/pacsoi.yaml`
 
-```http
-POST /fetch
-Host: HTTP_PROXY / HTTPS_PROXY
-Content-Type: application/json
+The Makefile automatically adds every YAML file in
+`config/deployment-functions/` and `config/profiles/` to Helm deployments. To
+add a service type:
 
-{
-  target_url: "http://example.com/kvasir/query",
-  target_method: "POST",
-  target_headers: { "Content-Type": "application/json" },
-  target_body: {
-    "@context": {},
-    query: "query { resources { id } }"
-  }
-}
+1. Build or otherwise publish its container image.
+2. Add a `DeploymentFunction` entry under `deploymentFunctions` in a values
+   file in `config/deployment-functions/`.
+3. If the service has a reusable semantic interface, add a `Profile` under
+   `profiles` in `config/profiles/` and reference it with `profileRef.name`.
+4. Run `make deploy`, `make kind-deploy`, or `make slices-deploy`.
+5. Inspect `GET /deployments/{name}` before creating a service instance.
+
+For local images, build and load one container with:
+
+```bash
+make containers-all CONTAINER=<directory-under-containers>
 ```
 
-## Creating a Transformation Description
+## Definition rules
 
-An Aggregator Service **MUST** be described as an [FnO Function](https://fno.io/spec/#ontology-abstract). Every parameter given as a environment variable, as well as every output provided as an endpoint must be included in the description.
+Important validation rules enforced by the CRDs and catalog compiler include:
 
-## Creating a Transformation CRD
+- embedded manifests omit `metadata.name` and `metadata.namespace`; the
+  platform assigns both;
+- orchestration resource IDs and container names are local references;
+- input bindings target an environment variable in a specific resource and
+  container;
+- route bindings target a named container port, not a numeric port;
+- a deployment uses either `profileRef` or an inline `interface`, never both;
+- every declared public endpoint or distribution has a corresponding route
+  binding; and
+- a profiled output references an existing dataset profile.
 
-The Aggregator Server uses Custom Resource Defintions to load supported services. A CRD needs the following:
-  - **name**: a abstract name for the service
-  - **spec**:
-    - **id**: the unique ID that identifies the transformation in the transformation catalog
-    - **image**: the image name that implements the service as it is loaded inside the cluster
-    - **fno**: the FnO description of the transformation. Function, Parameter, Output and predicate defintions should expect an `@base` prefix. This will be set to the transformation catalog once the CRD is loaded inside the Aggregator Server.
-    - **input mapping**: mapping each parameter predicate onto the environment variable to be used
-    - **output mapping**: mapping each output predicate onto the path and port to be used to fetch the ouput values
+The complete schema, profiled example, routing model, identifier rules, and
+internal bundle contract are in [Deployment definitions and
+profiles](deployment-definitions.md). The authoritative structural schemas are
+the CRDs in `aggregator-platform/crds/`.
 
-Transformations are added in the Aggregator Server helm file using the `transformations` keyword:
+## Deploy an instance
 
-```yaml
-transformations:
-  - name: incremental-kvasir
-    spec:
-      id: IncrementalKvasir
-      image: incremunica-kvasir
-      fno: |
-        @prefix fno: <https://w3id.org/function/ontology#> .
-        @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-        @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
-
-        <IncrementalKvasir>
-          a fno:Function ;
-          fno:expects ( <Query> <Sources> <Schema> <Context> ) ;
-          fno:returns ( <QueryResult> ) .
-
-        <Query>
-          a fno:Parameter ;
-          fno:type xsd:string ;
-          fno:predicate <query> ;
-          fno:required "true"^^xsd:boolean .
-        
-        <Sources>
-          a fno:Parameter ;
-          fno:type xsd:string ;
-          fno:predicate <sources> ;
-          fno:required "true"^^xsd:boolean .
-        
-        <Schema>
-          a fno:Parameter ;
-          fno:type xsd:string ;
-          fno:predicate <schema> ;
-          fno:required "true"^^xsd:boolean .
-        
-        <Context>
-          a fno:Parameter ;
-          fno:type xsd:string ;
-          fno:predicate <context> ;
-          fno:required "true"^^xsd:boolean .
-        
-        <QueryResult>
-          a fno:Output ;
-          fno:predicate <result> .
-      inputMapping:
-        query: QUERY
-        sources: SOURCES
-        schema: SCHEMA
-        context: CONTEXT
-      outputMapping:
-        result:
-          port: 3000
-          path: /
-```
+Definitions describe service types; users instantiate them by posting an RDF
+`aggr:ServiceRequest` to an aggregator's `/services` collection. See
+[Deploying services](deploying-services.md).

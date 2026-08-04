@@ -7,6 +7,7 @@ import (
 	"ingress-uma/model"
 	"io"
 	"net/http"
+	"sync"
 
 	"github.com/sirupsen/logrus"
 )
@@ -17,6 +18,8 @@ type ResourceData struct {
 }
 
 var resourceIndex = make(map[string]ResourceData)
+var resourceIndexMu sync.RWMutex
+var deleteResourceForShutdown = deleteResource
 
 func HandleResourceRequest(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -84,7 +87,9 @@ func createResource(aggData AggregatorAuthData, resourceId string, scopes []Scop
 	}
 
 	// Check if resource already registered
+	resourceIndexMu.RLock()
 	resData, update := resourceIndex[resourceId]
+	resourceIndexMu.RUnlock()
 	endpoint := config.ResourceRegistrationEndpoint
 	method := "POST"
 	if update {
@@ -161,7 +166,9 @@ func createResource(aggData AggregatorAuthData, resourceId string, scopes []Scop
 			logrus.WithFields(logrus.Fields{"resource_id": resourceId}).Warn("Unexpected UMA response; no UMA id received")
 			return nil
 		}
+		resourceIndexMu.Lock()
 		resourceIndex[resourceId] = ResourceData{UmaID: responseData.ID, AggData: aggData}
+		resourceIndexMu.Unlock()
 		logrus.WithFields(logrus.Fields{"resource_id": resourceId, "uma_id": responseData.ID}).Info("Registered resource with UMA")
 	}
 	return nil
@@ -201,15 +208,11 @@ func handleDeleteResource(w http.ResponseWriter, r *http.Request) {
 
 // deleteResource deletes a single resource from the authorization server and updates local state
 func deleteResource(resourceId string) error {
-	data, ok := resourceIndex[resourceId]
-	if !ok {
-		// Resource not registered / already deleted
-		return fmt.Errorf("resource %s not found locally", resourceId)
-	}
+	resourceIndexMu.RLock()
 	resData, ok := resourceIndex[resourceId]
+	resourceIndexMu.RUnlock()
 	if !ok {
-		// Resource not registered at authz server
-		return fmt.Errorf("resource %s not registered at authz server", resourceId)
+		return fmt.Errorf("resource %s not found locally", resourceId)
 	}
 
 	config, err := fetchUmaConfig(resData.AggData.AuthzServer)
@@ -240,10 +243,12 @@ func deleteResource(resourceId string) error {
 	// Successful deletion
 	if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusNoContent || res.StatusCode == http.StatusResetContent {
 		// Remove local references
+		resourceIndexMu.Lock()
 		delete(resourceIndex, resourceId)
+		resourceIndexMu.Unlock()
 		logrus.WithFields(logrus.Fields{
 			"resource": resourceId,
-			"uma_id":   data.UmaID,
+			"uma_id":   resData.UmaID,
 		}).Info("Deleted UMA resource successfully")
 		return nil
 	}
@@ -253,7 +258,7 @@ func deleteResource(resourceId string) error {
 		body, _ := io.ReadAll(res.Body)
 		logrus.WithFields(logrus.Fields{
 			"resource": resourceId,
-			"uma_id":   data.UmaID,
+			"uma_id":   resData.UmaID,
 			"status":   res.Status,
 			"body":     string(body),
 		}).Debug("Failed to delete UMA resource: non-empty collections")
@@ -272,23 +277,32 @@ func DeleteResources() error {
 		err        error
 	}
 
-	results := make(chan deletionResult)
+	resourceIndexMu.RLock()
+	resourceIDs := make([]string, 0, len(resourceIndex))
+	for resourceID := range resourceIndex {
+		resourceIDs = append(resourceIDs, resourceID)
+	}
+	resourceIndexMu.RUnlock()
+
+	// Buffer every result so workers can finish and release the semaphore even
+	// while the launch loop is still filling the concurrency window.
+	results := make(chan deletionResult, len(resourceIDs))
 	concurrency := 5 // adjust concurrency as needed
 	sem := make(chan struct{}, concurrency)
 
 	// Launch deletion goroutines
-	for resourceID, resData := range resourceIndex {
+	for _, resourceID := range resourceIDs {
 		sem <- struct{}{} // acquire semaphore
-		go func(res, asUrl string) {
+		go func(res string) {
 			defer func() { <-sem }() // release semaphore
-			err := deleteResource(resourceID)
+			err := deleteResourceForShutdown(res)
 			results <- deletionResult{resourceID: res, err: err}
-		}(resourceID, resData.AggData.AuthzServer)
+		}(resourceID)
 	}
 
 	// Collect results
 	var errs []error
-	for i := 0; i < len(resourceIndex); i++ {
+	for i := 0; i < len(resourceIDs); i++ {
 		r := <-results
 		if r.err != nil {
 			logrus.WithFields(logrus.Fields{

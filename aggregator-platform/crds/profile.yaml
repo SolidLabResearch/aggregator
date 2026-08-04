@@ -1,0 +1,169 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: profiles.aggregator.example.org
+spec:
+  group: aggregator.example.org
+  scope: Namespaced
+  names:
+    plural: profiles
+    singular: profile
+    kind: Profile
+    shortNames: [aggrprofile]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                prefixes:
+                  type: object
+                  additionalProperties:
+                    type: string
+                    format: uri
+                serviceProfile:
+                  type: object
+                  properties:
+                    title: {type: string}
+                    description: {type: string}
+                    extraProperties:
+                      type: object
+                      additionalProperties: {type: string}
+                    parameters:
+                      type: object
+                      additionalProperties:
+                        type: object
+                        required: [predicate, type, required]
+                        properties:
+                          predicate: {type: string, minLength: 1}
+                          type: {type: string, minLength: 1}
+                          required: {type: boolean}
+                          title: {type: string}
+                          description: {type: string}
+                          extraProperties:
+                            type: object
+                            additionalProperties: {type: string}
+                    outputs:
+                      type: object
+                      additionalProperties:
+                        type: object
+                        required: [predicate, datasetProfileRef]
+                        properties:
+                          predicate: {type: string, minLength: 1}
+                          title: {type: string}
+                          description: {type: string}
+                          datasetProfileRef:
+                            type: object
+                            required: [dataset]
+                            properties:
+                              dataset: {type: string, minLength: 1}
+                          extraProperties:
+                            type: object
+                            additionalProperties: {type: string}
+                    functions:
+                      type: object
+                      additionalProperties:
+                        type: object
+                        required: [expects, returns]
+                        properties:
+                          name: {type: string}
+                          description: {type: string}
+                          expects:
+                            type: array
+                            items: {type: string, minLength: 1}
+                          returns:
+                            type: array
+                            items: {type: string, minLength: 1}
+                          extraProperties:
+                            type: object
+                            additionalProperties: {type: string}
+                    composition:
+                      type: array
+                      items:
+                        type: object
+                        required: [from, to]
+                        properties:
+                          from:
+                            type: object
+                            required: [function, output]
+                            properties:
+                              function: {type: string, minLength: 1}
+                              output: {type: string, minLength: 1}
+                          to:
+                            type: object
+                            required: [function, parameter]
+                            properties:
+                              function: {type: string, minLength: 1}
+                              parameter: {type: string, minLength: 1}
+                    endpoints:
+                      type: object
+                      additionalProperties:
+                        type: object
+                        required: [path, operations]
+                        properties:
+                          path: {type: string, pattern: "^/.*"}
+                          title: {type: string}
+                          description: {type: string}
+                          operations:
+                            type: array
+                            minItems: 1
+                            items:
+                              type: object
+                              required: [method]
+                              properties:
+                                method:
+                                  type: string
+                                  enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]
+                                executes: {type: string, minLength: 1}
+                                updates:
+                                  type: object
+                                  required: [function, parameters]
+                                  properties:
+                                    function: {type: string, minLength: 1}
+                                    parameters:
+                                      type: array
+                                      minItems: 1
+                                      items: {type: string, minLength: 1}
+                                title: {type: string}
+                                description: {type: string}
+                                extraProperties:
+                                  type: object
+                                  additionalProperties: {type: string}
+                          extraProperties:
+                            type: object
+                            additionalProperties: {type: string}
+                datasetProfiles:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    properties:
+                      title: {type: string}
+                      description: {type: string}
+                      extraProperties:
+                        type: object
+                        additionalProperties: {type: string}
+                      distributions:
+                        type: object
+                        additionalProperties:
+                          type: object
+                          required: [path, urlType]
+                          properties:
+                            path: {type: string, pattern: "^/.*"}
+                            urlType:
+                              type: string
+                              enum: [accessURL, downloadURL]
+                            mediaType: {type: string}
+                            format: {type: string}
+                            title: {type: string}
+                            description: {type: string}
+                            extraProperties:
+                              type: object
+                              additionalProperties: {type: string}
+              x-kubernetes-validations:
+                - rule: "has(self.serviceProfile) || (has(self.datasetProfiles) && size(self.datasetProfiles) > 0)"
+                  message: A Profile must define serviceProfile, at least one datasetProfile, or both.

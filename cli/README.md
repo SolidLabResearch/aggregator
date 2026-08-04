@@ -49,12 +49,14 @@ agg set-config ./my-config.json
       "services": {
         "my-svc": {
           "name": "my-svc",
-          "deploymentFunction": "DeployExample",
+          "deploymentFunction": "fetch-profiled",
           "params": {
             "sources": "https://..."
           },
           "datasets": {
-            "result": "/result"
+            "result": {
+              "content": "https://aggregator.example.org/some-id/services/my-svc/content"
+            }
           }
         }
       }
@@ -76,11 +78,9 @@ agg set-config ./my-config.json
   },
   "service": {
     "name": "my-svc",
-    "deploymentFunction": "DeployExample",
+    "deploymentFunction": "fetch-profiled",
     "params": {},
-    "datasets": {
-      "result": "/result"
-    }
+    "datasets": {}
   }
 }
 ```
@@ -153,14 +153,14 @@ agg reset
 
 #### `agg create-service`
 
-Create a service on the active aggregator using the service configuration. On success, the service is added to the aggregator's service list in the config.
+Create a service on the active aggregator from a published deployment
+function. On success, the service and its discovered distributions are stored
+in the local CLI config.
 
 ```bash
 agg create-service                                        # use config defaults
-agg create-service --name my-svc --deployment-function DeployExample
-agg create-service --param sources=https://... \
-                   --param weight-slice=abc               # override params (repeatable)
-agg create-service --dataset result=/result               # override datasets
+agg create-service --name my-svc --deployment-function fetch-profiled
+agg create-service --param url=https://example.org/data   # repeatable
 agg create-service --agg https://aggregator.example.org/other-id  # use specific aggregator
 ```
 
@@ -168,9 +168,15 @@ agg create-service --agg https://aggregator.example.org/other-id  # use specific
 |---|---|
 | `--name <name>` | Service name (overrides config) |
 | `--deployment-function <id>` | Deployment function ID (overrides config) |
-| `--dataset <id=path>` | Dataset distribution access path; repeatable |
 | `--param <key=value>` | Function parameter predicate and value; repeatable |
 | `--agg <id>` | Aggregator ID to use instead of the active one |
+
+Deployment function names are Kubernetes resource names, for example
+`fetch-profiled`. A short parameter key such as `url` maps to the predicate of
+the selected deployment document, for example
+`https://aggregator.example.org/deployments/fetch-profiled#url`. An absolute
+predicate URI is also accepted. The CLI loads the deployment document and uses
+the declared `fno:type` to encode each value.
 
 #### `agg get-service`
 
@@ -187,19 +193,34 @@ agg get-service --agg https://aggregator.example.org/id  # specific aggregator
 | `--svc <name>` | Service name (overrides active) |
 | `--agg <id>` | Aggregator ID to use instead of the active one |
 
-#### `agg get-dataset`
+#### `agg list-outputs`
 
-Fetch dataset distributions from the active aggregator. By default it fetches every dataset configured for the service. `get-output` remains an alias.
+List every dataset distribution available for a service. The output ID has the
+form `dataset/distribution` and is followed by its resolved endpoint URL.
 
 ```bash
-agg get-dataset                                  # fetch all datasets
-agg get-dataset --datasets result                # fetch a subset
-agg get-dataset --svc my-svc --agg <id>          # specific service and aggregator
+agg list-outputs
+agg list-outputs --svc my-svc --agg <id>
 ```
 
 | Option | Description |
 |---|---|
-| `--datasets <ids>` | Comma-separated subset of dataset IDs to fetch |
+| `--svc <name>` | Service name (overrides active) |
+| `--agg <id>` | Aggregator ID to use instead of the active one |
+
+#### `agg get-output <dataset/distribution>`
+
+Fetch exactly one distribution using an ID reported by `list-outputs`. Dataset
+and distribution URLs are discovered from the RDF returned when the service is
+created; they are not supplied manually to the CLI.
+
+```bash
+agg get-output result/content
+agg get-output result/content --svc my-svc --agg <id>
+```
+
+| Option | Description |
+|---|---|
 | `--svc <name>` | Service name (overrides active) |
 | `--agg <id>` | Aggregator ID to use instead of the active one |
 

@@ -22,7 +22,7 @@ func ExternalURL() string {
 		return "https://" + ExternalHost + ":" + ExternalHttpsPort
 	}
 
-	if ExternalHttpPort == "80" {
+	if ExternalHttpPort == "" || ExternalHttpPort == "80" {
 		return "http://" + ExternalHost
 	}
 	return "http://" + ExternalHost + ":" + ExternalHttpPort

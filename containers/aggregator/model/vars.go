@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/sirupsen/logrus"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -20,12 +19,12 @@ func ExternalBaseURL() string {
 
 func ExternalServerURL() string {
 	if Protocol == "https" {
-		if ExternalHttpsPort == "443" {
+		if ExternalHttpsPort == "" || ExternalHttpsPort == "443" {
 			return "https://" + ExternalHost
 		}
 		return "https://" + ExternalHost + ":" + ExternalHttpsPort
 	}
-	if ExternalHttpPort == "80" {
+	if ExternalHttpPort == "" || ExternalHttpPort == "80" {
 		return "http://" + ExternalHost
 	}
 	return "http://" + ExternalHost + ":" + ExternalHttpPort
@@ -40,10 +39,9 @@ var Namespace string
 // Aggregator configuration
 var ServiceCollection string
 var DeploymentCatalog string
+var AggregatorServerInternalURL string
 
 var Clientset kubernetes.Interface
-var DynamicClient *dynamic.DynamicClient
-
 var LogLevel logrus.Level
 
 // localhost safe http client with pooling

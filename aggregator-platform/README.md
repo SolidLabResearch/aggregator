@@ -11,23 +11,23 @@ aggregator-platform/
 ├── values.yaml
 ├── values.schema.json
 ├── crds/
-│   ├── fno-description.yaml
-│   └── service-configuration.yaml
+│   ├── deployment-function.yaml
+│   └── profile.yaml
 └── templates/
     ├── NOTES.txt
     ├── _helpers.tpl
     ├── egress-serivce-account.yaml
-    ├── fno-descriptions.yaml
+    ├── deployment-functions.yaml
     ├── ingress-uma-deployment.yaml
     ├── ingress-uma-service.yaml
     ├── instance-service-account.yaml
+    ├── profiles.yaml
     ├── server-config.yaml
     ├── server-deployment.yaml
     ├── server-ingress.yaml
     ├── server-secrets.yaml
     ├── server-service-account.yaml
     ├── server-service.yaml
-    ├── service-configurations.yaml
     ├── spec-config.yaml
     ├── tokens-deployment.yaml
     ├── tokens-service-account.yaml
@@ -36,6 +36,9 @@ aggregator-platform/
 
 The chart uses fixed resource names. Resources are created in the Helm release
 namespace unless Kubernetes requires them to be cluster-scoped.
+
+Definitions use `Profile` and `DeploymentFunction`; see
+[Deployment definitions and profiles](../docs/deployment-definitions.md).
 
 ## Template helpers
 
@@ -114,7 +117,7 @@ Creates the `aggregator-server` Deployment.
 - Replicas come from `server.replicaCount`.
 - The container image is assembled from `server.image.repository` and
   `server.image.tag`.
-- The container listens on port `5000`.
+- The container listens publicly on port `5000` and internally on port `5001`.
 - Environment variables are loaded from `server-config` and `spec-config`.
 - The pod uses the `aggregator-server-sa` service account.
 - Readiness is checked at `GET /healthz` on port `5000`.
@@ -126,7 +129,8 @@ Creates the `aggregator-server` Deployment.
 ### `server-service.yaml`
 
 Creates the `aggregator-server-svc` ClusterIP Service. It selects the server
-component and maps Service port `5000` to container port `5000`.
+component and maps public port `5000` and internal bundle port `5001` to their
+matching container ports. Only port `5000` is targeted by the Ingress.
 
 ### `server-ingress.yaml`
 
@@ -177,8 +181,8 @@ The `aggregator-instance-manager` Role allows the server to manage:
 The matching `aggregator-instance-manager-binding` RoleBinding assigns the Role
 to `aggregator-server-sa`.
 
-The `aggregator-cr-reader` Role grants read-only access to `FnoDescription` and
-`ServiceConfiguration` resources. The
+The `aggregator-cr-reader` Role grants read-only access to `Profile` and
+`DeploymentFunction` resources. The
 `aggregator-cr-reader-binding` RoleBinding assigns it to
 `aggregator-server-sa`.
 
@@ -261,168 +265,12 @@ in the release namespace.
 
 ## Custom resource templates
 
-### `fno-descriptions.yaml`
+### `profiles.yaml` and `deployment-functions.yaml`
 
-Iterates over the `fnoDescriptions` values map and creates one
-`aggregator.example.org/v1alpha1` `FnoDescription` per entry.
-
-The map key becomes `metadata.name`. Each resource contains:
-
-```yaml
-apiVersion: aggregator.example.org/v1alpha1
-kind: FnoDescription
-metadata:
-  name: <map key>
-  namespace: <release namespace>
-  labels:
-    aggregator.example.org/fno-type: <type>
-spec:
-  type: <deployment-function or implementation>
-  serviceConfigurationRef:
-    name: <referenced configuration>
-    namespace: <optional namespace>
-  description: |
-    <FnO RDF in Turtle syntax>
-```
-
-`serviceConfigurationRef` is emitted only when configured. Its `namespace`
-field is also optional.
-
-### `service-configurations.yaml`
-
-Iterates over the `serviceConfigurations` values map and creates one
-`aggregator.example.org/v1alpha1` `ServiceConfiguration` per entry.
-
-The map key becomes `metadata.name`. The template conditionally emits
-`prefixes`, `inputMapping`, and `datasets`; it always emits
-`serviceMapping`:
-
-```yaml
-apiVersion: aggregator.example.org/v1alpha1
-kind: ServiceConfiguration
-metadata:
-  name: <map key>
-  namespace: <release namespace>
-spec:
-  prefixes: {}
-  inputMapping: {}
-  datasets: {}
-  serviceMapping: {}
-```
-
-## Custom resource definitions
-
-CRDs are stored in `crds/`, so Helm processes them before the resources in
-`templates/`. Both CRDs are cluster-scoped definitions for namespaced custom
-resources in API group `aggregator.example.org` and version `v1alpha1`.
-
-### `FnoDescription`
-
-Resource identity:
-
-| Field | Value |
-| --- | --- |
-| Kind | `FnoDescription` |
-| Plural | `fnodescriptions` |
-| Singular | `fnodescription` |
-| Short name | `fno` |
-| Scope | Namespaced |
-
-Schema:
-
-| Field | Type | Required | Constraints and purpose |
-| --- | --- | --- | --- |
-| `spec.type` | string | yes | `deployment-function` or `implementation` |
-| `spec.description` | string | yes | RDF description represented as Turtle |
-| `spec.serviceConfigurationRef` | object | no | Reference to a service configuration |
-| `spec.serviceConfigurationRef.name` | string | when the reference exists | Referenced resource name |
-| `spec.serviceConfigurationRef.namespace` | string | no | Optional reference namespace |
-
-### `ServiceConfiguration`
-
-Resource identity:
-
-| Field | Value |
-| --- | --- |
-| Kind | `ServiceConfiguration` |
-| Plural | `serviceconfigurations` |
-| Singular | `serviceconfiguration` |
-| Short name | `svcconf` |
-| Scope | Namespaced |
-
-Its schema connects FnO parameters and outputs to a Kubernetes workload.
-
-#### Prefixes
-
-`spec.prefixes` is a string map of RDF prefix names to URI values. Application
-defaults include `dct`, `dcat`, `foaf`, `skos`, `schema`, `fno`, and `xsd`.
-User-defined entries override defaults.
-
-#### Input mapping
-
-`spec.inputMapping` maps FnO parameter predicates to input definitions:
-
-```yaml
-inputMapping:
-  <predicate>:
-    id: <substitution identifier>
-```
-
-`id` is required. The runtime substitutes occurrences of `$(id)` in the
-orchestration object.
-
-#### Datasets
-
-`spec.datasets` describes the datasets exposed by the deployed service. Map
-keys are local dataset identifiers; they are not FnO output predicates.
-
-Each dataset may define:
-
-- `title`;
-- `description`;
-- `extraProperties`;
-- `distribution.title`;
-- `distribution.description`;
-- `distribution.extraProperties`; and
-- `distribution.access`.
-
-A `dcat:Dataset` is generated for every entry. A `dcat:Distribution` is
-generated only when `distribution` exists.
-
-`distribution.access` contains:
-
-| Field | Type | Required | Constraints and purpose |
-| --- | --- | --- | --- |
-| `urlType` | string | yes | `accessURL` or `downloadURL` |
-| `servicePort` | integer | yes | Port exposed by the generated Service |
-| `internalPath` | string | no | Path on the internal workload |
-| `externalPath` | string | no | Path exposed by the aggregator |
-| `protocol` | string | no | `http` or `https`; schema default is `http` |
-
-#### Service mapping
-
-`spec.serviceMapping` is required and contains optional DataService metadata and
-required orchestration configuration.
-
-`spec.serviceMapping.dataservice` may contain:
-
-- `title`;
-- `description`; and
-- `extraProperties`.
-
-`spec.serviceMapping.orchestration` contains:
-
-| Field | Type | Required | Constraints and purpose |
-| --- | --- | --- | --- |
-| `type` | string | yes | `Deployment`, `Job`, or `CronJob` |
-| `trigger` | object | no | HTTP trigger configuration for `Job` |
-| `trigger.type` | string | no | Currently limited to `http` |
-| `trigger.path` | string | no | Trigger path; schema default is `/run` |
-| `spec` | object | no in the CRD schema | Native Kubernetes object preserved without structural pruning |
-
-The runtime expects `orchestration.spec` to contain a complete Kubernetes
-object matching `orchestration.type`. It substitutes mapped inputs, injects the
-runtime namespace and ownership labels, and then creates the object.
+These templates create namespaced `Profile` and `DeploymentFunction` resources
+from the equivalently named values maps. Their CRD schemas, mapping rules, and
+examples are described in
+[Deployment definitions and profiles](../docs/deployment-definitions.md).
 
 ## Values validation
 

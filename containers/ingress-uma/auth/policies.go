@@ -95,7 +95,9 @@ func createPolicy(
 	policyUri := asUrl + "/policies"
 
 	// Get UMA ID
+	resourceIndexMu.RLock()
 	data, ok := resourceIndex[resourceId]
+	resourceIndexMu.RUnlock()
 	if !ok {
 		return fmt.Errorf("resource ID %s not registered, cannot create policy", resourceId)
 	}

@@ -1,12 +1,15 @@
 package services
 
 import (
+	"aggregator/model"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/maartyman/rdfgo"
 	appsv1 "k8s.io/api/apps/v1"
-	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestNewKubernetesName(t *testing.T) {
@@ -29,16 +32,12 @@ func TestNewKubernetesName(t *testing.T) {
 
 func TestInjectName(t *testing.T) {
 	deployment := &appsv1.Deployment{}
-	job := &batchv1.Job{}
-	cronJob := &batchv1.CronJob{}
 	tests := []struct {
 		name string
 		obj  interface{}
 		got  func() string
 	}{
 		{"Deployment", deployment, func() string { return deployment.Name }},
-		{"Job", job, func() string { return job.Name }},
-		{"CronJob", cronJob, func() string { return cronJob.Name }},
 	}
 
 	const name = "service-123e4567-e89b-12d3-a456-426614174000"
@@ -57,5 +56,52 @@ func TestInjectName(t *testing.T) {
 func TestInjectNameRejectsEmptyName(t *testing.T) {
 	if err := injectName(&appsv1.Deployment{}, ""); err == nil {
 		t.Fatal("injectName() accepted an empty name")
+	}
+}
+
+func TestResourceKubernetesNameIsStableAndBounded(t *testing.T) {
+	service := NewKubernetesName()
+	resourceID := strings.Repeat("long-resource-", 8)
+	first := ResourceKubernetesName(service, resourceID)
+	second := ResourceKubernetesName(service, resourceID)
+	if first != second || len(first) > 63 {
+		t.Fatalf("invalid generated resource name %q", first)
+	}
+}
+
+func TestApplyResolvedInputBindingsSetsTargetEnvironment(t *testing.T) {
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "fetch"},
+		Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "fetch"}},
+		}}},
+	}
+	predicate := "https://aggregator.example/deployments/fetch#url"
+	bindings := []model.ResolvedInputBinding{{
+		Parameter: "url", Predicate: predicate,
+		Targets: []model.ResolvedEnvironmentTarget{{Resource: "workload", Container: "fetch", Env: "GET_URL"}},
+	}}
+	values := map[string]rdfgo.ITerm{predicate: rdfgo.NewNamedNode("https://example.org/data")}
+	if err := applyResolvedInputBindings(deployment, "workload", bindings, values); err != nil {
+		t.Fatalf("applyResolvedInputBindings: %v", err)
+	}
+	if got := deployment.Spec.Template.Spec.Containers[0].Env; len(got) != 1 || got[0].Name != "GET_URL" || got[0].Value != "https://example.org/data" {
+		t.Fatalf("unexpected environment: %#v", got)
+	}
+}
+
+func TestResolveResourceReferences(t *testing.T) {
+	deployment := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+		Volumes: []corev1.Volume{
+			{Name: "settings", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "settings"}}}},
+			{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data"}}},
+		},
+		Containers: []corev1.Container{{Name: "app", EnvFrom: []corev1.EnvFromSource{{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "settings"}}}}}},
+	}}}}
+	resolveResourceReferences(deployment, map[string]string{"settings": "generated-settings", "data": "generated-data"})
+	if deployment.Spec.Template.Spec.Volumes[0].ConfigMap.Name != "generated-settings" ||
+		deployment.Spec.Template.Spec.Volumes[1].PersistentVolumeClaim.ClaimName != "generated-data" ||
+		deployment.Spec.Template.Spec.Containers[0].EnvFrom[0].ConfigMapRef.Name != "generated-settings" {
+		t.Fatalf("resource references were not resolved: %#v", deployment.Spec.Template.Spec)
 	}
 }

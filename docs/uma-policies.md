@@ -16,8 +16,9 @@ The examples in this guide assume the following configuration:
 
 - Aggregator instance: `http://aggregator.local/agg1`
 - Service collection endpoint: `http://aggregator.local/agg1/services`
-- Service endpoint: `http://aggregator.local/agg1/my-service`
-- Service result endpoint: `http://aggregator.local/agg1/my-service/result`
+- Service endpoint: `http://aggregator.local/agg1/services/my-service`
+- Distribution endpoint: the URL advertised by the service's
+  `dcat:accessURL` or `dcat:downloadURL`
 - `<owner id>`: user who deployed the Aggregator
 - `<user id>`: user requesting access
 
@@ -43,7 +44,7 @@ Allows creating new services.
 Allows checking the status or description of a service.
 
 - scopes: `read`
-- target: `http://aggregator.local/agg1/services/<service id>`
+- target: `http://aggregator.local/agg1/services/<service-id>`
 - assigner: `<user id>`
 - assignee: `<owner id>`
 
@@ -54,7 +55,7 @@ Allows checking the status or description of a service.
 Allows removing a service.
 
 - scopes: `delete`
-- target: `http://aggregator.local/agg1/services/<service id>`
+- target: `http://aggregator.local/agg1/services/<service-id>`
 - assigner: `<user id>`
 - assignee: `<owner id>`
 
@@ -65,6 +66,6 @@ Allows removing a service.
 Allows retrieving the output of a service.
 
 - scopes: `read`
-- target: `http://aggregator.local/agg1/my-service/result`
+- target: the distribution URL advertised in the service description
 - assigner: `<user id>`
 - assignee: `<owner id>`

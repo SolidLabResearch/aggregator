@@ -20,21 +20,29 @@ import (
 )
 
 type ServiceCollection struct {
-	etagServices        int
-	etagTransformations int
-	services            map[string]*model.Service
-	servicesMu          sync.RWMutex
-	serverMux           *http.ServeMux
+	etagServices       int
+	services           map[string]*model.Service
+	servicesMu         sync.RWMutex
+	routes             map[string]serviceRoute
+	registeredPatterns map[string]bool
+	serverMux          *http.ServeMux
+}
+
+type serviceRoute struct {
+	serviceID  string
+	forwardURL string
+	methods    map[string]bool
 }
 
 func InitServiceCollection(mux *http.ServeMux) error {
 	logrus.Debugf("Initialiazing service collection at %s", model.ServiceCollection)
 
 	collection := ServiceCollection{
-		etagServices:        0,
-		etagTransformations: 0,
-		services:            make(map[string]*model.Service),
-		serverMux:           mux,
+		etagServices:       0,
+		services:           make(map[string]*model.Service),
+		routes:             make(map[string]serviceRoute),
+		registeredPatterns: make(map[string]bool),
+		serverMux:          mux,
 	}
 
 	if err := collection.HandleFunc(model.ServiceCollection, collection.HandleServicesEndpoint, []model.Scope{model.Read, model.Create}); err != nil {
@@ -43,6 +51,68 @@ func InitServiceCollection(mux *http.ServeMux) error {
 
 	logrus.Infof("Initialized service collection at %s", model.ServiceCollection)
 	return nil
+}
+
+func (collec *ServiceCollection) ensureServiceHandler(pattern string, scopes []model.Scope) error {
+	collec.servicesMu.Lock()
+	alreadyRegistered := collec.registeredPatterns[pattern]
+	collec.servicesMu.Unlock()
+	if alreadyRegistered {
+		return nil
+	}
+	if err := collec.HandleFunc(pattern, collec.HandleServiceEndpoint, scopes); err != nil {
+		return err
+	}
+	collec.servicesMu.Lock()
+	collec.registeredPatterns[pattern] = true
+	collec.servicesMu.Unlock()
+	return nil
+}
+
+func (collec *ServiceCollection) setRoute(pattern string, route serviceRoute, scopes []model.Scope) error {
+	collec.servicesMu.Lock()
+	collec.routes[pattern] = route
+	alreadyRegistered := collec.registeredPatterns[pattern]
+	collec.servicesMu.Unlock()
+	if alreadyRegistered {
+		return nil
+	}
+	err := collec.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		collec.servicesMu.RLock()
+		current, ok := collec.routes[r.URL.Path]
+		_, serviceExists := collec.services[current.serviceID]
+		collec.servicesMu.RUnlock()
+		if !ok || !serviceExists {
+			http.NotFound(w, r)
+			return
+		}
+		if len(current.methods) > 0 && !current.methods[strings.ToUpper(r.Method)] {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		collec.HandleServiceOutput(w, r, current.forwardURL)
+	}, scopes)
+	if err != nil {
+		collec.servicesMu.Lock()
+		delete(collec.routes, pattern)
+		collec.servicesMu.Unlock()
+		return err
+	}
+	collec.servicesMu.Lock()
+	collec.registeredPatterns[pattern] = true
+	collec.servicesMu.Unlock()
+	return nil
+}
+
+func (collec *ServiceCollection) removeServiceState(serviceID string) {
+	collec.servicesMu.Lock()
+	defer collec.servicesMu.Unlock()
+	delete(collec.services, serviceID)
+	for path, route := range collec.routes {
+		if route.serviceID == serviceID {
+			delete(collec.routes, path)
+		}
+	}
 }
 
 func (collec *ServiceCollection) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), scopes []model.Scope) error {
@@ -79,9 +149,12 @@ func (collec *ServiceCollection) HandleServicesEndpoint(w http.ResponseWriter, r
 }
 
 func (collec *ServiceCollection) headServices(w http.ResponseWriter, _ *http.Request) {
+	collec.servicesMu.RLock()
+	etag := collec.etagServices
+	collec.servicesMu.RUnlock()
 	header := w.Header()
 	header.Set("Content-Type", "application/json")
-	header.Set("ETag", strconv.Itoa(collec.etagServices))
+	header.Set("ETag", strconv.Itoa(etag))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -89,16 +162,19 @@ func (collec *ServiceCollection) getServices(w http.ResponseWriter, _ *http.Requ
 	//stream = rdfgo.NewStream()
 
 	serviceList := []string{}
+	collec.servicesMu.RLock()
 	for _, service := range collec.services {
 		serviceList = append(serviceList, service.FullPath)
 	}
+	etag := collec.etagServices
+	collec.servicesMu.RUnlock()
 
 	response := map[string][]string{
 		"services": serviceList,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("ETag", strconv.Itoa(collec.etagServices))
+	w.Header().Set("ETag", strconv.Itoa(etag))
 	err := json.NewEncoder(w).Encode(response)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to encode service list")
@@ -110,7 +186,9 @@ func (collec *ServiceCollection) getServices(w http.ResponseWriter, _ *http.Requ
 // HandleServiceEndpoint handles requests to the /<service path> endpoint
 func (collec *ServiceCollection) HandleServiceEndpoint(w http.ResponseWriter, r *http.Request) {
 	id := strings.ReplaceAll(strings.Trim(r.URL.Path, "/"), "/", "-")
+	collec.servicesMu.RLock()
 	service, ok := collec.services[id]
+	collec.servicesMu.RUnlock()
 	if !ok {
 		http.Error(w, "Service not found", http.StatusNotFound)
 		return
@@ -236,6 +314,12 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Failed to deploy service", http.StatusInternalServerError)
 		return
 	}
+	if err := service.InitDescription(); err != nil {
+		_ = service.Stop()
+		logrus.WithError(err).Error("Failed to initialize service description")
+		http.Error(w, "Failed to initialize service description", http.StatusInternalServerError)
+		return
+	}
 
 	// Store service and update ETag
 	collec.servicesMu.Lock()
@@ -249,83 +333,119 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 	collec.services[service.InstanceID] = service
 	collec.etagServices++
 	collec.servicesMu.Unlock()
+	rollback := func() {
+		collec.removeServiceState(service.InstanceID)
+		if cleanupErr := service.Stop(); cleanupErr != nil {
+			logrus.WithError(cleanupErr).Warn("Failed to roll back deployed service")
+		}
+	}
 
 	// Create service endpoint
-	err = collec.HandleFunc(aggPath, collec.HandleServiceEndpoint, []model.Scope{model.Read, model.Delete})
+	err = collec.ensureServiceHandler(aggPath, []model.Scope{model.Read, model.Delete})
 	if err != nil {
 		logrus.WithError(err).Errorf("Error registering handler for service %s", serviceId)
 		http.Error(w, "Failed to create service from request", http.StatusInternalServerError)
+		rollback()
 		return
 	}
 
 	// Create dataset distribution endpoints
 	seen := make(map[string]bool)
 
-	for datasetID, dataset := range service.Configuration.Spec.Datasets {
-		if dataset.Distribution == nil || dataset.Distribution.Access == nil {
-			continue
+	for datasetID, dataset := range service.Deployment.Definition.Datasets {
+		for distributionID, distribution := range dataset.Distributions {
+			externalPath := distribution.Path
+			if externalPath == "" {
+				errMsg := fmt.Sprintf("path is required for dataset %s distribution %s", datasetID, distributionID)
+				logrus.Error(errMsg)
+				http.Error(w, errMsg, http.StatusInternalServerError)
+				rollback()
+				return
+			}
+
+			path := util.JoinPaths(aggPath, externalPath)
+
+			if seen[path] {
+				errMsg := fmt.Sprintf("duplicate externalPath resolved to %s", path)
+				logrus.Error(errMsg)
+				http.Error(w, errMsg, http.StatusInternalServerError)
+				rollback()
+				return
+			}
+			seen[path] = true
+
+			// Build forward URL at registration time, nil if abstract
+			var forwardURL string
+			{
+				internalPath := distribution.Target.InternalPath
+				if internalPath == "" {
+					internalPath = "/"
+				}
+				if !strings.HasPrefix(internalPath, "/") {
+					internalPath = "/" + internalPath
+				}
+				forwardURL = fmt.Sprintf(
+					"%s://%s.%s.svc.cluster.local:%d%s",
+					"http",
+					services.ResourceKubernetesName(service.KubernetesName, distribution.Target.Resource),
+					model.Namespace,
+					distribution.Target.Port,
+					internalPath,
+				)
+			}
+
+			err = collec.setRoute(path, serviceRoute{serviceID: service.InstanceID, forwardURL: forwardURL}, []model.Scope{model.Read, model.Write})
+			if err != nil {
+				logrus.WithError(err).Errorf("Error registering handler for dataset %s", datasetID)
+				http.Error(w, "Failed to create service from request", http.StatusInternalServerError)
+				rollback()
+				return
+			}
+
+			logrus.Infof("Registered dataset endpoint: %s/%s → %s", datasetID, distributionID, path)
 		}
+	}
 
-		externalPath := dataset.Distribution.Access.ExternalPath
-		if externalPath == "" {
-			errMsg := fmt.Sprintf("externalPath is required for dataset %s", datasetID)
-			logrus.Error(errMsg)
-			http.Error(w, errMsg, http.StatusInternalServerError)
-			return
-		}
-
-		path := util.JoinPaths(aggPath, externalPath)
-
+	for endpointID, endpoint := range service.Deployment.Definition.Endpoints {
+		path := util.JoinPaths(aggPath, endpoint.Path)
 		if seen[path] {
-			errMsg := fmt.Sprintf("duplicate externalPath resolved to %s", path)
+			errMsg := fmt.Sprintf("duplicate endpoint path resolved to %s", path)
 			logrus.Error(errMsg)
 			http.Error(w, errMsg, http.StatusInternalServerError)
+			rollback()
 			return
 		}
 		seen[path] = true
-
-		// Build forward URL at registration time, nil if abstract
-		var forwardURL string
-		if dataset.Distribution != nil && dataset.Distribution.Access != nil {
-			access := dataset.Distribution.Access
-			internalPath := access.InternalPath
-			if internalPath == "" {
-				internalPath = "/"
-			}
-			if !strings.HasPrefix(internalPath, "/") {
-				internalPath = "/" + internalPath
-			}
-			forwardURL = fmt.Sprintf(
-				"%s://%s.%s.svc.cluster.local:%d%s",
-				access.Protocol,
-				service.KubernetesName,
-				model.Namespace,
-				access.ServicePort,
-				internalPath,
-			)
+		methods := map[string]bool{}
+		for _, operation := range endpoint.Operations {
+			methods[strings.ToUpper(operation.Method)] = true
 		}
-
-		err = collec.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
-			collec.HandleServiceOutput(w, r, forwardURL)
-		}, []model.Scope{model.Read, model.Write})
+		internalPath := endpoint.Target.InternalPath
+		if internalPath == "" {
+			internalPath = "/"
+		}
+		forwardURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s",
+			services.ResourceKubernetesName(service.KubernetesName, endpoint.Target.Resource),
+			model.Namespace, endpoint.Target.Port, internalPath)
+		err = collec.setRoute(path, serviceRoute{serviceID: service.InstanceID, forwardURL: forwardURL, methods: methods}, []model.Scope{model.Read, model.Write})
 		if err != nil {
-			logrus.WithError(err).Errorf("Error registering handler for dataset %s", datasetID)
-			http.Error(w, "Failed to create service from request", http.StatusInternalServerError)
+			logrus.WithError(err).Errorf("Error registering operational endpoint %s", endpointID)
+			http.Error(w, "Failed to create service endpoint", http.StatusInternalServerError)
+			rollback()
 			return
 		}
-
-		logrus.Infof("Registered dataset endpoint: %s → %s", datasetID, path)
+		logrus.Infof("Registered operational endpoint: %s → %s", endpointID, path)
 	}
 
 	// Return service information
 	w.Header().Set("Content-Type", "text/turtle")
 	w.Header().Set("Location", service.FullPath)
 
-	service.InitDescription()
 	repr, err := service.Description.FnORepresentation()
 	if err != nil {
 		logrus.WithError(err).Error("Failed to generate service FnO representation")
 		http.Error(w, "Failed to serialize response", http.StatusInternalServerError)
+		rollback()
 		return
 	}
 
@@ -349,9 +469,10 @@ func (collec *ServiceCollection) deleteService(w http.ResponseWriter, _ *http.Re
 		return
 	}
 
-	delete(collec.services, service.InstanceID)
-
+	collec.removeServiceState(service.InstanceID)
+	collec.servicesMu.Lock()
 	collec.etagServices++
+	collec.servicesMu.Unlock()
 	w.WriteHeader(http.StatusOK)
 }
 

@@ -1,62 +1,87 @@
-# Local Setup Guide
+# Local setup
 
-This guide walks you through setting up a local **kind** (Kubernetes in Docker) cluster and deploying the **Aggregator Server**.
+This guide creates a local Kind cluster, builds the repository images, installs
+Traefik, and deploys the Aggregator Platform.
 
 ## Prerequisites
 
-Make sure the following tools are installed:
+Install Docker, Make, Kind, kubectl, Helm 3, OpenSSL, and mkcert. Node.js is
+needed for the CLI and Go is needed to run the test suites directly.
 
-- `make`
-- `kind`
-- `kubectl`
-- `helm`
-- `mkcert`
+## Configure Helm values
 
-### Install Dependencies
+The default Makefile configuration is `config/local.yaml`. At minimum, set the
+external host, ingress class, and an allowed registration flow:
 
-#### Install make
-```bash
-sudo apt update
-sudo apt install -y make
+```yaml
+external:
+  host: aggregator.local
+  httpPort: 5080
+  httpsPort: 5443
+
+auth:
+  allowedRegistrationTypes:
+    - none
+
+ingressClassName: aggregator-traefik
+tls:
+  enabled: false
 ```
 
-#### Install kind
-```bash
-curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
-chmod +x ./kind
-sudo mv ./kind /usr/local/bin/kind
+For authenticated registration, replace `none` and configure one of the flows
+documented in [Registering aggregators](deploying-aggregators.md). Provider
+notes are available for [Community Solid Server](css-setup.md) and [Kvasir
+Solid Server](kss-setup.md).
+
+Do not commit real client secrets to the values files.
+
+## Add deployment definitions
+
+The Makefile automatically loads every values file below:
+
+```text
+config/profiles/*.yaml
+config/deployment-functions/*.yaml
 ```
 
-#### Install kubectl
+The included definitions provide profiled and unprofiled fetch examples plus a
+profiled PACSOI deployment. See [Defining deployable
+services](creating-services.md) before adding or changing definitions.
+
+## Create and deploy
+
+From the repository root:
+
 ```bash
-curl -LO "https://dl.k8s.io/release/\$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-chmod +x kubectl
-sudo mv kubectl /usr/local/bin/
+make kind-init
+make kind-deploy
 ```
 
-#### Install helm
+`kind-init` creates or starts the `aggregator` Kind cluster, builds and loads
+the container images, and installs Traefik. `kind-deploy` adds local host
+entries and installs the chart with `config/local.yaml` plus all definition
+files.
+
+Verify the deployment:
+
 ```bash
-curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+kubectl -n aggregator-platform get pods
+curl http://aggregator.local:5080/healthz
+curl -H 'Accept: text/turtle' http://aggregator.local:5080/deployments
 ```
 
-#### Install mkcert
-```bash
-sudo apt update
-sudo apt install -y mkcert libnss3-tools
-```
+Use HTTPS and port `5443` instead when TLS is enabled.
 
----
+## TLS
 
-## 1. TLS Configuration
-
-To enable HTTPS, generate a local certificate for the Aggregator Server.
+Generate a certificate for the local host:
 
 ```bash
 mkcert -install
 mkcert aggregator.local
 ```
 
-Update your Helm values file:
+Then configure:
 
 ```yaml
 tls:
@@ -68,127 +93,39 @@ tls:
     key: aggregator.key
 ```
 
-### Trust the Local Certificate Authority
-
-Node.js does not automatically trust mkcert certificates. Set:
+Node.js does not automatically trust the mkcert CA. Before using the CLI over
+HTTPS, set:
 
 ```bash
 export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"
 ```
 
----
+## Local name resolution
 
-## 2. Create the kind Cluster
-
-Use the provided configuration file:
-
-```
-kind/cluster-config.yaml
-```
-
-Run:
-
-```bash
-make kind-init
-```
-
-This will:
-- Create the kind cluster
-- Load local containers from `/containers`
-- Install the Traefik ingress controller
-
-## 3. Configure Cluster DNS
-
-The Aggregator Server rewrites `localhost` to `host.docker.internal` for Docker-based services.
-
-If you run services outside Docker (e.g., WSL), update [`kind/localhosts.yaml`](/kind/localhosts.yaml) with an IP - hostname mapping:
-
-```yaml
-hosts {
-  <WSL IP> wsl.local
-  fallthrough
-}
-```
-
-Apply changes:
+`make kind-deploy` maps `aggregator.local` and `wsl.local` in the host file. If
+workloads must reach another service running on the host, add its IP and name
+to `kind/localhosts.yaml`, then run:
 
 ```bash
 make configure-coredns
+make configure-etc-hosts HOSTS="aggregator.local wsl.local <other-host>"
 ```
 
-### Update Local Hosts File
-
-Ensure your machine resolves the same hostnames:
+## Rebuild and test
 
 ```bash
-make configure-etc-hosts HOSTS="aggregator.local wsl.local"
+make containers-all CONTAINER=aggregator-server
+kubectl -n aggregator-platform rollout restart deployment/aggregator-server
+
+make unit-test
+make integration-test
 ```
 
-If you use automated deploy/undeploy commands, update the `HOSTS` variable in the Makefile.
+Integration tests use the existing Kind cluster.
 
-## 4. Configure the Aggregator Server
-
-The server is configured using [`kind/helm-config.yaml`](/kind/helm-config.yaml).
-
-### External Access
-
-Define how the server is accessed externally:
+## Cleanup
 
 ```bash
-external:
-  host: aggregator.local
-  httpPort: 5080
-  httpsPort: 5443
+make kind-undeploy  # remove the release and local host entries
+make kind-delete    # delete the Kind cluster
 ```
-
-> Use the ports exposed by your kind cluster or reverse proxy.
-
----
-
-### Authentication
-
-Set up authentication using one of the supported servers:
-
-- [Community Solid Server (CSS)](/docs/css-setup.md)
-- [Kvasir Solid Server (KSS)](/docs/kss-setup.md)
-
-Follow the relevant setup documentation before continuing.
-
----
-
-### Add Transformations (Services)
-
-To add Aggregator Services:
-
-1. [Create your service](/docs/creating-services.md).
-2. Place it inside the `/containers` directory.
-3. Load it into the cluster:
-
-```
-make containers-all CONTAINER=<service-folder>
-```
-
-This step is automatically executed during `make kind-init`.
-
-## 5. Deploy the Aggregator Server
-
-Once everything is configured:
-
-```bash
-make kind-deploy
-```
-
-This deploys the platform using [`kind/heml-config.yaml`](/kind/helm-config.yaml).
-
-## 6. Next Steps
-
-Your Aggregator Server should now be running locally.
-
-You can continue with:
-
-- [Interacting with the server using the CLI](../cli/README.md)
-- [Deploying aggregators](/docs/deploying-aggregators.md)
-- [Deploying services](/docs/deploying-services.md)
-- [Running a full example setup](/docs/pacsoi-example.md)
-
----

@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -15,7 +16,6 @@ type Service struct {
 	AggPath        string
 	FullPath       string
 	Deployment     *DeploymentRequest
-	Configuration  *ServiceConfiguration
 	CreatedAt      time.Time
 }
 
@@ -31,14 +31,37 @@ func (service *Service) Stop() error {
 	)
 	// Ensure dependent resources are deleted
 	deletePolicy := metav1.DeletePropagationForeground
+	var cleanupErrors []error
 
-	// Delete Deployments
-	if err := Clientset.AppsV1().Deployments(Namespace).DeleteCollection(ctx, metav1.DeleteOptions{
-		PropagationPolicy: &deletePolicy,
-	}, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	}); err != nil {
-		return fmt.Errorf("failed to delete deployments: %w", err)
+	deployments, err := Clientset.AppsV1().Deployments(Namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
+	if err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to list deployments: %w", err))
+	} else {
+		for _, deployment := range deployments.Items {
+			if err := Clientset.AppsV1().Deployments(Namespace).Delete(ctx, deployment.Name, metav1.DeleteOptions{PropagationPolicy: &deletePolicy}); err != nil {
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to delete deployment %s: %w", deployment.Name, err))
+			}
+		}
+	}
+	configMaps, err := Clientset.CoreV1().ConfigMaps(Namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
+	if err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to list config maps: %w", err))
+	} else {
+		for _, configMap := range configMaps.Items {
+			if err := Clientset.CoreV1().ConfigMaps(Namespace).Delete(ctx, configMap.Name, metav1.DeleteOptions{PropagationPolicy: &deletePolicy}); err != nil {
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to delete config map %s: %w", configMap.Name, err))
+			}
+		}
+	}
+	claims, err := Clientset.CoreV1().PersistentVolumeClaims(Namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
+	if err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to list persistent volume claims: %w", err))
+	} else {
+		for _, claim := range claims.Items {
+			if err := Clientset.CoreV1().PersistentVolumeClaims(Namespace).Delete(ctx, claim.Name, metav1.DeleteOptions{PropagationPolicy: &deletePolicy}); err != nil {
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to delete persistent volume claim %s: %w", claim.Name, err))
+			}
+		}
 	}
 
 	// Delete Services
@@ -46,18 +69,17 @@ func (service *Service) Stop() error {
 		LabelSelector: labelSelector,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to list services: %w", err)
-	}
-
-	for _, svc := range services.Items {
-		if err := Clientset.CoreV1().Services(Namespace).Delete(ctx, svc.Name, metav1.DeleteOptions{
-			PropagationPolicy: &deletePolicy,
-		}); err != nil {
-			return fmt.Errorf("failed to delete service %s: %w", svc.Name, err)
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to list services: %w", err))
+	} else {
+		for _, svc := range services.Items {
+			if err := Clientset.CoreV1().Services(Namespace).Delete(ctx, svc.Name, metav1.DeleteOptions{
+				PropagationPolicy: &deletePolicy,
+			}); err != nil {
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to delete service %s: %w", svc.Name, err))
+			}
 		}
 	}
-
-	return nil
+	return errors.Join(cleanupErrors...)
 }
 
 func (service *Service) Status() string {

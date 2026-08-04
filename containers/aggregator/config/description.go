@@ -63,7 +63,7 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:         createdAt,
 		LoginStatus:       loginStatus,
 		TokenExpiry:       tokenExpiry,
-		DeploymentCatalog: model.ExternalBaseURL() + model.DeploymentCatalog,
+		DeploymentCatalog: model.ExternalServerURL() + model.DeploymentCatalog,
 		ServiceCollection: model.ExternalBaseURL() + model.ServiceCollection,
 	}
 

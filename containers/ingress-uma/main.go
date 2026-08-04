@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"ingress-uma/auth"
 
@@ -49,10 +51,11 @@ func main() {
 	// Logging middleware
 	loggedMux := loggingMiddleware(mux)
 
+	server := &http.Server{Addr: "0.0.0.0:8080", Handler: loggedMux}
 	// Start HTTP server in a goroutine
 	go func() {
 		logrus.Info("Starting UMA RS auth server on :8080")
-		if err := http.ListenAndServe("0.0.0.0:8080", loggedMux); err != nil {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logrus.Fatalf("Server failed: %v", err)
 		}
 	}()
@@ -65,15 +68,32 @@ func main() {
 	<-sigs
 	logrus.Info("Termination signal received, starting resource cleanup")
 
-	// Clean up UMA resources
-	if err := auth.DeleteResources(); err != nil {
-		logrus.WithError(err).Error("Failed to delete UMA resources")
-	} else {
-		logrus.Info("Successfully deleted all UMA resources")
+	// Stop accepting mutations and allow active requests a short window to
+	// complete before reading and deleting the in-memory resource index.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logrus.WithError(err).Warn("HTTP server did not shut down cleanly")
 	}
+	cancel()
 
-	// Clean up credentials
-	auth.DeleteCredentials()
+	cleanupDone := make(chan struct{})
+	go func() {
+		defer close(cleanupDone)
+		if err := auth.DeleteResources(); err != nil {
+			logrus.WithError(err).Error("Failed to delete UMA resources")
+		} else {
+			logrus.Info("Successfully deleted all UMA resources")
+		}
+		auth.DeleteCredentials()
+	}()
+
+	// Leave enough time for kubelet to observe process exit before the pod's
+	// 50-second grace period expires, even when an authorization server stalls.
+	select {
+	case <-cleanupDone:
+	case <-time.After(35 * time.Second):
+		logrus.Warn("UMA cleanup deadline reached; exiting")
+	}
 
 	logrus.Info("Exiting container after resource cleanup")
 }

@@ -41,7 +41,7 @@ func (service *Service) InitDescription() error {
 	description := ServiceDescription{
 		Service:  rdfgo.NewStore(),
 		Datasets: make(map[string]rdfgo.Store),
-		Prefixes: service.Configuration.Spec.Prefixes,
+		Prefixes: service.Deployment.Definition.Prefixes,
 	}
 
 	svcNode := rdfgo.NewNamedNode(service.FullPath)
@@ -57,18 +57,44 @@ func (service *Service) InitDescription() error {
 		return err
 	}
 	description.Service.AddQuad(quad)
-
-	// The service description conforms to the Aggregator Protocol.
-	quad, err = rdfgo.NewQuad(
-		svcNode,
-		Dct("conformsTo"),
-		rdfgo.NewNamedNode("https://w3id.org/aggregator#"),
-		nil,
-	)
-	if err != nil {
-		return err
+	if profile := service.Deployment.Definition.ServiceProfile; profile != nil {
+		if profile.Title != "" {
+			quad, err = rdfgo.NewQuad(svcNode, Dct("title"), rdfgo.NewStringLiteral(profile.Title, "en"), nil)
+			if err != nil {
+				return err
+			}
+			description.Service.AddQuad(quad)
+		}
+		if profile.Description != "" {
+			quad, err = rdfgo.NewQuad(svcNode, Dct("description"), rdfgo.NewStringLiteral(profile.Description, "en"), nil)
+			if err != nil {
+				return err
+			}
+			description.Service.AddQuad(quad)
+		}
+		for predicate, value := range profile.ExtraProperties {
+			quad, err = rdfgo.NewQuad(svcNode, rdfgo.NewNamedNode(predicate), util.StringToTerm(value), nil)
+			if err != nil {
+				return err
+			}
+			description.Service.AddQuad(quad)
+		}
 	}
-	description.Service.AddQuad(quad)
+
+	// A profiled service conforms to its server-wide service profile. An
+	// unprofiled service intentionally has no dct:conformsTo statement.
+	if service.Deployment.Definition.ProfileURI != "" {
+		quad, err = rdfgo.NewQuad(
+			svcNode,
+			Dct("conformsTo"),
+			rdfgo.NewNamedNode(service.Deployment.Definition.ProfileURI),
+			nil,
+		)
+		if err != nil {
+			return err
+		}
+		description.Service.AddQuad(quad)
+	}
 
 	// service is a dcat:DataService
 	quad, err = rdfgo.NewQuad(
@@ -81,6 +107,16 @@ func (service *Service) InitDescription() error {
 		return err
 	}
 	description.Service.AddQuad(quad)
+	for _, endpoint := range service.Deployment.Definition.Endpoints {
+		quad, err = rdfgo.NewQuad(
+			svcNode, Dcat("endpointURL"),
+			rdfgo.NewNamedNode(util.JoinPaths(service.FullPath, endpoint.Path)), nil,
+		)
+		if err != nil {
+			return err
+		}
+		description.Service.AddQuad(quad)
+	}
 
 	// service is a prov:SoftwareAgent
 	quad, err = rdfgo.NewQuad(
@@ -123,7 +159,7 @@ func (service *Service) InitDescription() error {
 	quad, err = rdfgo.NewQuad(
 		svcNode,
 		Agg("deploymentFunction"),
-		rdfgo.NewNamedNode(service.Deployment.Function.URI),
+		rdfgo.NewNamedNode(service.Deployment.Definition.URI),
 		nil,
 	)
 	if err != nil {
@@ -132,7 +168,7 @@ func (service *Service) InitDescription() error {
 	description.Service.AddQuad(quad)
 
 	// DATASETS
-	for datasetID, dataset := range service.Configuration.Spec.Datasets {
+	for datasetID, dataset := range service.Deployment.Definition.Datasets {
 
 		outputStore := rdfgo.NewStore()
 		description.Datasets[datasetID] = outputStore
@@ -150,6 +186,19 @@ func (service *Service) InitDescription() error {
 			return err
 		}
 		outputStore.AddQuad(quad)
+
+		if dataset.ProfileURI != "" {
+			quad, err = rdfgo.NewQuad(
+				datasetNode,
+				Dct("conformsTo"),
+				rdfgo.NewNamedNode(dataset.ProfileURI),
+				nil,
+			)
+			if err != nil {
+				return err
+			}
+			outputStore.AddQuad(quad)
+		}
 
 		// Service serves dataset
 		quad, err = rdfgo.NewQuad(
@@ -204,10 +253,10 @@ func (service *Service) InitDescription() error {
 			outputStore.AddQuad(quad)
 		}
 
-		// DISTRIBUTION
-		if dataset.Distribution != nil && dataset.Distribution.Access != nil {
+		// DISTRIBUTIONS
+		for distributionID, distribution := range dataset.Distributions {
 
-			distNode := rdfgo.NewNamedNode(service.FullPath + "#" + datasetID + "-distribution")
+			distNode := rdfgo.NewNamedNode(service.FullPath + "#" + datasetID + "-distribution-" + distributionID)
 
 			// rdf:type
 			quad, err = rdfgo.NewQuad(
@@ -234,11 +283,11 @@ func (service *Service) InitDescription() error {
 			outputStore.AddQuad(quad)
 
 			// Distribution metadata
-			if dataset.Distribution.Title != "" {
+			if distribution.Title != "" {
 				quad, err = rdfgo.NewQuad(
 					distNode,
 					Dct("title"),
-					rdfgo.NewStringLiteral(dataset.Distribution.Title, "en"),
+					rdfgo.NewStringLiteral(distribution.Title, "en"),
 					nil,
 				)
 				if err != nil {
@@ -247,13 +296,27 @@ func (service *Service) InitDescription() error {
 				outputStore.AddQuad(quad)
 			}
 
-			if dataset.Distribution.Description != "" {
+			if distribution.Description != "" {
 				quad, err = rdfgo.NewQuad(
 					distNode,
 					Dct("description"),
-					rdfgo.NewStringLiteral(dataset.Distribution.Description, "en"),
+					rdfgo.NewStringLiteral(distribution.Description, "en"),
 					nil,
 				)
+				if err != nil {
+					return err
+				}
+				outputStore.AddQuad(quad)
+			}
+			if distribution.MediaType != "" {
+				quad, err = rdfgo.NewQuad(distNode, Dcat("mediaType"), rdfgo.NewNamedNode("https://www.iana.org/assignments/media-types/"+distribution.MediaType), nil)
+				if err != nil {
+					return err
+				}
+				outputStore.AddQuad(quad)
+			}
+			if distribution.Format != "" {
+				quad, err = rdfgo.NewQuad(distNode, Dct("format"), util.StringToTerm(distribution.Format), nil)
 				if err != nil {
 					return err
 				}
@@ -261,9 +324,7 @@ func (service *Service) InitDescription() error {
 			}
 
 			// Access URL
-			access := dataset.Distribution.Access
-
-			externalPath := access.ExternalPath
+			externalPath := distribution.Path
 			if !strings.HasPrefix(externalPath, "/") {
 				externalPath = "/" + externalPath
 			}
@@ -271,7 +332,7 @@ func (service *Service) InitDescription() error {
 			accessURL := service.FullPath + externalPath
 
 			predicate := Dcat("accessURL")
-			if access.URLType == "downloadURL" {
+			if distribution.URLType == "downloadURL" {
 				predicate = Dcat("downloadURL")
 			}
 
@@ -299,7 +360,7 @@ func (service *Service) InitDescription() error {
 			outputStore.AddQuad(quad)
 
 			// Distribution extra RDF
-			for predURI, val := range dataset.Distribution.ExtraProperties {
+			for predURI, val := range distribution.ExtraProperties {
 				quad, err = rdfgo.NewQuad(
 					distNode,
 					rdfgo.NewNamedNode(predURI),

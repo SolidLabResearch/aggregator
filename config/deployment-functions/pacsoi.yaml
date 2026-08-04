@@ -1,0 +1,74 @@
+deploymentFunctions:
+  pacsoi:
+    function:
+      title: Deploy PACSOI service
+      description: Deploys the PACSOI weight-distribution workload.
+      expects:
+        - name: sources
+          predicate: sources
+          type: xsd:anyURI
+          required: true
+          title: Patient source collection
+        - name: weight-slice
+          predicate: weight-slice
+          type: xsd:string
+          required: true
+          title: Weight observation slice
+        - name: procedure-slice
+          predicate: procedure-slice
+          type: xsd:string
+          required: true
+          title: Procedure slice
+      returns:
+        name: deployedService
+        predicate: service
+        title: Deployed PACSOI service
+    profileRef:
+      name: pacsoi
+    orchestration:
+      resources:
+        - id: workload
+          manifest:
+            apiVersion: apps/v1
+            kind: Deployment
+            spec:
+              replicas: 1
+              selector:
+                matchLabels:
+                  app: pacsoi
+              template:
+                metadata:
+                  labels:
+                    app: pacsoi
+                spec:
+                  containers:
+                    - name: pacsoi
+                      image: pacsoi-service
+                      imagePullPolicy: Never
+                      ports:
+                        - name: http
+                          containerPort: 3000
+      inputBindings:
+        - parameter: sources
+          targets:
+            - resource: workload
+              container: pacsoi
+              env: SOURCES
+        - parameter: weight-slice
+          targets:
+            - resource: workload
+              container: pacsoi
+              env: WEIGHT_SLICE
+        - parameter: procedure-slice
+          targets:
+            - resource: workload
+              container: pacsoi
+              env: PROCEDURE_SLICE
+      routeBindings:
+        distributions:
+          weight-distribution:
+            csv:
+              resource: workload
+              container: pacsoi
+              port: http
+              internalPath: /w-dist

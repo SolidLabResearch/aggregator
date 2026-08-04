@@ -1,20 +1,15 @@
 import { KeycloakOIDCAuth } from "./util.js";
 import { config } from "./config.js";
+import { outputEndpoints, resolveService } from "./outputs.js";
 
-export async function main(opts: { agg?: string, svc?: string, datasets?: string[] } = {}) {
-  const aggId = opts.agg ?? config.activeAggregator;
-  if (!aggId) throw new Error("No active aggregator. Use --agg or run `agg set-active`.");
-
-  const agg = config.aggregators[aggId];
-  if (!agg) throw new Error(`Aggregator "${aggId}" not found.`);
-
-  const svcName = opts.svc ?? config.service.name;
-  if (!svcName) throw new Error("No service name provided. Use --svc");
-
-  const svc = agg.services[svcName];
-  if (!svc) throw new Error(`Service "${svcName}" not found on Aggregator "${aggId}"`);
-
-  const datasetIDs = opts.datasets ?? Object.keys(svc.datasets);
+export async function main(opts: { output: string; agg?: string; svc?: string }) {
+  const { aggregator, service } = resolveService(opts);
+  const outputs = outputEndpoints(aggregator, service);
+  const selected = outputs.find((candidate) => candidate.id === opts.output);
+  if (!selected) {
+    const available = outputs.map((candidate) => candidate.id).join(", ") || "none";
+    throw new Error(`Output "${opts.output}" not found. Available outputs: ${available}.`);
+  }
 
   console.log("=== Initializing Keycloak Authentication ===");
   const auth = new KeycloakOIDCAuth();
@@ -23,27 +18,13 @@ export async function main(opts: { agg?: string, svc?: string, datasets?: string
   console.log("🔐 Auth initialized successfully.");
   const umaFetch = auth.createUMAFetch();
 
-  for (const datasetID of datasetIDs) {
-    const accessPath = svc.datasets[datasetID];
-    if (!accessPath) {
-      throw new Error(`Dataset "${datasetID}" has no configured distribution access path.`);
-    }
-    const normalizedPath = accessPath.startsWith("/") ? accessPath : `/${accessPath}`;
-    const OUTPUT_ENDPOINT = `${agg.id}${config.server.svc}/${svc.name}${normalizedPath}`;
+  console.log(`\n=== Fetching output: ${selected.id} ===`);
+  console.log(`➡️  Endpoint: ${selected.url}\n`);
 
-    console.log(`\n=== Fetching dataset distribution: ${datasetID} ===`);
-    console.log(`➡️  Endpoint: ${OUTPUT_ENDPOINT}\n`);
-
-    try {
-      const response = await umaFetch(OUTPUT_ENDPOINT, { method: "GET" });
-      console.log(`📡 Response status: ${response.status}`);
-      console.log("📄 Response body:\n");
-      console.log(await response.text() || "(empty response)");
-    } catch (err: any) {
-      console.error(`\n❌ Failed to fetch dataset "${datasetID}":`);
-      console.error(err?.message || err);
-    }
+  const response = await umaFetch(selected.url, { method: "GET" });
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(`Failed to fetch output "${selected.id}": HTTP ${response.status}: ${body}`);
   }
-
-  console.log("\n=== Done ===");
+  console.log(body || "(empty response)");
 }

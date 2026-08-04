@@ -52,10 +52,9 @@ docker run --network host uma:latest
 
 ### Registering the KSS as Resource Server
 
-Before setting up the KSS, you must register credentials for it (see [UMA Documentation](https://github.com/SolidLabResearch/user-managed-access/blob/main/documentation/getting-started.md#authenticating-as-resource-server)). The following [demo script](/demo/kvasir/get-credentials.ts) registers and prints the credentials. Make sure to set the following constants:
-
-- `UMA_SERVER` to your running Solid UMA Server
-- `KVASIR_SERVER` to the adress where the KSS will be hosted
+Before setting up KSS, register resource-server credentials as described in the
+[UMA documentation](https://github.com/SolidLabResearch/user-managed-access/blob/main/documentation/getting-started.md#authenticating-as-resource-server).
+Use the UMA server URL and the externally reachable KSS URL during registration.
 
 ## Setting up a Kvasir Server
 

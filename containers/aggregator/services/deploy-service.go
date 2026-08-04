@@ -50,67 +50,44 @@ func deploy(
 	ctx context.Context,
 ) error {
 
-	sc := service.Configuration
 	app := service.Deployment
-
-	// Build substitution values
-	values, err := buildSubstitutionMap(
-		sc,
-		app,
-	)
-	if err != nil {
-		return err
+	definition := app.Definition
+	if definition == nil || len(definition.Resources) == 0 {
+		return fmt.Errorf("resolved deployment has no resources")
 	}
-
-	// Substitute into orchestration spec
-	raw, err := substituteOrchestration(sc, values)
-	if err != nil {
-		return err
+	resourceNames := map[string]string{}
+	for _, resource := range definition.Resources {
+		resourceNames[resource.ID] = ResourceKubernetesName(service.KubernetesName, resource.ID)
 	}
-
-	// Decode into K8s object
-	obj, err := decodeK8sObject(sc, raw)
-	if err != nil {
-		return err
-	}
-
-	// Inject UMA Proxy envs
-	if useUMA {
-		err = injectUMAEnv(obj)
+	for _, resource := range orderedResources(definition.Resources) {
+		obj, err := decodeK8sObject(resource.Kind, resource.Manifest.Raw)
 		if err != nil {
 			return err
 		}
-	}
-
-	// Inject namespace
-	err = injectNamespace(obj, model.Namespace)
-	if err != nil {
-		return err
-	}
-
-	// The requested service ID is an external path identifier. Kubernetes
-	// resources use a separate, internal name to avoid collisions and DNS
-	// label length constraints.
-	err = injectName(obj, service.KubernetesName)
-	if err != nil {
-		return err
-	}
-
-	// Inject labels
-	err = injectLabels(obj, service)
-	if err != nil {
-		return err
-	}
-
-	// Log final spec
-	if finalBytes, err := json.MarshalIndent(obj, "", "  "); err == nil {
-		logrus.Debugf("Final deployment spec for service %s:\n%s", service.KubernetesName, string(finalBytes))
-	}
-
-	// Apply
-	err = applyObject(ctx, obj)
-	if err != nil {
-		return err
+		if err := applyResolvedInputBindings(obj, resource.ID, definition.InputBindings, app.Bindings); err != nil {
+			return err
+		}
+		resolveResourceReferences(obj, resourceNames)
+		if useUMA {
+			if err := injectUMAEnv(obj); err != nil {
+				return err
+			}
+		}
+		if err := injectNamespace(obj, model.Namespace); err != nil {
+			return err
+		}
+		if err := injectName(obj, resourceNames[resource.ID]); err != nil {
+			return err
+		}
+		if err := injectLabels(obj, service, resource.ID); err != nil {
+			return err
+		}
+		if finalBytes, err := json.MarshalIndent(obj, "", "  "); err == nil {
+			logrus.Debugf("Final %s resource %s for service %s:\n%s", resource.Kind, resource.ID, service.KubernetesName, string(finalBytes))
+		}
+		if err := applyObject(ctx, obj); err != nil {
+			return fmt.Errorf("create resource %q: %w", resource.ID, err)
+		}
 	}
 
 	logrus.Infof("Service %s deployed successfully", service.KubernetesName)
@@ -118,64 +95,35 @@ func deploy(
 }
 
 func expose(service *model.Service, ctx context.Context) error {
-
-	// Check if service already exists
-	_, err := model.Clientset.CoreV1().
-		Services(model.Namespace).
-		Get(ctx, service.KubernetesName, metav1.GetOptions{})
-
-	if err == nil {
-		return fmt.Errorf("service %s already exists", service.KubernetesName)
-	}
-
-	sc := service.Configuration
-
-	// Extract ports used by exposed dataset distributions.
-	ports := extractServicePorts(sc)
-
-	if len(ports) == 0 {
+	portsByResource := extractServicePortsByResource(service.Deployment.Definition)
+	if len(portsByResource) == 0 {
 		return fmt.Errorf("no distribution ports defined for service %s", service.KubernetesName)
 	}
-
-	// ✅ Build k8s ports
-	servicePorts := buildServicePorts(ports)
-
-	// ✅ Labels (same as deployment, important!)
-	labels := map[string]string{
-		"app.kubernetes.io/name":              "aggregator-service",
-		"app.kubernetes.io/managed-by":        "aggregator-instance",
-		"agg.knows.idlab.ugent.be/managed-by": model.ID,
-		"agg.knows.idlab.ugent.be/id":         service.InstanceID,
+	for resourceID, ports := range portsByResource {
+		name := ResourceKubernetesName(service.KubernetesName, resourceID)
+		if _, err := model.Clientset.CoreV1().Services(model.Namespace).Get(ctx, name, metav1.GetOptions{}); err == nil {
+			return fmt.Errorf("service %s already exists", name)
+		}
+		labels := map[string]string{
+			"app.kubernetes.io/name":               "aggregator-service",
+			"app.kubernetes.io/managed-by":         "aggregator-instance",
+			"agg.knows.idlab.ugent.be/managed-by":  model.ID,
+			"agg.knows.idlab.ugent.be/id":          service.InstanceID,
+			"agg.knows.idlab.ugent.be/resource-id": resourceID,
+		}
+		svcSpec := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: model.Namespace, Labels: labels},
+			Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Selector: map[string]string{
+				"app.kubernetes.io/name":               "aggregator-service",
+				"agg.knows.idlab.ugent.be/managed-by":  model.ID,
+				"agg.knows.idlab.ugent.be/id":          service.InstanceID,
+				"agg.knows.idlab.ugent.be/resource-id": resourceID,
+			}, Ports: buildServicePorts(ports)},
+		}
+		if _, err := model.Clientset.CoreV1().Services(model.Namespace).Create(ctx, svcSpec, metav1.CreateOptions{}); err != nil {
+			return fmt.Errorf("failed to create service for resource %q: %w", resourceID, err)
+		}
+		logrus.Infof("Service %s created for resource %s with ports %v", name, resourceID, ports)
 	}
-
-	// ✅ Create Service spec
-	svcSpec := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      service.KubernetesName,
-			Namespace: model.Namespace,
-			Labels:    labels,
-		},
-		Spec: corev1.ServiceSpec{
-			Type: corev1.ServiceTypeClusterIP,
-			Selector: map[string]string{
-				"app.kubernetes.io/name":              "aggregator-service",
-				"agg.knows.idlab.ugent.be/managed-by": model.ID,
-				"agg.knows.idlab.ugent.be/id":         service.InstanceID,
-			},
-			Ports: servicePorts,
-		},
-	}
-
-	// ✅ Create Service
-	_, err = model.Clientset.CoreV1().
-		Services(model.Namespace).
-		Create(ctx, svcSpec, metav1.CreateOptions{})
-
-	if err != nil {
-		return fmt.Errorf("failed to create service: %w", err)
-	}
-
-	logrus.Infof("Service %s created with ports %v", service.KubernetesName, ports)
-
 	return nil
 }

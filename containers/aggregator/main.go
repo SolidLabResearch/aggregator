@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -82,6 +81,10 @@ func main() {
 	if model.ServiceCollection == "" {
 		logrus.Fatal("Environment variable SERVICE_COLLECTION must be set")
 	}
+	model.AggregatorServerInternalURL = strings.TrimRight(os.Getenv("AGGREGATOR_SERVER_INTERNAL_URL"), "/")
+	if model.AggregatorServerInternalURL == "" {
+		logrus.Fatal("Environment variable AGGREGATOR_SERVER_INTERNAL_URL must be set")
+	}
 
 	// Load in-cluster kubeConfig
 	kubeConfig, err := rest.InClusterConfig()
@@ -92,11 +95,6 @@ func main() {
 	if err != nil {
 		logrus.Fatalf("Failed to create Kubernetes client: %v", err)
 	}
-	model.DynamicClient, err = dynamic.NewForConfig(kubeConfig)
-	if err != nil {
-		logrus.Fatalf("Failed to create dynamic Kubernetes client: %v", err)
-	}
-
 	// Configure HTTP server
 	serverMux := http.NewServeMux()
 
@@ -115,12 +113,6 @@ func main() {
 	err = config.InitServiceCollection(serverMux)
 	if err != nil {
 		logrus.WithError(err).Fatalf("Failed to set up service collection endpoint")
-	}
-
-	// Initialize deployment catalog
-	err = config.InitDeploymentCatalog(serverMux)
-	if err != nil {
-		logrus.WithError(err).Fatalf("Failed to set up deployment catalog endpoint")
 	}
 
 	// Health check endpoint

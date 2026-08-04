@@ -1,0 +1,27 @@
+profiles:
+  fetch:
+    serviceProfile:
+      title: Fetch service
+      description: A service that exposes content fetched from a configured URL.
+      parameters:
+        source:
+          predicate: source
+          type: xsd:anyURI
+          required: true
+      outputs:
+        content:
+          predicate: content
+          datasetProfileRef:
+            dataset: fetched-content
+      functions:
+        fetch:
+          name: Fetch remote content
+          expects: [source]
+          returns: [content]
+    datasetProfiles:
+      fetched-content:
+        title: Fetched content
+        distributions:
+          content:
+            path: /content
+            urlType: accessURL

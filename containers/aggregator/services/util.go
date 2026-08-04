@@ -3,13 +3,15 @@ package services
 import (
 	"aggregator/model"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/maartyman/rdfgo"
 	appsv1 "k8s.io/api/apps/v1"
-	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -21,57 +23,28 @@ func NewKubernetesName() string {
 	return kubernetesServiceNamePrefix + uuid.NewString()
 }
 
-func buildSubstitutionMap(
-	sc *model.ServiceConfiguration,
-	app *model.DeploymentRequest,
-) (map[string]string, error) {
-
-	values := make(map[string]string)
-
-	for predicateURI, input := range sc.Spec.InputMapping {
-
-		term, ok := app.Bindings[predicateURI]
-		if !ok {
-			return nil, fmt.Errorf("missing binding for predicate: %s", predicateURI)
-		}
-
-		// extract value from RDF term
-		val := strings.Trim(term.GetValue(), "<>")
-
-		values[input.ID] = val
+func ResourceKubernetesName(serviceName, resourceID string) string {
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(resourceID)))[:6]
+	available := 63 - len(serviceName) - len(hash) - 2
+	if available < 1 {
+		available = 1
 	}
-
-	return values, nil
-}
-
-func substituteOrchestration(
-	sc *model.ServiceConfiguration,
-	values map[string]string,
-) ([]byte, error) {
-
-	raw := sc.Spec.ServiceMapping.Orchestration.Spec.Raw
-
-	result := string(raw)
-
-	for id, val := range values {
-		placeholder := "$(" + id + ")"
-		result = strings.ReplaceAll(result, placeholder, val)
+	part := strings.Trim(resourceID, "-")
+	if len(part) > available {
+		part = strings.TrimRight(part[:available], "-")
 	}
-
-	// safety check
-	if strings.Contains(result, "$(") {
-		return nil, fmt.Errorf("unresolved placeholders remain in orchestration spec")
+	if part == "" {
+		part = "r"
 	}
-
-	return []byte(result), nil
+	return serviceName + "-" + part + "-" + hash
 }
 
 func decodeK8sObject(
-	sc *model.ServiceConfiguration,
+	kind string,
 	raw []byte,
 ) (interface{}, error) {
 
-	switch sc.Spec.ServiceMapping.Orchestration.Type {
+	switch kind {
 
 	case "Deployment":
 		var d appsv1.Deployment
@@ -80,23 +53,106 @@ func decodeK8sObject(
 		}
 		return &d, nil
 
-	case "Job":
-		var j batchv1.Job
-		if err := json.Unmarshal(raw, &j); err != nil {
+	case "ConfigMap":
+		var configMap corev1.ConfigMap
+		if err := json.Unmarshal(raw, &configMap); err != nil {
 			return nil, err
 		}
-		return &j, nil
+		return &configMap, nil
 
-	case "CronJob":
-		var cj batchv1.CronJob
-		if err := json.Unmarshal(raw, &cj); err != nil {
+	case "PersistentVolumeClaim":
+		var claim corev1.PersistentVolumeClaim
+		if err := json.Unmarshal(raw, &claim); err != nil {
 			return nil, err
 		}
-		return &cj, nil
+		return &claim, nil
 
 	default:
 		return nil, fmt.Errorf("unsupported orchestration type")
 	}
+}
+
+func applyResolvedInputBindings(obj interface{}, resourceID string, bindings []model.ResolvedInputBinding, values map[string]rdfgo.ITerm) error {
+	for _, binding := range bindings {
+		term, ok := values[binding.Predicate]
+		if !ok {
+			continue
+		}
+		value := strings.Trim(term.GetValue(), "<>")
+		for _, target := range binding.Targets {
+			if target.Resource != resourceID {
+				continue
+			}
+			deployment, ok := obj.(*appsv1.Deployment)
+			if !ok {
+				return fmt.Errorf("input %q environment target %q is not a Deployment", binding.Parameter, resourceID)
+			}
+			found := false
+			for index := range deployment.Spec.Template.Spec.Containers {
+				container := &deployment.Spec.Template.Spec.Containers[index]
+				if container.Name != target.Container {
+					continue
+				}
+				found = true
+				setEnvironmentVariable(container, target.Env, value)
+			}
+			if !found {
+				return fmt.Errorf("input %q references unknown container %q", binding.Parameter, target.Container)
+			}
+		}
+	}
+	return nil
+}
+
+func setEnvironmentVariable(container *corev1.Container, name, value string) {
+	for index := range container.Env {
+		if container.Env[index].Name == name {
+			container.Env[index].Value = value
+			container.Env[index].ValueFrom = nil
+			return
+		}
+	}
+	container.Env = append(container.Env, corev1.EnvVar{Name: name, Value: value})
+}
+
+// resolveResourceReferences treats local resource IDs in well-known PodSpec
+// reference fields as symbolic names and replaces them with generated names.
+func resolveResourceReferences(obj interface{}, names map[string]string) {
+	deployment, ok := obj.(*appsv1.Deployment)
+	if !ok {
+		return
+	}
+	pod := &deployment.Spec.Template.Spec
+	for index := range pod.Volumes {
+		volume := &pod.Volumes[index]
+		if volume.ConfigMap != nil {
+			volume.ConfigMap.Name = resolvedResourceName(volume.ConfigMap.Name, names)
+		}
+		if volume.PersistentVolumeClaim != nil {
+			volume.PersistentVolumeClaim.ClaimName = resolvedResourceName(volume.PersistentVolumeClaim.ClaimName, names)
+		}
+	}
+	for index := range pod.Containers {
+		container := &pod.Containers[index]
+		for envIndex := range container.EnvFrom {
+			if container.EnvFrom[envIndex].ConfigMapRef != nil {
+				container.EnvFrom[envIndex].ConfigMapRef.Name = resolvedResourceName(container.EnvFrom[envIndex].ConfigMapRef.Name, names)
+			}
+		}
+		for envIndex := range container.Env {
+			valueFrom := container.Env[envIndex].ValueFrom
+			if valueFrom != nil && valueFrom.ConfigMapKeyRef != nil {
+				valueFrom.ConfigMapKeyRef.Name = resolvedResourceName(valueFrom.ConfigMapKeyRef.Name, names)
+			}
+		}
+	}
+}
+
+func resolvedResourceName(value string, names map[string]string) string {
+	if resolved, ok := names[value]; ok {
+		return resolved
+	}
+	return value
 }
 
 func applyObject(ctx context.Context, obj interface{}) error {
@@ -109,16 +165,12 @@ func applyObject(ctx context.Context, obj interface{}) error {
 			Create(ctx, r, metav1.CreateOptions{})
 		return err
 
-	case *batchv1.Job:
-		_, err := model.Clientset.BatchV1().
-			Jobs(r.Namespace).
-			Create(ctx, r, metav1.CreateOptions{})
+	case *corev1.ConfigMap:
+		_, err := model.Clientset.CoreV1().ConfigMaps(r.Namespace).Create(ctx, r, metav1.CreateOptions{})
 		return err
 
-	case *batchv1.CronJob:
-		_, err := model.Clientset.BatchV1().
-			CronJobs(r.Namespace).
-			Create(ctx, r, metav1.CreateOptions{})
+	case *corev1.PersistentVolumeClaim:
+		_, err := model.Clientset.CoreV1().PersistentVolumeClaims(r.Namespace).Create(ctx, r, metav1.CreateOptions{})
 		return err
 
 	default:
@@ -147,12 +199,8 @@ func injectUMAEnv(obj interface{}) error {
 	case *appsv1.Deployment:
 		injectIntoPodSpec(&r.Spec.Template.Spec, envVars)
 
-	case *batchv1.Job:
-		injectIntoPodSpec(&r.Spec.Template.Spec, envVars)
-
-	case *batchv1.CronJob:
-		injectIntoPodSpec(&r.Spec.JobTemplate.Spec.Template.Spec, envVars)
-
+	case *corev1.ConfigMap, *corev1.PersistentVolumeClaim:
+		return nil
 	default:
 		return fmt.Errorf("unsupported object type for UMA injection")
 	}
@@ -173,9 +221,9 @@ func injectNamespace(obj interface{}, namespace string) error {
 	switch r := obj.(type) {
 	case *appsv1.Deployment:
 		r.Namespace = namespace
-	case *batchv1.Job:
+	case *corev1.ConfigMap:
 		r.Namespace = namespace
-	case *batchv1.CronJob:
+	case *corev1.PersistentVolumeClaim:
 		r.Namespace = namespace
 	default:
 		return fmt.Errorf("unsupported object type")
@@ -191,9 +239,9 @@ func injectName(obj interface{}, name string) error {
 	switch r := obj.(type) {
 	case *appsv1.Deployment:
 		r.Name = name
-	case *batchv1.Job:
+	case *corev1.ConfigMap:
 		r.Name = name
-	case *batchv1.CronJob:
+	case *corev1.PersistentVolumeClaim:
 		r.Name = name
 	default:
 		return fmt.Errorf("unsupported object type")
@@ -201,14 +249,15 @@ func injectName(obj interface{}, name string) error {
 	return nil
 }
 
-func injectLabels(obj interface{}, service *model.Service) error {
+func injectLabels(obj interface{}, service *model.Service, resourceID string) error {
 
 	labels := map[string]string{
-		"app.kubernetes.io/name":              "aggregator-service",
-		"app.kubernetes.io/part-of":           "aggregator-platform",
-		"app.kubernetes.io/managed-by":        "aggregator-instance",
-		"agg.knows.idlab.ugent.be/managed-by": model.ID,
-		"agg.knows.idlab.ugent.be/id":         service.InstanceID,
+		"app.kubernetes.io/name":               "aggregator-service",
+		"app.kubernetes.io/part-of":            "aggregator-platform",
+		"app.kubernetes.io/managed-by":         "aggregator-instance",
+		"agg.knows.idlab.ugent.be/managed-by":  model.ID,
+		"agg.knows.idlab.ugent.be/id":          service.InstanceID,
+		"agg.knows.idlab.ugent.be/resource-id": resourceID,
 	}
 
 	switch r := obj.(type) {
@@ -217,19 +266,33 @@ func injectLabels(obj interface{}, service *model.Service) error {
 		mergeLabels(&r.ObjectMeta, labels)
 		mergeLabels(&r.Spec.Template.ObjectMeta, labels)
 
-	case *batchv1.Job:
+	case *corev1.ConfigMap:
 		mergeLabels(&r.ObjectMeta, labels)
-		mergeLabels(&r.Spec.Template.ObjectMeta, labels)
 
-	case *batchv1.CronJob:
+	case *corev1.PersistentVolumeClaim:
 		mergeLabels(&r.ObjectMeta, labels)
-		mergeLabels(&r.Spec.JobTemplate.Spec.Template.ObjectMeta, labels)
 
 	default:
 		return fmt.Errorf("unsupported object for label injection")
 	}
 
 	return nil
+}
+
+func orderedResources(resources []model.ResolvedResource) []model.ResolvedResource {
+	result := append([]model.ResolvedResource(nil), resources...)
+	priority := func(kind string) int {
+		switch kind {
+		case "ConfigMap":
+			return 0
+		case "PersistentVolumeClaim":
+			return 1
+		default:
+			return 2
+		}
+	}
+	sort.SliceStable(result, func(i, j int) bool { return priority(result[i].Kind) < priority(result[j].Kind) })
+	return result
 }
 
 func mergeLabels(meta *metav1.ObjectMeta, labels map[string]string) {
@@ -241,27 +304,37 @@ func mergeLabels(meta *metav1.ObjectMeta, labels map[string]string) {
 	}
 }
 
-func extractServicePorts(sc *model.ServiceConfiguration) []int32 {
-	portSet := make(map[int32]struct{})
+func extractServicePortsByResource(definition *model.ResolvedDeployment) map[string][]int32 {
+	portSets := map[string]map[int32]struct{}{}
 
-	for _, dataset := range sc.Spec.Datasets {
-		if dataset.Distribution != nil &&
-			dataset.Distribution.Access != nil {
-
-			port := int32(dataset.Distribution.Access.ServicePort)
+	for _, dataset := range definition.Datasets {
+		for _, distribution := range dataset.Distributions {
+			port := int32(distribution.Target.Port)
 			if port > 0 {
-				portSet[port] = struct{}{}
+				if portSets[distribution.Target.Resource] == nil {
+					portSets[distribution.Target.Resource] = map[int32]struct{}{}
+				}
+				portSets[distribution.Target.Resource][port] = struct{}{}
 			}
 		}
 	}
-
-	// convert to slice
-	ports := make([]int32, 0, len(portSet))
-	for p := range portSet {
-		ports = append(ports, p)
+	for _, endpoint := range definition.Endpoints {
+		port := int32(endpoint.Target.Port)
+		if port > 0 {
+			if portSets[endpoint.Target.Resource] == nil {
+				portSets[endpoint.Target.Resource] = map[int32]struct{}{}
+			}
+			portSets[endpoint.Target.Resource][port] = struct{}{}
+		}
 	}
-
-	return ports
+	result := map[string][]int32{}
+	for resourceID, portSet := range portSets {
+		for port := range portSet {
+			result[resourceID] = append(result[resourceID], port)
+		}
+		sort.Slice(result[resourceID], func(i, j int) bool { return result[resourceID][i] < result[resourceID][j] })
+	}
+	return result
 }
 
 func buildServicePorts(ports []int32) []corev1.ServicePort {

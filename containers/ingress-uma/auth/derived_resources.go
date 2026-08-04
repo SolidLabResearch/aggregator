@@ -57,7 +57,9 @@ func HandleDerivedResourceRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, resourceID := range resourceIDs {
+		resourceIndexMu.RLock()
 		resData := resourceIndex[resourceID]
+		resourceIndexMu.RUnlock()
 		if resData.AggData.AuthzServer == "" {
 			logrus.WithFields(logrus.Fields{"resource_id": resourceID}).Warn("No Authentication Server Url found for resource")
 			continue

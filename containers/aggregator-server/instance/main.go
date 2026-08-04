@@ -21,7 +21,25 @@ func DeployAggregator(
 	aggregatorId string,
 	authzServerURL string,
 	ctx context.Context,
-) error {
+) (deployErr error) {
+	deployed := false
+	defer func() {
+		if deployed || deployErr == nil {
+			return
+		}
+		// Provisioning may fail because its request context expired. Use an
+		// independent bounded context so partial resources are still removed.
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := DeleteAggregator(aggregatorId, cleanupCtx); err != nil {
+			logrus.WithError(err).WithField("aggregator_id", aggregatorId).
+				Error("Failed to roll back partially deployed aggregator")
+		} else {
+			logrus.WithField("aggregator_id", aggregatorId).
+				Info("Rolled back partially deployed aggregator")
+		}
+	}()
+
 	resolvedOwner := resolveOwnerID(ownerID, aggregatorId)
 
 	if authzServerURL != "" {
@@ -51,6 +69,7 @@ func DeployAggregator(
 	}
 	logrus.Infof("Deployed aggregator %s", aggregatorId)
 
+	deployed = true
 	return nil
 }
 
@@ -145,13 +164,16 @@ func deleteAggregatorResources(aggregatorId string, ctx context.Context) error {
 	)
 	deletePolicy := metav1.DeletePropagationForeground
 
-	// 1. Delete Deployments
-	if err := model.Clientset.AppsV1().Deployments(model.Namespace).DeleteCollection(ctx, metav1.DeleteOptions{
-		PropagationPolicy: &deletePolicy,
-	}, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	}); err != nil {
-		return fmt.Errorf("failed to delete deployments: %w", err)
+	// 1. Delete Deployments individually so cleanup completion is observable and
+	// does not depend on asynchronous DeleteCollection behavior.
+	deployments, err := model.Clientset.AppsV1().Deployments(model.Namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
+	if err != nil {
+		return fmt.Errorf("failed to list deployments: %w", err)
+	}
+	for _, deployment := range deployments.Items {
+		if err := model.Clientset.AppsV1().Deployments(model.Namespace).Delete(ctx, deployment.Name, metav1.DeleteOptions{PropagationPolicy: &deletePolicy}); err != nil {
+			return fmt.Errorf("failed to delete deployment %s: %w", deployment.Name, err)
+		}
 	}
 
 	// 2. Delete Services
@@ -246,7 +268,7 @@ func ensureConfigMap(aggregatorId string, name string, data map[string]string, c
 
 	var lastErr error
 	for i := 0; i < 3; i++ {
-		existing, err := model.Clientset.CoreV1().ConfigMaps(model.Namespace).Get(ctx, name, metav1.GetOptions{})
+		existing, err := model.Clientset.CoreV1().ConfigMaps(model.Namespace).Get(ctx, cmName, metav1.GetOptions{})
 		if err != nil {
 			return cmName, err
 		}

@@ -3,6 +3,20 @@
   "type": "object",
   "required": ["external", "auth", "ingressClassName"],
   "properties": {
+    "profiles": {
+      "type": "object",
+      "description": "Profile specs keyed by Kubernetes resource name.",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "deploymentFunctions": {
+      "type": "object",
+      "description": "DeploymentFunction specs keyed by Kubernetes resource name.",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
     "external": {
       "type": "object",
       "required": ["host", "httpPort", "httpsPort"],

@@ -1,149 +1,93 @@
-# Deploying Aggregator Services
+# Deploying and accessing services
 
-This section explains how to deploy a service on a running Aggregator.
+An aggregator instance exposes a service collection at:
 
-## Prerequisites
+```text
+https://<host>/<aggregator-id>/services
+```
 
-Before proceeding, make sure you have:
+Requests require the UMA scopes described in [UMA policies](uma-policies.md)
+unless authentication is disabled.
 
-- Created a service (see [Creating Services](creating-services.md))
-- Deployed and started an Aggregator (see [Deploying Aggregators](deploying-aggregators.md))
-- Access to an account with the required permissions (see [UMA Policies](uma-policies.md))
+## Discover deployment functions
 
-## Assumed Setup
-
-The examples in this guide assume the following configuration:
-
-- Aggregator Server: `http://aggregator.local`
-- Deployment catalog endpoint: `http://aggregator.local/deployments`
-- Aggregator instance: `http://aggregator.local/agg1`
-- Service collection endpoint: `http://aggregator.local/agg1/services`
-
-## 1. Check Supported Deployment Functions
-
-Before deploying a service, verify which deployment functions are supported by the Aggregator Server.
-
-### Request
+List the public definitions and retrieve the definition you plan to use:
 
 ```http
-GET http://aggregator.local/deployments
+GET https://<host>/deployments
+Accept: text/turtle
+
+GET https://<host>/deployments/fetch-profiled
 Accept: text/turtle
 ```
 
-### Example Response
+The deployment document declares its parameters with FnO. Parameter predicates
+are fragments of the deployment URL; for example:
 
 ```turtle
-@base <http://aggregator.example.org/deployments#> .
-@prefix aggr: <https://w3id.org/aggregator#> .
-@prefix dct: <http://purl.org/dc/terms/> .
-@prefix fno: <https://w3id.org/function/ontology#> .
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-
-<> a aggr:DeploymentCatalog ;
-    dct:title "Aggregator deployment functions" ;
-    aggr:hasDeploymentFunction <DeployIncrementalKvasir> .
-
-<DeployIncrementalKvasir>
-  a fno:Function ;
-  fno:expects ( <Query> <Sources> <Schema> <Context> ) ;
-  fno:returns ( <DeployedService> ) .
-
-<Query>
+<https://<host>/deployments/fetch-profiled#url>
   a fno:Parameter ;
-  fno:type xsd:string ;
-  fno:predicate <query> ;
-  fno:required "true"^^xsd:boolean .
-
-<Sources>
-  a fno:Parameter ;
-  fno:type xsd:string ;
-  fno:predicate <sources> ;
-  fno:required "true"^^xsd:boolean .
-
-<Schema>
-  a fno:Parameter ;
-  fno:type xsd:string ;
-  fno:predicate <schema> ;
-  fno:required "true"^^xsd:boolean .
-
-<Context>
-  a fno:Parameter ;
-  fno:type xsd:string ;
-  fno:predicate <context> ;
-  fno:required "true"^^xsd:boolean .
-
-<DeployedService>
-  a fno:Output ;
-  fno:predicate <service> ;
-  fno:type aggr:Service .
+  fno:predicate <https://<host>/deployments/fetch-profiled#url> ;
+  fno:type xsd:anyURI ;
+  fno:required true .
 ```
 
-This response describes the available deployment functions and their required inputs.
+Use the exact deployment and predicate IRIs returned by the catalog.
 
-## 2. Create a Service
+## Create a service
 
-To deploy a service, send an `aggr:ServiceRequest` to the Aggregator’s service collection endpoint. It specifies:
-
-- The deployment function to invoke
-- The required input parameters
-
-### Request
+POST Turtle or JSON-LD to the collection. The request subject determines the
+service name and must be below that collection.
 
 ```http
-POST http://aggregator.local/agg1/services
+POST https://<host>/<aggregator-id>/services
 Content-Type: text/turtle
 
 @prefix aggr: <https://w3id.org/aggregator#> .
-@prefix deploy: <http://aggregator.example.org/deployments#> .
 
-<http://aggregator.local/agg1/my-service> a aggr:ServiceRequest ;
-  aggr:deploymentFunction deploy:DeployIncrementalKvasir ;
-  deploy:query "SELECT ?s WHERE { ?s a <http://example.org/Person> }" ;
-  deploy:sources "http://example.org/kvasir" ;
-  deploy:schema "...schema definition..." ;
-  deploy:context "...context definition..." .
+<https://<host>/<aggregator-id>/services/fetch-1>
+  a aggr:ServiceRequest ;
+  aggr:deploymentFunction <https://<host>/deployments/fetch-profiled> ;
+  <https://<host>/deployments/fetch-profiled#url> <https://example.org/data> .
 ```
 
----
+On success the server returns `201 Created`, a `Location` header, and the RDF
+service description. The workload is created asynchronously in the
+aggregator's Kubernetes namespace.
 
-If the request is successful, the Aggregator responds with:
+The CLI performs catalog discovery and encodes values using their declared FnO
+types:
 
-- HTTP status `201 Created`
-- A Service Description containing metadata and endpoints
-
-### Example Response
-
-```turtle
-@prefix aggr: <https://w3id.org/aggregator#> .
-@prefix dcat: <http://www.w3.org/ns/dcat#> .
-@prefix deploy: <http://aggregator.example.org/deployments#> .
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-
-<http://aggregator.local/agg1/my-service>
-  a aggr:Service, dcat:DataService ;
-  aggr:status "running" ;
-  aggr:createdAt "2024-01-01T12:00:00Z"^^xsd:dateTime ;
-  aggr:deploymentFunction deploy:DeployIncrementalKvasir ;
-  dcat:servesDataset <http://aggregator.local/agg1/my-service#result> .
-
-<http://aggregator.local/agg1/my-service#result>
-  a dcat:Dataset ;
-  dcat:distribution <http://aggregator.local/agg1/my-service#result-distribution> .
-
-<http://aggregator.local/agg1/my-service#result-distribution>
-  a dcat:Distribution ;
-  dcat:accessURL <http://aggregator.local/agg1/my-service/result> ;
-  dcat:accessService <http://aggregator.local/agg1/my-service> .
+```bash
+agg create-service \
+  --name fetch-1 \
+  --deployment-function fetch-profiled \
+  --param url=https://example.org/data
 ```
 
-## 3. Monitor Service Status
+## Inspect and delete services
 
-The Service Description is also available at the Service Endpoint (`http://aggregator.local/agg1/my-service`), which can be used to monitor the service status and access results.
+```http
+GET https://<host>/<aggregator-id>/services
+GET https://<host>/<aggregator-id>/services/fetch-1
+HEAD https://<host>/<aggregator-id>/services/fetch-1
+DELETE https://<host>/<aggregator-id>/services/fetch-1
+```
 
-## 4. Accessing Results
+The collection response is JSON containing a `services` array. A service
+response is Turtle and includes dataset distributions and their resolved
+`dcat:accessURL` or `dcat:downloadURL` values. Use those advertised URLs rather
+than constructing output paths yourself.
 
-The Service Description includes one or more output predicates (such as `tf:result`) that indicate where the service output can be accessed.
+With the CLI:
 
-For example, the query results are available at:
+```bash
+agg get-service --svc fetch-1
+agg list-outputs --svc fetch-1
+agg get-output <dataset>/<distribution> --svc fetch-1
+agg delete-service --svc fetch-1
+```
 
-`http://aggregator.local/agg1/my-service/result`
+Operational endpoints and dataset distributions are distinct. Only
+distributions appear in `list-outputs`; other endpoints are documented by the
+selected profile or inline interface.

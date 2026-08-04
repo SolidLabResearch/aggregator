@@ -75,10 +75,9 @@ func ParseRequestBody(fno string, format string) (*model.Service, error) {
 		}
 
 		// Find the deployment function selected by this service request.
-		var deploymentFunction *model.DeploymentFunction
-		var svcConfig *model.ServiceConfiguration
+		var definition *model.ResolvedDeployment
 		for functionQuery := range store.Match(reqQuery.GetSubject(), model.Agg("deploymentFunction"), nil, nil) {
-			if deploymentFunction != nil {
+			if definition != nil {
 				log.Error("Multiple aggr:deploymentFunction triples found; expected exactly one")
 				return nil, errors.New("multiple aggr:deploymentFunction triples found; expected exactly one")
 			}
@@ -87,41 +86,40 @@ func ParseRequestBody(fno string, format string) (*model.Service, error) {
 
 			// Load transformation configuration
 			var err error
-			deploymentFunction, svcConfig, err = model.LoadDeploymentFunction(functionURI)
+			definition, err = model.LoadDeploymentFunction(functionURI)
 			if err != nil {
 				log.WithError(err).WithField("deployment_function_uri", functionURI).Error("Failed to load deployment function")
 				return nil, err
 			}
 		}
 
-		if deploymentFunction == nil {
+		if definition == nil {
 			log.Error("No aggr:deploymentFunction triple found")
 			return nil, errors.New("no valid deployment function was requested using aggr:deploymentFunction")
 		}
 
 		// Bind inputs using predicates
 		bindings := make(map[string]rdfgo.ITerm)
-		for _, pred := range deploymentFunction.Params {
-			for predQuery := range store.Match(reqQuery.GetSubject(), rdfgo.NewNamedNode(pred), nil, nil) {
-				bindings[pred] = predQuery.GetObject()
+		for _, parameter := range definition.Parameters {
+			for predQuery := range store.Match(reqQuery.GetSubject(), rdfgo.NewNamedNode(parameter.Predicate), nil, nil) {
+				if _, exists := bindings[parameter.Predicate]; exists {
+					return nil, fmt.Errorf("multiple values provided for input %q", parameter.Name)
+				}
+				bindings[parameter.Predicate] = predQuery.GetObject()
 			}
-		}
-
-		if len(bindings) != len(deploymentFunction.Params) {
-			log.WithFields(logrus.Fields{
-				"inputs_provided": len(bindings),
-				"inputs_expected": len(deploymentFunction.Params),
-			}).Error("Parameter count mismatch")
-			return nil, fmt.Errorf("not enough inputs provided: %d (expected: %d)", len(bindings), len(deploymentFunction.Params))
+			if parameter.Required {
+				if _, exists := bindings[parameter.Predicate]; !exists {
+					return nil, fmt.Errorf("required input %q was not provided", parameter.Name)
+				}
+			}
 		}
 
 		service = &model.Service{
 			FullPath: requestedPath,
 			Deployment: &model.DeploymentRequest{
-				Function: deploymentFunction,
-				Bindings: bindings,
+				Bindings:   bindings,
+				Definition: definition,
 			},
-			Configuration: svcConfig,
 		}
 		log.WithField("service_uri", service.FullPath).Debug("Successfully built Service")
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"aggregator/catalog"
 	"aggregator/config"
 	"aggregator/instance"
 	"aggregator/model"
@@ -183,11 +184,17 @@ func main() {
 	// Configure HTTP server
 	serverMux := http.NewServeMux()
 
-	// Configuration endpoint
-	err = config.InitDeploymentCatalogConfiguration(serverMux)
-	if err != nil {
-		logrus.WithError(err).Warn("Failed to set up configuration endpoint (UMA might be down)")
+	// Server-wide deployment and profile catalogs, plus the internal bundle API.
+	definitionRegistry := catalog.NewRegistry(catalog.URLs{Server: model.ExternalURL()})
+	if err := definitionRegistry.Load(context.Background(), model.DynamicClient, model.Namespace); err != nil {
+		logrus.WithError(err).Fatal("Failed to load deployment and profile definitions")
 	}
+	definitionRegistry.Watch(context.Background(), model.DynamicClient, model.Namespace, func(err error) {
+		logrus.WithError(err).Error("Failed to refresh deployment and profile definitions")
+	})
+	definitionRegistry.RegisterPublicHandlers(serverMux)
+	internalMux := http.NewServeMux()
+	definitionRegistry.RegisterInternalHandlers(internalMux)
 
 	// Solid Client Identifier endpoint
 	if solidOIDCEnabled {
@@ -213,11 +220,22 @@ func main() {
 		Addr:    ":5000",
 		Handler: corsMux,
 	}
+	internalSrv := &http.Server{
+		Addr:    ":5001",
+		Handler: loggingMiddleware(internalMux),
+	}
 
 	go func() {
 		logrus.WithFields(logrus.Fields{"port": 5000}).Info("Server listening")
-		if err := srv.ListenAndServe(); err != nil {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logrus.WithFields(logrus.Fields{"err": err}).Error("HTTP server failed")
+			os.Exit(1)
+		}
+	}()
+	go func() {
+		logrus.WithFields(logrus.Fields{"port": 5001}).Info("Internal server listening")
+		if err := internalSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logrus.WithFields(logrus.Fields{"err": err}).Error("Internal HTTP server failed")
 			os.Exit(1)
 		}
 	}()
@@ -233,6 +251,9 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		logrus.WithError(err).Error("Server forced to shutdown")
+	}
+	if err := internalSrv.Shutdown(ctx); err != nil {
+		logrus.WithError(err).Error("Internal server forced to shutdown")
 	}
 
 	logrus.Info("Server stopped gracefully")

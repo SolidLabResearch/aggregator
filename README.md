@@ -2,227 +2,91 @@
 
 [![Integration Tests](https://github.com/SolidLabResearch/aggregator/actions/workflows/integration-tests.yml/badge.svg)](https://github.com/SolidLabResearch/aggregator/actions/workflows/integration-tests.yml)
 
-An aggregator using uma: https://github.com/SolidLabResearch/user-managed-access as the authorization server.
+Aggregator deploys isolated data-processing services in Kubernetes and protects
+their APIs with User-Managed Access (UMA). An Aggregator Server registers and
+manages per-user aggregator instances; each instance can deploy workloads from
+the server's catalog of `DeploymentFunction` and `Profile` resources.
 
-## Quick Start
+## Start locally
 
-If you already have a cluster you can use the helm chart to deploy the aggregator-platform. For the full Helm configuration details see the [documentation](/aggregator-platform/README.md).
-
-```bash
-helm upgrade --install aggregator-platform ./aggregator-platform \
-  -n aggregator-platform --create-namespace \
-  --set host=aggregator.example.com \
-  --set auth.allowedRegistrationTypes={none} \
-  --set ingressClassName=<ingress-class-name> #traefik, nginx, ..
-```
-
-To start with a local setup, follow the instruction in the [Local Setup Guide](/docs/local-setup.md).
-
-## API
-
-The [demo](/docs/demo.md) walks through the API step by step.
-All endpoints are relative to the aggregator base IRI:
-```
-http(s)://<host>
-```
-You can `GET` the base endpoint to retrieve the server’s specification and configuration.
-
----
-### Registration Endpoint
-
-Create an aggregator for a user.
-Supported registration flows depend on the configured `allowedRegistrationTypes`.
-
-Default endpoint:
-```
-POST http(s)://<host>/registration
-```
-
-More on registration flows in the [documentation](/docs/deploying-aggregators.md)
-
----
-### Deployment Catalog
-
-Retrieve the available FnO functions for deploying services.
-
-Default endpoint:
-```
-GET http(s)://<host>/deployments
-```
-
-More on deployment functions in the [documentation](/docs/creating-services.md)
-
----
-### Aggregator Description
-
-Retrieve the specification and configuration of a specific aggregator instance.
-
-```
-GET http(s)://<host>/<aggregator-id>
-```
-
----
-### Aggregator Service Collection
-
-List services within an aggregator instance.
-
-Default endpoint:
-```
-GET http(s)://<host>/<aggregator-id>/services
-```
-
-Deploy services within an aggregator instance.
-
-Default endpoint:
-```
-POST http(s)://<host>/<aggregator-id>/services
-```
-
-More on deploying services in the [documentation](/docs/deploying-services.md)
-
----
-### Aggregator Service
-
-Retrieve the description of a specific service:
-
-```
-GET http(s)://<host>/<aggregator-id>/<service-id>
-```
-
-Retrieve the service outputs with corresponding output predicate:
-
-```
-GET http(s)://<host>/<aggregator-id>/<service-id>/<out-pred>
-```
-
-More on accessing services in the [documentation](/docs/deploying-services.md)
-
-## Makefile Commands
-
-### Cluster Management
-```bash
-make kind-init          # Create cluster, build & load containers, start cleaner
-make kind-start         # Create/start Kind cluster only
-make kind-stop          # Pause Kind cluster
-make kind-delete        # Delete Kind Cluster
-make kind-dashboard     # Deploy Kubernetes dashboard
-```
-
-### Container Management
-```bash
-make containers-build              # Build all containers (parallel)
-make containers-build CONTAINER=X  # Build specific container
-make containers-load               # Load all images into Kind
-make containers-load CONTAINER=X   # Load specific image
-make containers-all                # Build and load all
-make containers-all CONTAINER=X    # Build and load specific image
-```
-
-### Deployment
-```bash
-make deploy            # Deploy aggregator
-make undeploy          # Remove aggregator
-make kind-deploy       # Deploy aggregator + configure /etc/hosts
-make kind-undeploy     # Remove aggregator + clean /etc/hosts
-```
-
-### Docker Cleanup
-```bash
-make docker-clean      # Clean up Docker images
-```
-
-### Testing
-```bash
-make integration-test  # Run full integration test suite
-```
-
-## Development Workflow
-
-### Making Changes
+Prerequisites and configuration are covered in the [local setup
+guide](docs/local-setup.md). The normal workflow is:
 
 ```bash
-# Rebuild specific container
-make containers-build CONTAINER=aggregator-server
-make containers-load CONTAINER=aggregator-server
-
-# Restart deployment
-make (kind-)undeploy
-make (kind-)deploy
-```
-
-## Tests
-
-Automated tests run on GitHub Actions for Linux on every push and pull request.
-
-### Run Locally
-
-Ensure Go is installed (required for running the tests):
-
-```bash
-sudo apt install -y golang-go
-```
-
-### Integration Tests
-
-Integration tests use the existing Kind cluster created by `make kind-init`.
-
-```bash
-# First-time setup
 make kind-init
-
-# Run tests (uses existing cluster)
+make kind-deploy
 make integration-test
 ```
 
-The Integration tests will:
-- deploy a test setup with mock OIDC and UMA servers
-- Run all integration tests against `http://aggregator.local`
-- Leave the cluster running after tests complete
-
-### Unit Tests
-
-Unit tests only test the functions so no cluster is needed.
-The following make target will run all unit tests in all containers:
+For an existing Kubernetes cluster, configure `config/local.yaml` or another
+Helm values file and run:
 
 ```bash
+make deploy CONFIG=my-values.yaml
+```
+
+`make deploy` installs the chart, the current CRDs, and all definition files in
+`config/profiles/` and `config/deployment-functions/`.
+
+## Public API
+
+All paths are relative to `http(s)://<host>`:
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /` | Server specification and configuration |
+| `POST /registration` | Register an aggregator instance |
+| `GET /profiles[/{name}]` | List or retrieve semantic profiles |
+| `GET /deployments[/{name}]` | List or retrieve deployment functions |
+| `GET /<aggregator-id>` | Describe an aggregator instance |
+| `GET, POST /<aggregator-id>/services` | List or create services |
+| `GET, HEAD, DELETE /<aggregator-id>/services/<name>` | Inspect or delete a service |
+
+Service descriptions advertise resolved dataset distribution URLs. Clients
+should follow those `dcat:accessURL` or `dcat:downloadURL` values instead of
+constructing output URLs.
+
+## Documentation
+
+- [Local development and deployment](docs/local-setup.md)
+- [Helm chart reference](aggregator-platform/README.md)
+- [Defining deployable services](docs/creating-services.md)
+- [Deployment definitions and profiles](docs/deployment-definitions.md)
+- [Registering aggregators](docs/deploying-aggregators.md)
+- [Deploying and accessing services](docs/deploying-services.md)
+- [PACSOI example](docs/pacsoi-example.md)
+- [CLI reference](cli/README.md)
+- [UMA policies](docs/uma-policies.md)
+- [Slices cluster access](slices/docs/kubectl.md)
+
+The CSS and KSS documents describe identity-provider-specific setup and are
+only needed when using those environments.
+
+## Common commands
+
+```bash
+# Cluster
+make kind-init
+make kind-start
+make kind-stop
+make kind-delete
+
+# Images
+make containers-build
+make containers-load
+make containers-all CONTAINER=fetch
+
+# Deploy or remove
+make deploy CONFIG=my-values.yaml
+make undeploy
+make kind-deploy
+make kind-undeploy
+make slices-deploy
+make slices-undeploy
+
+# Tests
 make unit-test
+make integration-test
 ```
 
-### CI/CD
-
-The GitHub Actions workflow automatically:
-1. Creates a test cluster
-2. Builds and loads containers
-3. Deploys Traefik and the aggregator
-4. Runs the full test suite
-5. Cleans up the test cluster
-
-## Troubleshooting
-
-### Cluster Issues
-
-```bash
-# Recreate cluster
-make clean
-make init
-make deploy
-```
-
-### Container Build Failures
-
-```bash
-# Build specific container with verbose output
-docker build containers/aggregator-server -t aggregator-server:latest
-
-# Check logs
-docker logs <container-id>
-```
-
-## Contributing
-
-Integration tests run automatically on all pushes and pull requests.
-Ensure tests pass before merging.
-
-## License
-
-See LICENSE file for details.
+Automated tests run on Linux for every push and pull request.

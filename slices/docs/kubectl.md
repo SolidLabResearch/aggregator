@@ -100,7 +100,7 @@ tunnel:
 
 This forwards local port `16443` directly to the internal API, verifies the API
 certificate against its `193.191.169.51` subject alternative name, deploys the
-Slices configuration plus all service and FnO overlays, waits for the
+Slices configuration plus all profile and deployment-function values, waits for the
 Aggregator Server rollout, and closes the tunnel on exit.
 
 Environment overrides:

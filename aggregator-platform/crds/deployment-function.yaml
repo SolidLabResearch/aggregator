@@ -1,0 +1,183 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: deploymentfunctions.aggregator.example.org
+spec:
+  group: aggregator.example.org
+  scope: Namespaced
+  names:
+    plural: deploymentfunctions
+    singular: deploymentfunction
+    kind: DeploymentFunction
+    shortNames: [deployfn]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [function, orchestration]
+              properties:
+                prefixes:
+                  type: object
+                  additionalProperties:
+                    type: string
+                    format: uri
+                function:
+                  type: object
+                  required: [expects, returns]
+                  properties:
+                    title: {type: string}
+                    description: {type: string}
+                    expects:
+                      type: array
+                      items:
+                        type: object
+                        required: [name, predicate, type, required]
+                        properties:
+                          name: {type: string, minLength: 1}
+                          predicate: {type: string, minLength: 1}
+                          type: {type: string, minLength: 1}
+                          required: {type: boolean}
+                          title: {type: string}
+                          description: {type: string}
+                          extraProperties:
+                            type: object
+                            additionalProperties: {type: string}
+                    returns:
+                      type: object
+                      required: [name, predicate]
+                      properties:
+                        name: {type: string, minLength: 1}
+                        predicate: {type: string, minLength: 1}
+                        title: {type: string}
+                        description: {type: string}
+                        extraProperties:
+                          type: object
+                          additionalProperties: {type: string}
+                    extraProperties:
+                      type: object
+                      additionalProperties: {type: string}
+                profileRef:
+                  type: object
+                  required: [name]
+                  properties:
+                    name: {type: string, minLength: 1}
+                interface:
+                  type: object
+                  properties:
+                    title: {type: string}
+                    description: {type: string}
+                    extraProperties:
+                      type: object
+                      additionalProperties: {type: string}
+                    endpoints:
+                      type: object
+                      additionalProperties:
+                        type: object
+                        required: [path, methods]
+                        properties:
+                          path: {type: string, pattern: "^/.*"}
+                          methods:
+                            type: array
+                            minItems: 1
+                            items:
+                              type: string
+                              enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]
+                          title: {type: string}
+                          description: {type: string}
+                    datasets:
+                      type: object
+                      additionalProperties:
+                        type: object
+                        properties:
+                          title: {type: string}
+                          description: {type: string}
+                          extraProperties:
+                            type: object
+                            additionalProperties: {type: string}
+                          distributions:
+                            type: object
+                            additionalProperties:
+                              type: object
+                              required: [path, urlType]
+                              properties:
+                                path: {type: string, pattern: "^/.*"}
+                                urlType:
+                                  type: string
+                                  enum: [accessURL, downloadURL]
+                                mediaType: {type: string}
+                                format: {type: string}
+                                title: {type: string}
+                                description: {type: string}
+                                extraProperties:
+                                  type: object
+                                  additionalProperties: {type: string}
+                orchestration:
+                  type: object
+                  required: [resources]
+                  properties:
+                    resources:
+                      type: array
+                      minItems: 1
+                      items:
+                        type: object
+                        required: [id, manifest]
+                        properties:
+                          id:
+                            type: string
+                            pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+                          manifest:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
+                    inputBindings:
+                      type: array
+                      items:
+                        type: object
+                        required: [parameter, targets]
+                        properties:
+                          parameter: {type: string, minLength: 1}
+                          targets:
+                            type: array
+                            minItems: 1
+                            items:
+                              type: object
+                              required: [resource, container, env]
+                              properties:
+                                resource: {type: string, minLength: 1}
+                                container: {type: string, minLength: 1}
+                                env:
+                                  type: string
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+                    routeBindings:
+                      type: object
+                      properties:
+                        endpoints:
+                          type: object
+                          additionalProperties:
+                            type: object
+                            required: [resource, container, port]
+                            properties:
+                              resource: {type: string, minLength: 1}
+                              container: {type: string, minLength: 1}
+                              port: {type: string, minLength: 1}
+                              internalPath: {type: string, pattern: "^/.*"}
+                        distributions:
+                          type: object
+                          additionalProperties:
+                            type: object
+                            additionalProperties:
+                              type: object
+                              required: [resource, container, port]
+                              properties:
+                                resource: {type: string, minLength: 1}
+                                container: {type: string, minLength: 1}
+                                port: {type: string, minLength: 1}
+                                internalPath: {type: string, pattern: "^/.*"}
+              x-kubernetes-validations:
+                - rule: "!(has(self.profileRef) && has(self.interface))"
+                  message: profileRef and interface are mutually exclusive.

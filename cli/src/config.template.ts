@@ -2,7 +2,7 @@ export interface ServiceConfig {
   name: string;
   deploymentFunction: string;
   params: Record<string, string>;
-  datasets: Record<string, string>;
+  datasets: Record<string, Record<string, string>>;
 }
 
 export interface AggregatorConfig {

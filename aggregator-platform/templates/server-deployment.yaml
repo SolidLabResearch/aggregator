@@ -28,7 +28,10 @@ spec:
           image: "{{ .Values.server.image.repository }}:{{ .Values.server.image.tag }}"
           imagePullPolicy: {{ .Values.server.image.pullPolicy }}
           ports:
-            - containerPort: 5000
+            - name: public
+              containerPort: 5000
+            - name: internal
+              containerPort: 5001
           envFrom:
             - configMapRef:
                 name: server-config

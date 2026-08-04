@@ -10,8 +10,8 @@ spec:
   deployment_catalog: /deployments
   registration: /registration
 
-fnoDescriptions: {}
-serviceConfigurations: {}
+profiles: {}
+deploymentFunctions: {}
 
 server:
   replicaCount: 1

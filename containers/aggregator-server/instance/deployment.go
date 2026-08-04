@@ -179,6 +179,7 @@ func ensureDeployment(
 								{Name: "AS_URL", Value: asURL},
 								{Name: "DEPLOYMENT_CATALOG", Value: model.DeploymentCatalog},
 								{Name: "SERVICE_COLLECTION", Value: model.ServiceCollection},
+								{Name: "AGGREGATOR_SERVER_INTERNAL_URL", Value: "http://aggregator-server-svc:5001"},
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{

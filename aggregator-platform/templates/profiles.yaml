@@ -1,0 +1,10 @@
+{{- range $name, $profile := .Values.profiles }}
+---
+apiVersion: aggregator.example.org/v1alpha1
+kind: Profile
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+{{ toYaml $profile | indent 2 }}
+{{- end }}

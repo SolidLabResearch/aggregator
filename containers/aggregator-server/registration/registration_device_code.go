@@ -378,6 +378,10 @@ func processDeviceCodeFlow(session *DeviceSession, oidcConfig *model.OIDCConfig)
 				"user_id":              userID,
 				"authorization_server": session.AuthorizationServer,
 			}).Error("Failed to deploy aggregator instance")
+			if tokenErr := deleteTokens(session.AggregatorID); tokenErr != nil {
+				log.WithError(tokenErr).WithField("aggregator_id", session.AggregatorID).
+					Error("Failed to remove tokens after aggregator deployment failure")
+			}
 			setSessionError(session, fmt.Sprintf("Failed to deploy aggregator: %v", err))
 			return
 		}

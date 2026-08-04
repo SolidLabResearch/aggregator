@@ -14,6 +14,7 @@ type AggregatorServerDescription struct {
 	Version                    string   `json:"version"`
 	ClientIdentifier           string   `json:"client_identifier,omitempty"`
 	DeploymentCatalog          string   `json:"deployment_catalog"`
+	ProfileCatalog             string   `json:"profile_catalog"`
 }
 
 func InitServerDescription(mux *http.ServeMux) {
@@ -40,6 +41,7 @@ func handleServerDescription(w http.ResponseWriter, r *http.Request) {
 		Version:                    "1.0.0",
 		ClientIdentifier:           model.SolidClientId,
 		DeploymentCatalog:          fmt.Sprintf("%s%s", model.ExternalURL(), model.DeploymentCatalog),
+		ProfileCatalog:             fmt.Sprintf("%s/profiles", model.ExternalURL()),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

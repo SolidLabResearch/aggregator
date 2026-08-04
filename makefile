@@ -13,13 +13,14 @@
 
 CONFIG_DIR  ?= ./config
 CONFIG_FILE ?= local.yaml
-SERVICE_DIR := $(CONFIG_DIR)/services
-FNO_DIR     := $(CONFIG_DIR)/fno
-SERVICE_FILES := $(wildcard $(SERVICE_DIR)/*.yaml)
-FNO_FILES     := $(wildcard $(FNO_DIR)/*.yaml)
-VALUES_FLAGS  := -f $(CONFIG_DIR)/$(CONFIG) \
-                 $(foreach f,$(SERVICE_FILES),-f $(f)) \
-                 $(foreach f,$(FNO_FILES),-f $(f))
+CONFIG      ?= $(CONFIG_FILE)
+PROFILE_DIR := $(CONFIG_DIR)/profiles
+DEPLOYMENT_FUNCTION_DIR := $(CONFIG_DIR)/deployment-functions
+PROFILE_FILES := $(wildcard $(PROFILE_DIR)/*.yaml)
+DEPLOYMENT_FUNCTION_FILES := $(wildcard $(DEPLOYMENT_FUNCTION_DIR)/*.yaml)
+DEFINITION_VALUES_FLAGS := $(foreach f,$(PROFILE_FILES),-f $(f)) \
+                           $(foreach f,$(DEPLOYMENT_FUNCTION_FILES),-f $(f))
+VALUES_FLAGS := -f $(CONFIG_DIR)/$(CONFIG) $(DEFINITION_VALUES_FLAGS)
 
 GITHUB_ORG=knows-aggregator
 GITHUB_PROJECT=k8s-aggregator
@@ -31,6 +32,7 @@ SLICES_CONTEXT ?= admin@aggregator-cluster
 
 deploy:
 	@echo "📄 Deploying aggregator application..."
+	@kubectl apply -f ./aggregator-platform/crds
 	@helm upgrade --install aggregator-platform ./aggregator-platform \
 		$(VALUES_FLAGS) \
 		-n aggregator-platform --create-namespace
@@ -43,10 +45,10 @@ kind-deploy:
 
 slices-deploy:
 	@echo "📄 Deploying aggregator application to Slices..."
+	@kubectl --context $(SLICES_CONTEXT) apply -f ./aggregator-platform/crds
 	@helm upgrade --install aggregator-platform ./aggregator-platform \
 		-f $(CONFIG_DIR)/slices.yaml \
-		$(foreach f,$(SERVICE_FILES),-f $(f)) \
-		$(foreach f,$(FNO_FILES),-f $(f)) \
+		$(DEFINITION_VALUES_FLAGS) \
 		--kube-context $(SLICES_CONTEXT) \
 		-n aggregator-platform --create-namespace
 	@kubectl --context $(SLICES_CONTEXT) rollout status \
@@ -64,8 +66,13 @@ undeploy:
 	@echo "🧹 Stopping aggregator deployment..."
 	@if kind get clusters 2>/dev/null | grep -q "aggregator"; then \
 		kubectl config use-context kind-aggregator || true; \
+		echo "Waiting for ingress-uma cleanup while token-service is available..."; \
+		kubectl delete deployment ingress-uma -n aggregator-platform \
+			--ignore-not-found --cascade=foreground --wait=true --timeout=45s || true; \
 		helm uninstall aggregator-platform -n aggregator-platform || true; \
 		kubectl delete namespace aggregator-platform --ignore-not-found || true; \
+		kubectl delete crd profiles.aggregator.example.org --ignore-not-found || true; \
+		kubectl delete crd deploymentfunctions.aggregator.example.org --ignore-not-found || true; \
 		kubectl delete crd serviceconfigurations.aggregator.example.org --ignore-not-found || true; \
 		kubectl delete crd fnodescriptions.aggregator.example.org --ignore-not-found || true; \
 	else \
@@ -78,11 +85,19 @@ kind-undeploy:
 
 slices-undeploy:
 	@echo "🧹 Stopping aggregator deployment on Slices..."
+	@# ingress-uma needs token-service during UMA resource and credential cleanup.
+	@kubectl --context $(SLICES_CONTEXT) delete deployment ingress-uma \
+		-n aggregator-platform --ignore-not-found --cascade=foreground --wait=true --timeout=45s || true
 	@helm uninstall aggregator-platform \
 		--kube-context $(SLICES_CONTEXT) \
 		-n aggregator-platform --ignore-not-found
 	@kubectl --context $(SLICES_CONTEXT) delete namespace \
 		aggregator-platform --ignore-not-found
+	@kubectl --context $(SLICES_CONTEXT) delete crd \
+		profiles.aggregator.example.org --ignore-not-found
+	@kubectl --context $(SLICES_CONTEXT) delete crd \
+		deploymentfunctions.aggregator.example.org --ignore-not-found
+	@# Remove CRDs left by releases predating DeploymentFunction/Profile.
 	@kubectl --context $(SLICES_CONTEXT) delete crd \
 		serviceconfigurations.aggregator.example.org --ignore-not-found
 	@kubectl --context $(SLICES_CONTEXT) delete crd \

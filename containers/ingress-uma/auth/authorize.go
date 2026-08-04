@@ -45,7 +45,9 @@ func HandleAuthorizationRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resourceIndexMu.RLock()
 	resData, ok := resourceIndex[payload.ResourceID]
+	resourceIndexMu.RUnlock()
 	if !ok {
 		logrus.WithFields(logrus.Fields{"resource": payload.ResourceID}).Warn("No resource found")
 		http.Error(w, "No resource found", http.StatusUnauthorized)

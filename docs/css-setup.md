@@ -33,13 +33,14 @@ and in packages/uma/package.json:
 
 Then you can follow the instructions in their readme:
 1. Install the [eye reasoner](https://github.com/eyereasoner/eye/) and have `eye` available on your path.
-2. Ensure that you are using Node.js 20 or higher, e.g. by running `nvm use`. (see [.nvmrc](./.nvmrc))
+2. Ensure that you are using Node.js 20 or higher.
 3. Enable Node.js Corepack with `corepack enable`.
 4. Run `yarn install` in the project root.
 5. Run `yarn build` in the project root.
 
 ## Start Authoriation server
-Make sure `uma.local` host is setup corectly acording to `docs/name-resolving.md`.
+Make sure `uma.local` resolves on the host and in the cluster as described in
+the [local setup guide](local-setup.md#local-name-resolution).
 In the `user-managed-access` repo go to `packages/uma` and start the server.
 ```bash
 cd packages/uma
@@ -47,7 +48,8 @@ node bin/main.js -p 4000 -b "http://uma.local:4000/uma"
 ```
 
 ## Start CSS
-Make sure `rs.local` host is setup corectly acording to `docs/name-resolving.md`.
+Make sure `rs.local` resolves on the host and in the cluster as described in
+the [local setup guide](local-setup.md#local-name-resolution).
 If you start the server with `--seedConfig ./config/seed.json` note that the authorization servers in this seed file (`./packages/css/config/seed.json`) need to be updated, so:
 ```json
 "authz": {

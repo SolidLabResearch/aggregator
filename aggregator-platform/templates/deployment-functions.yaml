@@ -1,0 +1,10 @@
+{{- range $name, $definition := .Values.deploymentFunctions }}
+---
+apiVersion: aggregator.example.org/v1alpha1
+kind: DeploymentFunction
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+{{ toYaml $definition | indent 2 }}
+{{- end }}

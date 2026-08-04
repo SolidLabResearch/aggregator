@@ -16,7 +16,7 @@ http://{{ .Values.external.host }}
 {{- end }}
 
 ----------------------------------------------------------
-Manage transformations:
+Browse deployment functions:
 
 {{- if .Values.tls.enabled }}
 - https://{{ .Values.external.host }}{{ .Values.spec.deployment_catalog }}

@@ -9,9 +9,7 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-func waitForIngressUMA() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
+func waitForIngressUMA(ctx context.Context) error {
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		return err
@@ -23,7 +21,7 @@ func waitForIngressUMA() error {
 	}
 
 	for {
-		pods, err := clientset.CoreV1().Pods("aggregator-platform").List(ctx, metav1.ListOptions{
+		pods, err := clientset.CoreV1().Pods(Namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: "app.kubernetes.io/component=ingress-uma",
 		})
 		if err != nil {
@@ -41,7 +39,11 @@ func waitForIngressUMA() error {
 			break
 		}
 
-		time.Sleep(1 * time.Second)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
 	}
 
 	return nil

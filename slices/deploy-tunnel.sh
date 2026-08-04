@@ -49,7 +49,8 @@ fi
 API_SERVER="https://127.0.0.1:${SLICES_LOCAL_PORT}"
 VALUE_ARGS=(-f config/slices.yaml)
 
-for value_file in config/services/*.yaml config/fno/*.yaml; do
+shopt -s nullglob
+for value_file in config/profiles/*.yaml config/deployment-functions/*.yaml; do
   VALUE_ARGS+=(-f "${value_file}")
 done
 
@@ -61,6 +62,12 @@ kubectl \
   get --raw=/version >/dev/null
 
 echo "Deploying Aggregator Platform through the SSH tunnel..."
+kubectl \
+  --context "${SLICES_CONTEXT}" \
+  --server "${API_SERVER}" \
+  --tls-server-name "${SLICES_API_TLS_NAME}" \
+  apply -f ./aggregator-platform/crds
+
 helm upgrade --install aggregator-platform ./aggregator-platform \
   "${VALUE_ARGS[@]}" \
   --kube-context "${SLICES_CONTEXT}" \

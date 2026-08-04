@@ -1,0 +1,58 @@
+deploymentFunctions:
+  fetch-unprofiled:
+    function:
+      title: Deploy unprofiled fetch service
+      expects:
+        - name: url
+          predicate: url
+          type: xsd:anyURI
+          required: true
+      returns:
+        name: deployedService
+        predicate: service
+    interface:
+      title: Unprofiled fetch service
+      datasets:
+        fetched-content:
+          title: Fetched content
+          distributions:
+            content:
+              path: /content
+              urlType: accessURL
+    orchestration:
+      resources:
+        - id: workload
+          manifest:
+            apiVersion: apps/v1
+            kind: Deployment
+            spec:
+              replicas: 1
+              selector:
+                matchLabels:
+                  app: fetch
+              template:
+                metadata:
+                  labels:
+                    app: fetch
+                spec:
+                  containers:
+                    - name: fetch
+                      image: fetch
+                      imagePullPolicy: Never
+                      ports:
+                        - name: http
+                          containerPort: 8080
+      inputBindings:
+        - parameter: url
+          targets:
+            - resource: workload
+              container: fetch
+              env: GET_URL
+      routeBindings:
+        distributions:
+          fetched-content:
+            content:
+              resource: workload
+              container: fetch
+              port: http
+              internalPath: /

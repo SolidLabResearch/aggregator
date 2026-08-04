@@ -1,96 +1,134 @@
-# Pacsoi Demo
+# PACSOI example
 
-The following demo will help you set up the Pacsoi Demo. This example assumes you have a running KSS and UMA Server (see [kss-setup](kss-setup.md) for a local setup guide).
+This example deploys the PACSOI service in `containers/pacsoi-service`. The
+service watches patient weight and procedure slices and exposes a monthly weight
+distribution as CSV.
 
-This demo will assume the following configuration:
+## Prerequisites
 
-  - Authentication:
-    - **keycloak realm**: `http://localhost:8280/realms/quarkus`
-    - **aggregator client ID**: `aggregator-server`
-    - **aggregator client secret**: `01234`
-    - **demo client ID**: `demo-client`
-    - **demo client secret**: `56789`
-    - Users:
-      - Patient:
-        - **username**: patient
-        - **password**: patient
-        - **user ID**: `00-00-00`
-      - Doctor:
-        - **username**: doctor
-        - **password**: doctor
-        - **user ID**: `11-11-11`
-  - KSS:
-    - **server URL**: `http://localhost:8080/`
-    - Pods:
-      - Patient pod:
-        - **pod ID**: `patient`
-        - **pod URL**: `http://localhost:8080/patient`
-      - Doctor pod:
-        - **pod ID**: `doctor`
-        - **pod URL**: `http://localhost:8080/doctor`
-  - Aggregator cluster:
-    - ingress class name: `aggregator-traefik`
-    - cluster http port: `5080`
-    - cluster https port: `5443`
-    - host: `aggregator.local`
+You need:
 
-This demo assumes that the following slices with data are available:
+- a running Aggregator Platform with the PACSOI definition files enabled;
+- a Kvasir Solid Server (KSS) and UMA server configured as described in
+  [KSS setup](kss-setup.md);
+- a doctor pod containing a slice that lists patient pod URLs; and
+- patient pods containing weight-observation and procedure slices.
 
-  - Doctor Pod:
-    - **PatientSlice**: A slice containing a list of patient pods that the doctor must manage.
-  - Patient Pod:
-    - **MetadataSlice**: A slice with the patient's metadata: age, birth, gender
-    - **ProcedureSlice**: A slice with the patient's her procedures
-    - **WeightObservationsSlice**: A slice with weight observations of the patient
-    - **OxfordQuestionnaireResponseSlice**: A slice with questionnare responses of the patient
-  
-## Set Up the Aggregator Server
+The example below uses:
 
-## Set Up the Doctor Aggregator
+| Setting | Value |
+| --- | --- |
+| Aggregator host | `https://aggregator.local:5443` |
+| Doctor source slice | `http://localhost:8080/doctor/PatientSlice` |
+| Weight slice name | `WeightObservationsSlice` |
+| Procedure slice name | `ProcedureSlice` |
 
-### Register the Doctor
+The Aggregator's egress UMA proxy must be authorized to read the source and
+patient slices.
 
-A doctor must have an aggregator to monitor all its patients. Send the following request to the aggregator 
-**registration endpoint**.
+## Install the definitions
+
+The PACSOI configuration consists of:
+
+- `config/profiles/pacsoi.yaml`, which describes the service and its CSV
+  dataset distribution; and
+- `config/deployment-functions/pacsoi.yaml`, which describes the workload,
+  inputs, environment bindings, and route binding.
+
+The standard deployment commands load both files automatically:
+
+```bash
+make containers-all CONTAINER=pacsoi-service
+make kind-deploy
+```
+
+Confirm that the public documents are available:
 
 ```http
-POST /registration
-Host: https://aggregator.local:5443
+GET https://aggregator.local:5443/profiles/pacsoi
+Accept: text/turtle
+
+GET https://aggregator.local:5443/deployments/pacsoi
+Accept: text/turtle
+```
+
+## Register the doctor's aggregator
+
+Start device-code registration:
+
+```http
+POST https://aggregator.local:5443/registration
 Content-Type: application/json
 
 {
-  registration_type: "device_code",
-  authorization_server: "http://localhost:4000/uma",
+  "registration_type": "device_code",
+  "authorization_server": "http://localhost:4000/uma"
 }
 ```
 
-The server will initiate a [Device Code flow](https://auth0.com/docs/get-started/authentication-and-authorization-flow/device-authorization-flow#device-flow). Go to the verification URI, enter the code and log in using the doctor credentials. Use the provided *state* to poll registration and setup status. If completed you will recieve the location of the doctor's aggregator.
-
-Let's assume the aggregator was created at `https://aggregator.local:5443/doc-aggregator`
-
-### Set up Aggregator Service
-
-Now set up the aggregator service:
+Open the returned `verification_uri_complete` and authenticate as the doctor.
+Poll the same endpoint with the returned state until registration completes:
 
 ```http
-POST /doc-aggregator/services
-Host: https://aggregator.local:5443
+POST https://aggregator.local:5443/registration
+Content-Type: application/json
+
+{
+  "registration_type": "device_code",
+  "state": "<state>"
+}
+```
+
+The successful response contains the aggregator URL. The remaining examples
+use `https://aggregator.local:5443/doc-aggregator`.
+
+## Deploy PACSOI
+
+Create a service through the aggregator's service collection. The predicates
+come from the published PACSOI deployment document.
+
+```http
+POST https://aggregator.local:5443/doc-aggregator/services
 Content-Type: text/turtle
 
 @prefix aggr: <https://w3id.org/aggregator#> .
-@prefix deploy: <https://aggregator.local:5443/deployments#> .
+@prefix pacsoi: <https://aggregator.local:5443/deployments/pacsoi#> .
 
-<https://aggregator.local:5443/doc-aggregator/Pacsoi-Service> 
+<https://aggregator.local:5443/doc-aggregator/services/pacsoi>
   a aggr:ServiceRequest ;
-  aggr:deploymentFunction deploy:Pacsoi ;
-  deploy:sources <http://localhost:8080/doctor/PatientSlice> ;
-  deploy:weight-slice "WeightObservationsSlice" ;
-  deploy:procedure-slice "ProcedureSlice" .
+  aggr:deploymentFunction <https://aggregator.local:5443/deployments/pacsoi> ;
+  pacsoi:sources <http://localhost:8080/doctor/PatientSlice> ;
+  pacsoi:weight-slice "WeightObservationsSlice" ;
+  pacsoi:procedure-slice "ProcedureSlice" .
 ```
 
-### Access Aggregator Service
+The equivalent CLI command is:
 
-Now you can get the service results from the following endpoints:
+```bash
+agg create-service \
+  --name pacsoi \
+  --deployment-function pacsoi \
+  --param sources=http://localhost:8080/doctor/PatientSlice \
+  --param weight-slice=WeightObservationsSlice \
+  --param procedure-slice=ProcedureSlice
+```
 
-- weight distributions: `https://aggregator.local:5443/doc-aggregator/Pacsoi-Service/weight-dist`
-- oxford scores: `https://aggregator.local:5443/doc-aggregator/Pacsoi-Service/oxford`
+## Retrieve the result
+
+Inspect the service description and follow its advertised
+`dcat:downloadURL`:
+
+```http
+GET https://aggregator.local:5443/doc-aggregator/services/pacsoi
+Accept: text/turtle
+```
+
+With the CLI, discover and fetch the distribution without constructing its URL:
+
+```bash
+agg list-outputs --svc pacsoi
+agg get-output weight-distribution/csv --svc pacsoi
+```
+
+The CSV columns are `month`, `avg_weight`, `stdev`, `q25`, `q75`, and `count`.
+The running container currently exposes this weight distribution only.

@@ -2,8 +2,10 @@ package config
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +35,7 @@ func TestFetchAccessTokenExpiry(t *testing.T) {
 
 func TestHandleAggregatorDescription(t *testing.T) {
 	origClientset := model.Clientset
+	origHTTPClient := model.HttpClient
 	origProtocol := model.Protocol
 	origExternalHost := model.ExternalHost
 	origExternalHTTPPort := model.ExternalHttpPort
@@ -42,6 +45,7 @@ func TestHandleAggregatorDescription(t *testing.T) {
 	origServiceCollection := model.ServiceCollection
 	t.Cleanup(func() {
 		model.Clientset = origClientset
+		model.HttpClient = origHTTPClient
 		model.Protocol = origProtocol
 		model.ExternalHost = origExternalHost
 		model.ExternalHttpPort = origExternalHTTPPort
@@ -61,6 +65,14 @@ func TestHandleAggregatorDescription(t *testing.T) {
 			"access_token_expiry": tokenExpiry,
 		},
 	})
+	model.HttpClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"login_status":true,"token_expiry":"` + tokenExpiry + `"}`)),
+			Request:    request,
+		}, nil
+	})}
 
 	model.Protocol = "http"
 	model.ExternalHost = "aggregator.test"
@@ -88,7 +100,7 @@ func TestHandleAggregatorDescription(t *testing.T) {
 	if desc.ID != "http://aggregator.test/config/test-ns" {
 		t.Fatalf("unexpected id: %s", desc.ID)
 	}
-	if desc.DeploymentCatalog != "http://aggregator.test/config/test-ns/deployments" {
+	if desc.DeploymentCatalog != "http://aggregator.test/deployments" {
 		t.Fatalf("unexpected deployment_catalog: %s", desc.DeploymentCatalog)
 	}
 	if desc.ServiceCollection != "http://aggregator.test/config/test-ns/services" {
@@ -100,6 +112,12 @@ func TestHandleAggregatorDescription(t *testing.T) {
 	if _, err := time.Parse(time.RFC3339, desc.CreatedAt); err != nil {
 		t.Fatalf("created_at not RFC3339: %v", err)
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
 }
 
 func TestHandleAggregatorDescription_MethodNotAllowed(t *testing.T) {

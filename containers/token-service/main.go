@@ -77,20 +77,35 @@ func main() {
 	http.HandleFunc("/loginstatus", authorizedHandler)
 	http.HandleFunc("/healthz", healthHandler)
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	signalContext, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
+	server := &http.Server{Addr: ":8080", Handler: nil}
 	go func() {
-		time.Sleep(10 * time.Second)
-		<-ctx.Done()
-		log.Info("SIGTERM/SIGINT received, starting shutdown procedure") // was log.Println
-		waitForIngressUMA()
+		log.Info("Listening on :8080")
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.WithError(err).Error("HTTP server exited")
+			stop()
+		}
 	}()
 
-	log.Info("Listening on :8080")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
-		log.WithError(err).Fatal("Server exited")
+	<-signalContext.Done()
+	log.Info("SIGTERM/SIGINT received, starting shutdown procedure")
+
+	// Keep serving tokens briefly while ingress-uma removes its registrations,
+	// but never consume the entire Kubernetes termination grace period.
+	waitContext, cancelWait := context.WithTimeout(context.Background(), 45*time.Second)
+	if err := waitForIngressUMA(waitContext); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		log.WithError(err).Warn("Failed while waiting for ingress-uma shutdown")
 	}
+	cancelWait()
+
+	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShutdown()
+	if err := server.Shutdown(shutdownContext); err != nil {
+		log.WithError(err).Warn("HTTP server did not shut down cleanly")
+	}
+	log.Info("Token service stopped")
 }
 
 func setupLogger() {

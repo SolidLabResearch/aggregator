@@ -13,5 +13,9 @@ spec:
     app.kubernetes.io/name: aggregator-server
     app.kubernetes.io/component: server
   ports:
-    - port: 5000
+    - name: public
+      port: 5000
       targetPort: 5000
+    - name: internal
+      port: 5001
+      targetPort: 5001

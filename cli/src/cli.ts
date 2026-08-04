@@ -65,8 +65,7 @@ program
   .command("create-service")
   .description("Create a service on the aggregator")
   .option("--name <name>", "Service name")
-  .option("--deployment-function <id>", "Deployment function ID")
-  .option("--dataset <kv>", "Dataset access path as id=path, repeatable", collect, [])
+  .option("--deployment-function <name>", "DeploymentFunction resource name")
   .option("--param <kv>", "Parameter predicate as key=value, repeatable", collect, [])
   .option("--agg <id>", "Aggregator ID to use instead of active")
   .action(async (opts) => {
@@ -74,9 +73,6 @@ program
     await main({
       name: opts.name,
       deploymentFunction: opts.deploymentFunction,
-      datasets: opts.dataset?.length
-        ? Object.fromEntries(opts.dataset.map(parseKeyValue))
-        : undefined,
       params:  opts.param?.length
         ? Object.fromEntries(opts.param.map(parseKeyValue))
         : undefined,
@@ -105,15 +101,23 @@ program
   });
 
 program
-  .command("get-dataset")
-  .alias("get-output")
-  .description("Fetch service dataset distributions")
-  .option("--datasets <datasets>", "Comma-separated subset of dataset IDs")
-  .option("--agg <id>",          "Aggregator ID to use instead of active")
-  .option("--svc <name>",        "Service name to use instead of active")
+  .command("list-outputs")
+  .description("List the available dataset distribution endpoints")
+  .option("--agg <id>",   "Aggregator ID to use instead of active")
+  .option("--svc <name>", "Service name to use instead of configured default")
   .action(async (opts) => {
+    const { main } = await import("./list-outputs.js");
+    await main({ agg: opts.agg, svc: opts.svc });
+  });
+
+program
+  .command("get-output <output>")
+  .description("Fetch one output by dataset/distribution ID")
+  .option("--agg <id>",   "Aggregator ID to use instead of active")
+  .option("--svc <name>", "Service name to use instead of configured default")
+  .action(async (output, opts) => {
     const { main } = await import("./get-output.js");
-    await main({ datasets: opts.datasets?.split(","), agg: opts.agg, svc: opts.svc });
+    await main({ output, agg: opts.agg, svc: opts.svc });
   });
 
 program

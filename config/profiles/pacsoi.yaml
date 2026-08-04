@@ -1,0 +1,26 @@
+profiles:
+  pacsoi:
+    serviceProfile:
+      title: PACSOI service
+      description: Computes an aggregate monthly weight distribution for patients after a procedure.
+      outputs:
+        weightDistribution:
+          predicate: weight-distribution
+          title: Weight distribution
+          datasetProfileRef:
+            dataset: weight-distribution
+      functions:
+        calculateWeightDistribution:
+          name: Calculate weight distribution
+          expects: []
+          returns: [weightDistribution]
+    datasetProfiles:
+      weight-distribution:
+        title: Weight distribution
+        description: Monthly aggregate patient weights relative to the procedure date.
+        distributions:
+          csv:
+            title: Weight distribution CSV
+            path: /w-dist
+            urlType: downloadURL
+            mediaType: text/csv
