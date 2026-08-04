@@ -14,6 +14,7 @@ import (
 
 var (
 	AggregatorID string
+	OIDCServer   string
 )
 
 func main() {
@@ -28,6 +29,7 @@ func main() {
 	if AggregatorID == "" {
 		logrus.Fatal("AGGREGATOR_ID is not set")
 	}
+	OIDCServer = os.Getenv("OIDC_SERVER")
 
 	_, err = getAccessToken()
 	if err != nil {

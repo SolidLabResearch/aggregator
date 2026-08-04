@@ -25,6 +25,12 @@ type TokenResponse struct {
 	ExpiresIn   int    `json:"expires_in,omitempty"`
 }
 
+type authenticateChallenge struct {
+	Scheme string
+	ASURI  string
+	Ticket string
+}
+
 // RequestWithUMA performs the UMA flow for a request to an external URL
 func RequestWithUMA(client *http.Client, r *http.Request) (*http.Response, error) {
 	logrus.WithFields(logrus.Fields{
@@ -83,6 +89,17 @@ func RequestWithUMA(client *http.Client, r *http.Request) (*http.Response, error
 	}
 
 	logrus.Debug("Parsing WWW-Authenticate header")
+	challenge := parseAuthenticateChallenge(wwwAuth)
+	if strings.EqualFold(challenge.Scheme, "Bearer") {
+		if !sameIssuer(challenge.ASURI, OIDCServer) {
+			return nil, errors.New("Bearer challenge authorization server does not match configured OIDC server")
+		}
+		logrus.Info("UMA is unavailable; retrying with aggregator OIDC bearer token")
+		return requestWithBearer(client, r, dest, bodyBytes)
+	}
+	if !strings.EqualFold(challenge.Scheme, "UMA") {
+		return nil, errors.New("unsupported WWW-Authenticate scheme")
+	}
 
 	tokenEndpoint, ticket, err := parseAuthenticateHeader(wwwAuth)
 	if err != nil {
@@ -181,6 +198,20 @@ func RequestWithUMA(client *http.Client, r *http.Request) (*http.Response, error
 	return finalResp, nil
 }
 
+func requestWithBearer(client *http.Client, original *http.Request, dest *url.URL, body []byte) (*http.Response, error) {
+	token, err := getAccessToken()
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(original.Method, dest.String(), bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header = original.Header.Clone()
+	req.Header.Set("Authorization", "Bearer "+token)
+	return client.Do(req)
+}
+
 func requestScheme(r *http.Request) string {
 	if r.URL != nil && r.URL.Scheme != "" {
 		return r.URL.Scheme
@@ -200,42 +231,55 @@ func requestHost(r *http.Request) string {
 
 // parseAuthenticateHeader parses the WWW-Authenticate header and fetches UMA config
 func parseAuthenticateHeader(wwwAuthHeader string) (tokenEndpoint string, ticket string, err error) {
-	// Remove "UMA " prefix
-	header := strings.TrimPrefix(wwwAuthHeader, "UMA ")
+	challenge := parseAuthenticateChallenge(wwwAuthHeader)
+	if !strings.EqualFold(challenge.Scheme, "UMA") || challenge.ASURI == "" || challenge.Ticket == "" {
+		return "", "", errors.New("WWW-Authenticate header missing UMA as_uri or ticket")
+	}
 
-	// Split key=value pairs
-	pairs := strings.Split(header, ", ")
-	params := map[string]string{}
-	for _, pair := range pairs {
+	config, err := getUMAConfig(challenge.ASURI)
+	if err != nil {
+		return "", "", err
+	}
+	if config.TokenEndpoint == "" {
+		return "", "", errors.New("UMA config missing token_endpoint")
+	}
+	return config.TokenEndpoint, challenge.Ticket, nil
+}
+
+func parseAuthenticateChallenge(header string) authenticateChallenge {
+	header = strings.TrimSpace(header)
+	challenge := authenticateChallenge{}
+	if space := strings.IndexAny(header, " \t"); space >= 0 {
+		challenge.Scheme = header[:space]
+		header = strings.TrimSpace(header[space+1:])
+	} else {
+		challenge.Scheme = header
+		return challenge
+	}
+
+	params := make(map[string]string)
+	for _, pair := range strings.Split(header, ",") {
 		kv := strings.SplitN(pair, "=", 2)
 		if len(kv) != 2 {
 			continue
 		}
-		key := kv[0]
-		value := strings.Trim(kv[1], `"`) // remove quotes
+		key := strings.ToLower(strings.TrimSpace(kv[0]))
+		value := strings.Trim(strings.TrimSpace(kv[1]), `"`)
 		params[key] = value
 	}
+	challenge.ASURI = params["as_uri"]
+	challenge.Ticket = params["ticket"]
+	return challenge
+}
 
-	asURI, ok1 := params["as_uri"]
-	ticket, ok2 := params["ticket"]
-	if !ok1 || !ok2 {
-		err = errors.New("WWW-Authenticate header missing as_uri or ticket")
-		return
-	}
-
-	// Fetch UMA server configuration from as_uri
-	config, err := getUMAConfig(asURI)
-	if err != nil {
-		return
-	}
-
-	return config.TokenEndpoint, ticket, nil
+func sameIssuer(a, b string) bool {
+	return a != "" && b != "" && strings.TrimRight(a, "/") == strings.TrimRight(b, "/")
 }
 
 // getUMAConfig fetches UMA server config (token endpoint) from its .well-known endpoint
 func getUMAConfig(asURI string) (UMAConfig, error) {
 	// Usually the UMA config is at /.well-known/uma2-configuration
-	resp, err := model.HttpClient.Get(asURI + "/.well-known/uma2-configuration")
+	resp, err := model.HttpClient.Get(strings.TrimRight(asURI, "/") + "/.well-known/uma2-configuration")
 	if err != nil {
 		return UMAConfig{}, err
 	}
