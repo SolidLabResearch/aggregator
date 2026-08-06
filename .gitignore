@@ -21,4 +21,5 @@ slices/docs/*
 # Keep production deployment configuration private, but track reusable tooling
 # and documentation.
 config/*.yaml
+!config/example.yaml
 

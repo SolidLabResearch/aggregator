@@ -1,0 +1,19 @@
+external:
+  host: aggregator.local
+  httpPort: 5080
+  httpsPort: 5443
+
+auth:
+  oidc:
+    clientId: <client-id>
+    server: <server-url>
+    clientSecret: <client-secret>
+  allowedRegistrationTypes:
+    - device_code
+
+ingressClassName: aggregator-traefik
+
+tls:
+  enabled: false
+
+loglevel: debug
