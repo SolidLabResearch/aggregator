@@ -21,7 +21,9 @@ The example below uses:
 | Aggregator host | `https://aggregator.local:5443` |
 | Doctor source slice | `http://localhost:8080/doctor/PatientSlice` |
 | Weight slice name | `WeightObservationsSlice` |
-| Procedure slice name | `ProcedureSlice` |
+| Oxford slice name | `OxfordResponseSlice` |
+| Bariatric Procedure slice name | `BariatricProcedureSlice` |
+| Knee Procedure slice name | `KneeProcedureSlice` |
 
 The Aggregator's egress UMA proxy must be authorized to read the source and
 patient slices.
@@ -99,7 +101,9 @@ Content-Type: text/turtle
   aggr:deploymentFunction <https://aggregator.local:5443/deployments/pacsoi> ;
   pacsoi:sources <http://localhost:8080/doctor/PatientSlice> ;
   pacsoi:weight-slice "WeightObservationsSlice" ;
-  pacsoi:procedure-slice "ProcedureSlice" .
+  pacsoi:oxford-slice "OxfordResponseSlice" ;
+  pacsoi:bar-procedure-slice "BariatricProcedureSlice" ;
+  pacsoi:knee-procedure-slice "KneeProcedureSlice" .
 ```
 
 The equivalent CLI command is:
@@ -110,7 +114,9 @@ agg create-service \
   --deployment-function pacsoi \
   --param sources=http://localhost:8080/doctor/PatientSlice \
   --param weight-slice=WeightObservationsSlice \
-  --param procedure-slice=ProcedureSlice
+  --param oxford-slice=OxfordResponseSlice \
+  --param bar-procedure-slice=BariatricProcedureSlice \
+  --param knee-procedure-slice=KneeProcedureSlice
 ```
 
 ## Retrieve the result
@@ -123,12 +129,13 @@ GET https://aggregator.local:5443/doc-aggregator/services/pacsoi
 Accept: text/turtle
 ```
 
+The output enpoints will be at:
+- `https://aggregator.local:5443/doc-aggregator/services/pacsoi/w-dist` for the weight distribution; and
+- `https://aggregator.local:5443/doc-aggregator/services/pacsoi/o-dist` for the oxford distribution.
+
 With the CLI, discover and fetch the distribution without constructing its URL:
 
 ```bash
 agg list-outputs --svc pacsoi
 agg get-output weight-distribution/csv --svc pacsoi
 ```
-
-The CSV columns are `month`, `avg_weight`, `stdev`, `q25`, `q75`, and `count`.
-The running container currently exposes this weight distribution only.

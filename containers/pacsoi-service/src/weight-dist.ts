@@ -57,11 +57,6 @@ export class WeightDistribution {
       return;
     }
 
-    if (timestamp < patient.procedureTs) {
-      console.log(`[addWeightObservation] Observation ${value} at ${timestamp.toISOString()} ignored, before procedure for patient ${patientID}`);
-      return;
-    }
-
     const month = this.monthsSince(patient.procedureTs, timestamp);
     const obs = { value, timestamp };
     patient.observations.push(obs);

@@ -2,18 +2,29 @@ profiles:
   pacsoi:
     serviceProfile:
       title: PACSOI service
-      description: Computes an aggregate monthly weight distribution for patients after a procedure.
+      description: | 
+        Computes an aggregate monthly weight distribution for patients after a bariatric procedure 
+        and monthly oxford score distribution for patients after a knee procedure.
       outputs:
         weightDistribution:
           predicate: weight-distribution
           title: Weight distribution
           datasetProfileRef:
             dataset: weight-distribution
+        oxfordDistribution:
+          predicate: oxford-distribution
+          title: Oxford distribution
+          datasetProfileRef:
+            dataset: oxford-distribution
       functions:
         calculateWeightDistribution:
           name: Calculate weight distribution
           expects: []
           returns: [weightDistribution]
+        calculateOxfordDistribution:
+          name: Calculate oxford distribution
+          expects: []
+          returns: [oxfordDistribution]
     datasetProfiles:
       weight-distribution:
         title: Weight distribution
@@ -22,5 +33,14 @@ profiles:
           csv:
             title: Weight distribution CSV
             path: /w-dist
+            urlType: downloadURL
+            mediaType: text/csv
+      oxford-distribution:
+        title: Oxford distribution
+        description: Monthly aggregate patient oxford scores relative to the procedure date.
+        distributions:
+          csv:
+            title: Oxford distribution CSV
+            path: /o-dist
             urlType: downloadURL
             mediaType: text/csv

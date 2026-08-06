@@ -108,7 +108,9 @@ slices-undeploy:
 # Local cluster setup
 # ------------------------
 
-kind-init: kind-start containers-all kind-start-traefik
+TARGET ?= all
+
+kind-init: kind-start containers-$(TARGET) kind-start-traefik
 	@echo "✅ Local Kind cluster and environment initialized!"
 
 kind-delete:

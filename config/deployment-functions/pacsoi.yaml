@@ -2,7 +2,7 @@ deploymentFunctions:
   pacsoi:
     function:
       title: Deploy PACSOI service
-      description: Deploys the PACSOI weight-distribution workload.
+      description: Deploys the PACSOI weight and oxford distribution workload.
       expects:
         - name: sources
           predicate: sources
@@ -14,11 +14,21 @@ deploymentFunctions:
           type: xsd:string
           required: true
           title: Weight observation slice
-        - name: procedure-slice
-          predicate: procedure-slice
+        - name: oxford-slice
+          predicate: oxford-slice
           type: xsd:string
           required: true
-          title: Procedure slice
+          title: Oxford Questionnaire Responses slice
+        - name: bar-procedure-slice
+          predicate: bar-procedure-slice
+          type: xsd:string
+          required: true
+          title: Bariatric Procedure slice
+        - name: knee-procedure-slice
+          predicate: knee-procedure-slice
+          type: xsd:string
+          required: true
+          title: Knee Procedure slice
       returns:
         name: deployedService
         predicate: service
@@ -59,11 +69,21 @@ deploymentFunctions:
             - resource: workload
               container: pacsoi
               env: WEIGHT_SLICE
-        - parameter: procedure-slice
+        - parameter: oxford-slice
           targets:
             - resource: workload
               container: pacsoi
-              env: PROCEDURE_SLICE
+              env: OXFORD_SLICE
+        - parameter: bar-procedure-slice
+          targets:
+            - resource: workload
+              container: pacsoi
+              env: BAR_PROCEDURE_SLICE
+        - parameter: knee-procedure-slice
+          targets:
+            - resource: workload
+              container: pacsoi
+              env: KNEE_PROCEDURE_SLICE
       routeBindings:
         distributions:
           weight-distribution:
@@ -72,3 +92,9 @@ deploymentFunctions:
               container: pacsoi
               port: http
               internalPath: /w-dist
+          oxford-distribution:
+            csv:
+              resource: workload
+              container: pacsoi
+              port: http
+              internalPath: /o-dist

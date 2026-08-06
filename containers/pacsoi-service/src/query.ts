@@ -3,15 +3,18 @@ import { isAddition, QuerySourceIterator } from '@incremunica/user-tools';
 import * as Schemas from "./schemas.js";
 import { WeightDistribution } from "./weight-dist.js";
 import { Mutex } from "async-mutex";
+import { OxfordScoreDistribution } from "./oxford-dist.js";
 
 export async function querySources(
-  endpoint: string, 
+  endpoint: string,
+  barProcedureSlice: string,
+  barProcedureSourceIterator: QuerySourceIterator,
+  kneeProcedureSlice: string,
+  kneeProcedureSourceIterator: QuerySourceIterator,
   weightSlice: string,
   weightSourceIterator: QuerySourceIterator,
-  procedureSlice: string,
-  procedureSourceIterator: QuerySourceIterator,
-  dist: WeightDistribution,
-  mutex: Mutex
+  oxfordSlice: string,
+  oxfordSourceIterator: QuerySourceIterator
 ) {
   const engine = new QueryEngine();
   console.log('[querySources] Starting sources query');
@@ -32,12 +35,21 @@ export async function querySources(
 
   bindingsStream.on('data', async (b) => {
     if (b.has('pod')) {
-      const procedureSource = {
-        value: b.get('pod').value + "/slices/" + procedureSlice + "/query",
+      const barProcedureSource = {
+        value: b.get('pod').value + "/slices/" + barProcedureSlice + "/query",
         type: "graphql",
         context: {
           schema: Schemas.BAR_PROCEDURE_SLICE_SCHEMA,
           context: Schemas.BAR_PROCEDURE_SLICE_CONTEXT
+        }
+      }
+
+      const kneeProcedureSource = {
+        value: b.get('pod').value + "/slices/" + kneeProcedureSlice + "/query",
+        type: "graphql",
+        context: {
+          schema: Schemas.KNEE_PROCEDURE_SLICE_SCHEMA,
+          context: Schemas.KNEE_PROCEDURE_SLICE_CONTEXT
         }
       }
 
@@ -50,14 +62,27 @@ export async function querySources(
         }
       }
 
+      const oxfordSource = {
+        value: b.get('pod').value + "/slices/" + oxfordSlice + "/query",
+        type: "graphql",
+        context: {
+          schema: Schemas.OXFORD_SLICE_SCHEMA,
+          context: Schemas.OXFORD_SLICE_CONTEXT
+        }
+      }
+
       if (isAddition(b)) {
         console.log('[querySources] Received addition:', b.toString());
-        procedureSourceIterator.addSource(procedureSource);
+        barProcedureSourceIterator.addSource(barProcedureSource);
+        kneeProcedureSourceIterator.addSource(kneeProcedureSource);
         weightSourceIterator.addSource(weightSource);
+        oxfordSourceIterator.addSource(oxfordSource);
       } else {
         console.log('[querySources] Received deletion:', b.toString());
-        procedureSourceIterator.removeSource(procedureSource);
+        barProcedureSourceIterator.removeSource(barProcedureSource);
+        kneeProcedureSourceIterator.removeSource(kneeProcedureSource);
         weightSourceIterator.removeSource(weightSource);
+        oxfordSourceIterator.removeSource(oxfordSource);
         // await mutex.runExclusive(() => dist.removePatient(b.get('id').value));
       }
     }
@@ -107,11 +132,48 @@ export async function queryWeights(sourceIterater: QuerySourceIterator, dist: We
   });
 }
 
-export async function queryProcedures(sourceIterater: QuerySourceIterator, dist: WeightDistribution, mutex: Mutex) {
+export async function queryOxfordResponses(sourceIterater: QuerySourceIterator, dist: OxfordScoreDistribution, mutex: Mutex) {
+  const engine = new QueryEngine();
+  console.log('[queryOxfordResponses] Starting oxford response query');
+
+  const bindingsStream = await engine.queryBindings(Schemas.OXFORD_QUERY, {
+    sources: [{
+      value: sourceIterater,
+      type: "stream-graphql"
+    } as any],
+    fetch: umaProxyFetch
+  });
+
+  bindingsStream.on('data', async (b) => {
+    if (isAddition(b)) {
+      console.log('[queryOxfordResponses] Received addition:', b.toString());
+      if (b.has('res') && b.has('timestamp') && b.has('patient') && b.has('value') && b.has('question')) {
+        const res = b.get('res').value
+        const timestamp = new Date(b.get('timestamp').value);
+        const patientID = b.get('patient').value;
+        const value = b.get('value').value;
+        const question = b.get('question').value
+
+        console.log(`[queryWeights] Adding weight observation for patient ${patientID}: value=${value}, timestamp=${timestamp.toISOString()}`);
+        await mutex.runExclusive(() => dist.addPartialAnswer(patientID, res, timestamp, question, value));
+      }
+    }
+  });
+
+  bindingsStream.on('end', () => {
+    console.log('[queryWeights] Weight stream ended');
+  });
+
+  bindingsStream.on('error', (err) => {
+    console.log('[queryWeights] Weight stream error: ', err)
+  });
+}
+
+export async function queryProcedures(sourceIterater: QuerySourceIterator, dist: WeightDistribution | OxfordScoreDistribution, mutex: Mutex) {
   const engine = new QueryEngine();
   console.log('[queryProcedures] Starting procedure query');
 
-  const bindingsStream = await engine.queryBindings(Schemas.BAR_PROCEDURE_QUERY, {
+  const bindingsStream = await engine.queryBindings(Schemas.PROCEDURE_QUERY, {
     sources: [{
       value: sourceIterater,
       type: "stream-graphql"
