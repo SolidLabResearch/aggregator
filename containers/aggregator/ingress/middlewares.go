@@ -43,13 +43,15 @@ func UMAAuthMiddleware() Middleware {
 			// Build resource ID for UMA lookup
 			host := r.Host
 			path := r.URL.Path
-			resourceID := fmt.Sprintf("%s://%s%s", model.Protocol, host, path)
+			resourceID := fmt.Sprintf("%s://%s%s", model.ExternalProto, host, path)
 
 			// Create UMA request
 			payload := map[string]string{
 				"resource_id": resourceID,
 				"method":      r.Method,
 			}
+			// Future semantic UMA scopes can add:
+			// "scopes": model.AuthorizationScopes(resourceID, r.Method)
 			data, err := json.Marshal(payload)
 			if err != nil {
 				logrus.Errorf("Error creating UMA request: %v", err)

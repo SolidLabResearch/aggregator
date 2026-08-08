@@ -82,9 +82,9 @@ func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, 
 }
 
 func TestResolveProfiledFetchBundle(t *testing.T) {
-	oldProtocol, oldHost, oldPort := Protocol, ExternalHost, ExternalHttpPort
-	Protocol, ExternalHost, ExternalHttpPort = "http", "aggregator.example", "80"
-	t.Cleanup(func() { Protocol, ExternalHost, ExternalHttpPort = oldProtocol, oldHost, oldPort })
+	oldProtocol, oldHost, oldPort := ExternalProto, ExternalHost, ExternalPort
+	ExternalProto, ExternalHost, ExternalPort = "http", "aggregator.example", "80"
+	t.Cleanup(func() { ExternalProto, ExternalHost, ExternalPort = oldProtocol, oldHost, oldPort })
 
 	functionURI := "http://aggregator.example/deployments/fetch-profiled"
 	definition, err := ResolveDeploymentBundle(functionURI, testDeploymentBundle())

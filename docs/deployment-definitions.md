@@ -67,6 +67,50 @@ container port name rather than a number. The platform assigns Kubernetes
 resource names and namespaces. Therefore embedded manifests must omit
 `metadata.name` and `metadata.namespace`.
 
+### Referencing ConfigMaps and persistent volumes
+
+References inside an embedded Deployment manifest use the local
+`orchestration.resources[].id`, not a fixed Kubernetes resource name. This
+applies to ConfigMap references and PersistentVolumeClaim references. For
+example, a PVC with the resource ID `storage` must be referenced with
+`claimName: storage`:
+
+```yaml
+orchestration:
+  resources:
+    - id: storage
+      manifest:
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 100Gi
+    - id: workload
+      manifest:
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          template:
+            spec:
+              containers:
+                - name: prepare-data
+                  image: example/prepare-data:latest
+                  volumeMounts:
+                    - name: data
+                      mountPath: /app/data
+              volumes:
+                - name: data
+                  persistentVolumeClaim:
+                    claimName: storage
+```
+
+When the service is instantiated, the platform creates the PVC first and
+replaces `storage` with that service instance's generated Kubernetes resource
+name. Using a fixed name such as `fl-data` leaves the reference unresolved and
+causes Kubernetes to report that the PersistentVolumeClaim cannot be found.
+
 Operational endpoints (`executes` and `updates`) and dataset distributions are
 separate concepts. A GET operation that only executes or updates a function is
 not automatically exposed as a dataset. Every function output exposed as a

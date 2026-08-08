@@ -8,24 +8,18 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-var Protocol string
 var TLSSecret string
 var ExternalHost string
-var ExternalHttpPort string
-var ExternalHttpsPort string
+var ExternalProto string
+var ExternalPort string
 
 func ExternalURL() string {
-	if TLSSecret != "" {
-		if ExternalHttpsPort == "443" {
-			return "https://" + ExternalHost
-		}
-		return "https://" + ExternalHost + ":" + ExternalHttpsPort
-	}
-
-	if ExternalHttpPort == "" || ExternalHttpPort == "80" {
+	if ExternalProto == "http" && (ExternalPort == "" || ExternalPort == "80") {
 		return "http://" + ExternalHost
+	} else if ExternalProto == "https" && (ExternalPort == "" || ExternalPort == "443") {
+		return "https://" + ExternalHost
 	}
-	return "http://" + ExternalHost + ":" + ExternalHttpPort
+	return ExternalProto + "://" + ExternalHost + ":" + ExternalPort
 }
 
 var AllowedRegistrationTypes []string

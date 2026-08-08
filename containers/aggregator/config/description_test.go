@@ -36,9 +36,9 @@ func TestFetchAccessTokenExpiry(t *testing.T) {
 func TestHandleAggregatorDescription(t *testing.T) {
 	origClientset := model.Clientset
 	origHTTPClient := model.HttpClient
-	origProtocol := model.Protocol
+	origProtocol := model.ExternalProto
 	origExternalHost := model.ExternalHost
-	origExternalHTTPPort := model.ExternalHttpPort
+	origExternalPort := model.ExternalPort
 	origID := model.ID
 	origNamespace := model.Namespace
 	origDeploymentCatalog := model.DeploymentCatalog
@@ -46,9 +46,9 @@ func TestHandleAggregatorDescription(t *testing.T) {
 	t.Cleanup(func() {
 		model.Clientset = origClientset
 		model.HttpClient = origHTTPClient
-		model.Protocol = origProtocol
+		model.ExternalProto = origProtocol
 		model.ExternalHost = origExternalHost
-		model.ExternalHttpPort = origExternalHTTPPort
+		model.ExternalPort = origExternalPort
 		model.ID = origID
 		model.Namespace = origNamespace
 		model.DeploymentCatalog = origDeploymentCatalog
@@ -74,9 +74,9 @@ func TestHandleAggregatorDescription(t *testing.T) {
 		}, nil
 	})}
 
-	model.Protocol = "http"
+	model.ExternalProto = "http"
 	model.ExternalHost = "aggregator.test"
-	model.ExternalHttpPort = "80"
+	model.ExternalPort = "80"
 	model.ID = "config/test-ns"
 	model.Namespace = "test-ns"
 	model.DeploymentCatalog = "/deployments"

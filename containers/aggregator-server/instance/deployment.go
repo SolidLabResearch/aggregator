@@ -108,7 +108,7 @@ func ensureDeployment(
 	}
 
 	// Add TLS section if HTTPS
-	if model.Protocol == "https" && model.TLSSecret != "" {
+	if model.ExternalProto == "https" && model.TLSSecret != "" {
 		ingress.Spec.TLS = []networkingv1.IngressTLS{
 			{
 				Hosts:      []string{model.ExternalHost},
@@ -168,10 +168,9 @@ func ensureDeployment(
 								{ContainerPort: 5000},
 							},
 							Env: []corev1.EnvVar{
-								{Name: "PROTOCOL", Value: model.Protocol},
 								{Name: "EXTERNAL_HOST", Value: model.ExternalHost},
-								{Name: "EXTERNAL_HTTP_PORT", Value: model.ExternalHttpPort},
-								{Name: "EXTERNAL_HTTPS_PORT", Value: model.ExternalHttpsPort},
+								{Name: "EXTERNAL_PROTO", Value: model.ExternalProto},
+								{Name: "EXTERNAL_PORT", Value: model.ExternalPort},
 								{Name: "LOG_LEVEL", Value: model.LogLevel.String()},
 								{Name: "ID", Value: aggregatorId},
 								{Name: "NAMESPACE", Value: model.Namespace},

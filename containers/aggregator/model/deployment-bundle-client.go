@@ -157,9 +157,14 @@ func ResolveDeploymentBundle(uri string, bundle *DeploymentBundle) (*ResolvedDep
 			}
 			for _, operation := range endpoint.Operations {
 				value := ResolvedOperation{Method: operation.Method, Executes: operation.Executes}
+				// Future semantic UMA scopes:
+				// if operation.Executes != "" {
+				// 	value.Scopes = append(value.Scopes, Execute)
+				// }
 				if operation.Updates != nil {
 					value.UpdatesFunction = operation.Updates.Function
 					value.UpdatesParameters = append([]string(nil), operation.Updates.Parameters...)
+					// value.Scopes = append(value.Scopes, Modify)
 				}
 				resolvedEndpoint.Operations = append(resolvedEndpoint.Operations, value)
 			}

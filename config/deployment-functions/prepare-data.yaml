@@ -1,0 +1,128 @@
+deploymentFunctions:
+  prepare-data:
+    function:
+      title: PACSOI FL Data Preparation
+      description: Aggregates and prepares data for a federated learning local client.
+      expects:
+        - name: caseSlice
+          predicate: case
+          type: xsd:anyURI
+          required: true
+          title: Case slice
+        - name: datasetId
+          predicate: dataset
+          type: xsd:string
+          required: true
+          title: Dataset identifier
+        - name: pollEnabled
+          predicate: poll-enabled
+          type: xsd:boolean
+          required: false
+          title: Polling enabled
+        - name: pollInterval
+          predicate: poll-interval
+          type: xsd:duration
+          required: false
+          title: Polling interval
+      returns:
+        name: DataPreparationService
+        predicate: service
+        title: Data preparation service
+    profileRef:
+      name: prepare-data
+    orchestration:
+      inputBindings:
+        - parameter: caseSlice
+          targets:
+            - resource: workload
+              container: prepare-data
+              env: SOURCES
+        - parameter: datasetId
+          targets:
+            - resource: workload
+              container: prepare-data
+              env: DATASET
+        - parameter: pollEnabled
+          targets:
+            - resource: workload
+              container: prepare-data
+              env: POLL_ENABLED
+        - parameter: pollInterval
+          targets:
+            - resource: workload
+              container: prepare-data
+              env: POLL_INTERVAL
+      routeBindings:
+        distributions:
+          prepared-data:
+            zip:
+              resource: workload
+              container: prepare-data
+              port: http
+              internalPath: /results
+      resources:
+        - id: storage
+          manifest:
+            apiVersion: v1
+            kind: PersistentVolumeClaim
+            spec:
+              accessModes:
+                - ReadWriteOnce
+              resources:
+                requests:
+                  storage: 100Gi
+
+        - id: workload
+          manifest:
+            apiVersion: apps/v1
+            kind: Deployment
+            spec:
+              replicas: 1
+              strategy:
+                type: Recreate
+              selector:
+                matchLabels:
+                  app: prepare-data
+              template:
+                metadata:
+                  labels:
+                    app: prepare-data
+                    storage-workload: "true"
+                spec:
+                  securityContext:
+                    fsGroup: 65532
+                  nodeSelector:
+                    storage: local
+                  topologySpreadConstraints:
+                    - maxSkew: 1
+                      topologyKey: kubernetes.io/hostname
+                      whenUnsatisfiable: DoNotSchedule
+                      labelSelector:
+                        matchLabels:
+                          storage-workload: "true"
+
+                  containers:
+                    - name: prepare-data
+                      image: ghcr.io/knows-aggregator/k8s-fl-services/prepare-data:latest
+                      ports:
+                        - name: http
+                          containerPort: 8080
+                      env:
+                        - name: SOURCES
+                          value: "$(SOURCES)"
+                        - name: DATASET
+                          value: "$(DATASET)"
+                        - name: POLL_ENABLED
+                          value: "$(POLL_ENABLED)"
+                        - name: POLL_INTERVAL
+                          value: "$(POLL_INTERVAL)"
+                        - name: DATA_DIR
+                          value: /app/data
+                      volumeMounts:
+                        - name: data
+                          mountPath: /app/data
+
+                  volumes:
+                    - name: data
+                      persistentVolumeClaim:
+                        claimName: storage

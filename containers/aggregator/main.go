@@ -33,20 +33,13 @@ func main() {
 	if model.ExternalHost == "" {
 		logrus.Fatal("Environment variables EXTERNAL_HOST must be set")
 	}
-	model.ExternalHttpPort = os.Getenv("EXTERNAL_HTTP_PORT")
-	model.ExternalHttpsPort = os.Getenv("EXTERNAL_HTTPS_PORT")
-	model.Protocol = strings.ToLower(os.Getenv("PROTOCOL"))
-	switch model.Protocol {
-	case "http":
-		if model.ExternalHttpPort == "" {
-			logrus.Fatal("Environment variable EXTERNAL_HTTP_PORT must be set for http protocol")
-		}
-	case "https":
-		if model.ExternalHttpsPort == "" {
-			logrus.Fatal("Environment variable EXTERNAL_HTTPS_PORT must be set for https protocol")
-		}
-	default:
-		logrus.Fatal("Environment variables PROTOCOL must be either http or https")
+	model.ExternalPort = os.Getenv("EXTERNAL_PORT")
+	if model.ExternalPort == "" {
+		logrus.Fatal("Environment variable EXTERNAL_PORT must be set")
+	}
+	model.ExternalProto = strings.ToLower(os.Getenv("EXTERNAL_PROTO"))
+	if model.ExternalProto == "" {
+		logrus.Fatal("Environment variable EXTERNAL_PROTO must be set")
 	}
 
 	// Read Aggregator Identity

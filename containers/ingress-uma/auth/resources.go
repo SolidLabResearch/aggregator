@@ -15,6 +15,7 @@ import (
 type ResourceData struct {
 	UmaID   string
 	AggData AggregatorAuthData
+	Scopes  []Scope
 }
 
 var resourceIndex = make(map[string]ResourceData)
@@ -150,6 +151,10 @@ func createResource(aggData AggregatorAuthData, resourceId string, scopes []Scop
 			logrus.WithFields(logrus.Fields{"status": res.Status, "body": string(body), "resource_id": resourceId}).Error("Resource update request failed")
 			return nil
 		}
+		resourceIndexMu.Lock()
+		resData.Scopes = append([]Scope(nil), scopes...)
+		resourceIndex[resourceId] = resData
+		resourceIndexMu.Unlock()
 	} else {
 		if res.StatusCode != http.StatusCreated {
 			logrus.WithFields(logrus.Fields{"status": res.Status, "body": string(body), "resource_id": resourceId}).Error("Resource registration request failed")
@@ -167,7 +172,7 @@ func createResource(aggData AggregatorAuthData, resourceId string, scopes []Scop
 			return nil
 		}
 		resourceIndexMu.Lock()
-		resourceIndex[resourceId] = ResourceData{UmaID: responseData.ID, AggData: aggData}
+		resourceIndex[resourceId] = ResourceData{UmaID: responseData.ID, AggData: aggData, Scopes: append([]Scope(nil), scopes...)}
 		resourceIndexMu.Unlock()
 		logrus.WithFields(logrus.Fields{"resource_id": resourceId, "uma_id": responseData.ID}).Info("Registered resource with UMA")
 	}

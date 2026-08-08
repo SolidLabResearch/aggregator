@@ -27,4 +27,4 @@ spec:
               service:
                 name: aggregator-server-svc
                 port:
-                  number: 5000
+                  name: public

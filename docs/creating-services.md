@@ -47,6 +47,10 @@ Important validation rules enforced by the CRDs and catalog compiler include:
 - embedded manifests omit `metadata.name` and `metadata.namespace`; the
   platform assigns both;
 - orchestration resource IDs and container names are local references;
+- ConfigMap and PersistentVolumeClaim references inside Deployment manifests
+  use the corresponding orchestration resource ID (for example, a PVC with
+  `id: storage` is referenced as `claimName: storage`), not a fixed Kubernetes
+  name;
 - input bindings target an environment variable in a specific resource and
   container;
 - route bindings target a named container port, not a numeric port;

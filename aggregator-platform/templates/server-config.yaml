@@ -12,8 +12,8 @@ data:
   LOG_LEVEL: {{ .Values.loglevel | quote }}
 
   EXTERNAL_HOST: {{ .Values.external.host | quote }}
-  EXTERNAL_HTTP_PORT: {{ .Values.external.httpPort | quote }}
-  EXTERNAL_HTTPS_PORT: {{ .Values.external.httpsPort | quote }}
+  EXTERNAL_PROTO: {{ .Values.external.proto | quote }}
+  EXTERNAL_PORT: {{ .Values.external.port | quote }}
 
   ALLOWED_REGISTRATION_TYPES: {{ join "," .Values.auth.allowedRegistrationTypes | quote }}
   SOLID_OIDC: {{ default "" .Values.auth.solidOidc | quote }}

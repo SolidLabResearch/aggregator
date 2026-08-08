@@ -14,6 +14,10 @@ const (
 	Create Scope = "urn:example:css:modes:create"
 	Delete Scope = "urn:example:css:modes:delete"
 	Write  Scope = "urn:example:css:modes:write"
+
+	// Future semantic UMA scopes:
+	// Execute Scope = "urn:example:css:modes:execute"
+	// Modify  Scope = "urn:example:css:modes:modify"
 )
 
 func stringsToScopes(scopeStrings []string) []Scope {
@@ -34,17 +38,28 @@ func scopeToAction(scope Scope) rdfgo.INamedNode {
 		return rdfgo.NewNamedNode(OdrlPrefix + "create")
 	case Delete:
 		return rdfgo.NewNamedNode(OdrlPrefix + "delete")
+	// Future semantic UMA scope mappings:
+	// case Execute:
+	// 	return rdfgo.NewNamedNode(OdrlPrefix + "execute")
+	// case Modify:
+	// 	return rdfgo.NewNamedNode(OdrlPrefix + "modify")
 	default:
 		return nil
 	}
 }
 
-func determineScopes(method string) ([]Scope, error) {
+func determineScopes(method string, resourceScopes []Scope) ([]Scope, error) {
 	switch method {
 	case "POST":
-		logrus.WithFields(logrus.Fields{"method": method}).Debug("🔧 Requesting 'create' permissions")
-		return []Scope{Create}, nil
-	case "PUT":
+		for _, scope := range resourceScopes {
+			if scope == Create {
+				logrus.WithFields(logrus.Fields{"method": method}).Debug("🔧 Requesting 'create' permissions")
+				return []Scope{Create}, nil
+			}
+		}
+		logrus.WithFields(logrus.Fields{"method": method}).Debug("🔧 Requesting 'write' permissions")
+		return []Scope{Write}, nil
+	case "PUT", "PATCH":
 		logrus.WithFields(logrus.Fields{"method": method}).Debug("🔧 Requesting 'write' permissions")
 		return []Scope{Write}, nil
 	case "DELETE":

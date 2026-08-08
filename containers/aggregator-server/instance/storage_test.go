@@ -8,12 +8,12 @@ import (
 )
 
 func TestCreateAggregatorInstanceRecord_BaseURLUsesID(t *testing.T) {
-	originalProtocol := model.Protocol
+	originalProto := model.ExternalProto
 	originalHost := model.ExternalHost
-	model.Protocol = "http"
+	model.ExternalProto = "http"
 	model.ExternalHost = "aggregator.local"
 	t.Cleanup(func() {
-		model.Protocol = originalProtocol
+		model.ExternalProto = originalProto
 		model.ExternalHost = originalHost
 	})
 
@@ -28,7 +28,7 @@ func TestCreateAggregatorInstanceRecord_BaseURLUsesID(t *testing.T) {
 		_ = DeleteAggregatorInstance(instance.AggregatorID)
 	})
 
-	expected := fmt.Sprintf("%s://%s/%s", model.Protocol, model.ExternalHost, id)
+	expected := fmt.Sprintf("%s://%s/%s", model.ExternalProto, model.ExternalHost, id)
 	actual := strings.TrimRight(instance.BaseURL, "/")
 	if actual != expected {
 		t.Fatalf("Expected BaseURL %q, got %q", expected, instance.BaseURL)

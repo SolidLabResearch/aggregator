@@ -32,6 +32,8 @@ type serviceRoute struct {
 	serviceID  string
 	forwardURL string
 	methods    map[string]bool
+	// Future semantic UMA scopes:
+	// methodScopes map[string][]model.Scope
 }
 
 func InitServiceCollection(mux *http.ServeMux) error {
@@ -98,6 +100,8 @@ func (collec *ServiceCollection) setRoute(pattern string, route serviceRoute, sc
 		collec.servicesMu.Unlock()
 		return err
 	}
+	// Future semantic UMA scopes:
+	// model.SetAuthorizationScopes(model.ExternalBaseURL()+pattern, route.methodScopes)
 	collec.servicesMu.Lock()
 	collec.registeredPatterns[pattern] = true
 	collec.servicesMu.Unlock()
@@ -420,6 +424,8 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 		for _, operation := range endpoint.Operations {
 			methods[strings.ToUpper(operation.Method)] = true
 		}
+		// Future semantic UMA scopes can build a methodScopes map from each
+		// operation's Scopes and register the union instead of read/write.
 		internalPath := endpoint.Target.InternalPath
 		if internalPath == "" {
 			internalPath = "/"

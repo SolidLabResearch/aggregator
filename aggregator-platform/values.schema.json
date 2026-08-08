@@ -19,18 +19,17 @@
     },
     "external": {
       "type": "object",
-      "required": ["host", "httpPort", "httpsPort"],
+      "required": ["host", "proto", "port"],
       "properties": {
         "host": {
           "type": "string",
           "minLength": 1
         },
-        "httpPort": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 65535
+        "proto": {
+          "type": "string",
+          "enum": ["http", "https"]
         },
-        "httpsPort": {
+        "port": {
           "type": "integer",
           "minimum": 1,
           "maximum": 65535
