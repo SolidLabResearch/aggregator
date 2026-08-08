@@ -1,7 +1,12 @@
 external:
   host: aggregator.local
-  httpPort: 5080
-  httpsPort: 5443
+  proto: http
+  port: 5080
+
+internal:
+  serverPort: 5000
+  serverInternalPort: 5001
+  instancePort: 5000
 
 auth:
   oidc:

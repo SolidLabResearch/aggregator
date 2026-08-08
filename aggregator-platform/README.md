@@ -76,6 +76,9 @@ Aggregator Server:
 | --- | --- |
 | `NAMESPACE` | `.Release.Namespace` |
 | `LOG_LEVEL` | `loglevel` |
+| `SERVER_PORT` | `internal.serverPort` |
+| `SERVER_INTERNAL_PORT` | `internal.serverInternalPort` |
+| `INSTANCE_PORT` | `internal.instancePort` |
 | `EXTERNAL_HOST` | `external.host` |
 | `EXTERNAL_HTTP_PORT` | `external.httpPort` |
 | `EXTERNAL_HTTPS_PORT` | `external.httpsPort` |
@@ -117,10 +120,11 @@ Creates the `aggregator-server` Deployment.
 - Replicas come from `server.replicaCount`.
 - The container image is assembled from `server.image.repository` and
   `server.image.tag`.
-- The container listens publicly on port `5000` and internally on port `5001`.
+- The container's public and private listeners use `internal.serverPort` and
+  `internal.serverInternalPort` (defaulting to `5000` and `5001`).
 - Environment variables are loaded from `server-config` and `spec-config`.
 - The pod uses the `aggregator-server-sa` service account.
-- Readiness is checked at `GET /healthz` on port `5000`.
+- Readiness is checked at `GET /healthz` on `internal.serverPort`.
 - Probe timing and thresholds come from `server.readinessProbe`.
 - When either `auth.oidc.clientSecret` or
   `auth.client_credentials.clientSecret` exists, the
@@ -129,8 +133,9 @@ Creates the `aggregator-server` Deployment.
 ### `server-service.yaml`
 
 Creates the `aggregator-server-svc` ClusterIP Service. It selects the server
-component and maps public port `5000` and internal bundle port `5001` to their
-matching container ports. Only port `5000` is targeted by the Ingress.
+component and maps `internal.serverPort` and `internal.serverInternalPort` to
+their matching container ports. Only the named public port is targeted by the
+Ingress.
 
 ### `server-ingress.yaml`
 
@@ -138,7 +143,7 @@ Creates the `aggregator-server-ingress` Ingress.
 
 - `ingressClassName` selects the Ingress controller.
 - `external.host` becomes the single host rule.
-- The `/` prefix routes to `aggregator-server-svc` on port `5000`.
+- The `/` prefix routes to the `aggregator-server-svc` named public port.
 - When `tls.enabled` is true, the Ingress references `tls.secretName` for
   `external.host`.
 

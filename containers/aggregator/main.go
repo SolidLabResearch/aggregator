@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -40,6 +41,15 @@ func main() {
 	model.ExternalProto = strings.ToLower(os.Getenv("EXTERNAL_PROTO"))
 	if model.ExternalProto == "" {
 		logrus.Fatal("Environment variable EXTERNAL_PROTO must be set")
+	}
+	port := strings.TrimSpace(os.Getenv("PORT"))
+	if port == "" {
+		port = "5000"
+		logrus.Warn("Environment variable PORT was not set. default=5000")
+	}
+	parsedPort, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || parsedPort == 0 {
+		logrus.Fatalf("Environment variable PORT must be a valid TCP port, got %q", port)
 	}
 
 	// Read Aggregator Identity
@@ -121,12 +131,12 @@ func main() {
 
 	// HTTP Serve
 	srv := &http.Server{
-		Addr:    "0.0.0.0:5000",
+		Addr:    "0.0.0.0:" + port,
 		Handler: mwMux,
 	}
 
 	go func() {
-		logrus.WithFields(logrus.Fields{"port": 5000}).Info("Server listening")
+		logrus.WithField("port", parsedPort).Info("Server listening")
 		if err := srv.ListenAndServe(); err != nil {
 			logrus.WithFields(logrus.Fields{"err": err}).Error("HTTP server failed")
 			os.Exit(1)

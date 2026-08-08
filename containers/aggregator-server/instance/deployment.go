@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -53,8 +54,8 @@ func ensureDeployment(
 			Ports: []corev1.ServicePort{
 				{
 					Protocol:   corev1.ProtocolTCP,
-					Port:       5000,
-					TargetPort: intstr.FromInt(5000),
+					Port:       model.InstancePort,
+					TargetPort: intstr.FromInt32(model.InstancePort),
 				},
 			},
 		},
@@ -94,7 +95,7 @@ func ensureDeployment(
 										Service: &networkingv1.IngressServiceBackend{
 											Name: aggName,
 											Port: networkingv1.ServiceBackendPort{
-												Number: 5000,
+												Number: model.InstancePort,
 											},
 										},
 									},
@@ -165,7 +166,7 @@ func ensureDeployment(
 							Image:           AggregatorImage,
 							ImagePullPolicy: corev1.PullPolicy(AggregatorPullPolicy),
 							Ports: []corev1.ContainerPort{
-								{ContainerPort: 5000},
+								{ContainerPort: model.InstancePort},
 							},
 							Env: []corev1.EnvVar{
 								{Name: "EXTERNAL_HOST", Value: model.ExternalHost},
@@ -178,7 +179,8 @@ func ensureDeployment(
 								{Name: "AS_URL", Value: asURL},
 								{Name: "DEPLOYMENT_CATALOG", Value: model.DeploymentCatalog},
 								{Name: "SERVICE_COLLECTION", Value: model.ServiceCollection},
-								{Name: "AGGREGATOR_SERVER_INTERNAL_URL", Value: "http://aggregator-server-svc:5001"},
+								{Name: "AGGREGATOR_SERVER_INTERNAL_URL", Value: "http://aggregator-server-svc:" + model.ServerInternalPort},
+								{Name: "PORT", Value: strconv.Itoa(int(model.InstancePort))},
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
@@ -191,7 +193,7 @@ func ensureDeployment(
 								ProbeHandler: corev1.ProbeHandler{
 									HTTPGet: &corev1.HTTPGetAction{
 										Path: "/healthz",
-										Port: intstr.FromInt(5000),
+										Port: intstr.FromInt32(model.InstancePort),
 									},
 								},
 								InitialDelaySeconds: 1,

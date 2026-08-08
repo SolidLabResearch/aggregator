@@ -14,8 +14,8 @@ spec:
     app.kubernetes.io/component: server
   ports:
     - name: public
-      port: 5000
-      targetPort: 5000
+      port: {{ .Values.internal.serverPort }}
+      targetPort: {{ .Values.internal.serverPort }}
     - name: internal
-      port: 5001
-      targetPort: 5001
+      port: {{ .Values.internal.serverInternalPort }}
+      targetPort: {{ .Values.internal.serverInternalPort }}

@@ -29,9 +29,9 @@ spec:
           imagePullPolicy: {{ .Values.server.image.pullPolicy }}
           ports:
             - name: public
-              containerPort: 5000
+              containerPort: {{ .Values.internal.serverPort }}
             - name: internal
-              containerPort: 5001
+              containerPort: {{ .Values.internal.serverInternalPort }}
           envFrom:
             - configMapRef:
                 name: server-config
@@ -46,7 +46,7 @@ spec:
           readinessProbe:
             httpGet:
               path: /healthz
-              port: 5000
+              port: {{ .Values.internal.serverPort }}
             initialDelaySeconds: {{ .Values.server.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.server.readinessProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.server.readinessProbe.timeoutSeconds }}

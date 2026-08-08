@@ -10,6 +10,9 @@ metadata:
 data:
   NAMESPACE: {{ .Release.Namespace | quote }}
   LOG_LEVEL: {{ .Values.loglevel | quote }}
+  SERVER_PORT: {{ .Values.internal.serverPort | quote }}
+  SERVER_INTERNAL_PORT: {{ .Values.internal.serverInternalPort | quote }}
+  INSTANCE_PORT: {{ .Values.internal.instancePort | quote }}
 
   EXTERNAL_HOST: {{ .Values.external.host | quote }}
   EXTERNAL_PROTO: {{ .Values.external.proto | quote }}

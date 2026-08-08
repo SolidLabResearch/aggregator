@@ -17,6 +17,31 @@
         "type": "object"
       }
     },
+    "internal": {
+      "type": "object",
+      "required": ["serverPort", "serverInternalPort", "instancePort"],
+      "additionalProperties": false,
+      "properties": {
+        "serverPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Cluster-internal port for the server's public HTTP handlers."
+        },
+        "serverInternalPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Cluster-internal port for private catalog handlers."
+        },
+        "instancePort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Cluster-internal HTTP port for dynamically deployed aggregator instances."
+        }
+      }
+    },
     "external": {
       "type": "object",
       "required": ["host", "proto", "port"],

@@ -13,6 +13,14 @@ var ExternalHost string
 var ExternalProto string
 var ExternalPort string
 
+// ServerPort serves the platform's public HTTP handlers inside the cluster.
+// ServerInternalPort serves catalog endpoints used only by aggregator instances.
+var ServerPort string
+var ServerInternalPort string
+
+// InstancePort is the HTTP port exposed by dynamically deployed aggregators.
+var InstancePort int32 = 5000
+
 func ExternalURL() string {
 	if ExternalProto == "http" && (ExternalPort == "" || ExternalPort == "80") {
 		return "http://" + ExternalHost

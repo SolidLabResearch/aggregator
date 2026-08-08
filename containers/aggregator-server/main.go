@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -53,6 +54,26 @@ func main() {
 			model.ExternalPort = "443"
 		}
 	}
+	model.ServerPort = strings.TrimSpace(os.Getenv("SERVER_PORT"))
+	if model.ServerPort == "" {
+		model.ServerPort = "5000"
+		logrus.Warn("Environment variable SERVER_PORT was not set. default=5000")
+	}
+	model.ServerInternalPort = strings.TrimSpace(os.Getenv("SERVER_INTERNAL_PORT"))
+	if model.ServerInternalPort == "" {
+		model.ServerInternalPort = "5001"
+		logrus.Warn("Environment variable SERVER_INTERNAL_PORT was not set. default=5001")
+	}
+	instancePort := strings.TrimSpace(os.Getenv("INSTANCE_PORT"))
+	if instancePort == "" {
+		instancePort = "5000"
+		logrus.Warn("Environment variable INSTANCE_PORT was not set. default=5000")
+	}
+	parsedInstancePort, err := strconv.ParseInt(instancePort, 10, 32)
+	if err != nil || parsedInstancePort < 1 || parsedInstancePort > 65535 {
+		logrus.Fatalf("Environment variable INSTANCE_PORT must be a valid TCP port, got %q", instancePort)
+	}
+	model.InstancePort = int32(parsedInstancePort)
 
 	model.TLSSecret = os.Getenv("TLS_SECRET")
 
@@ -216,23 +237,23 @@ func main() {
 	loggingMux := loggingMiddleware(serverMux)
 	corsMux := corsMiddleware(loggingMux)
 	srv := &http.Server{
-		Addr:    ":5000",
+		Addr:    ":" + model.ServerPort,
 		Handler: corsMux,
 	}
 	internalSrv := &http.Server{
-		Addr:    ":5001",
+		Addr:    ":" + model.ServerInternalPort,
 		Handler: loggingMiddleware(internalMux),
 	}
 
 	go func() {
-		logrus.WithFields(logrus.Fields{"port": 5000}).Info("Server listening")
+		logrus.WithField("port", model.ServerPort).Info("Server listening")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logrus.WithFields(logrus.Fields{"err": err}).Error("HTTP server failed")
 			os.Exit(1)
 		}
 	}()
 	go func() {
-		logrus.WithFields(logrus.Fields{"port": 5001}).Info("Internal server listening")
+		logrus.WithField("port", model.ServerInternalPort).Info("Internal server listening")
 		if err := internalSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logrus.WithFields(logrus.Fields{"err": err}).Error("Internal HTTP server failed")
 			os.Exit(1)
@@ -331,9 +352,10 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 5 Check actual service health endpoint
 	serviceURL := fmt.Sprintf(
-		"http://%s.%s.svc.cluster.local:5000/healthz",
+		"http://%s.%s.svc.cluster.local:%d/healthz",
 		services.Items[0].Name,
 		model.Namespace,
+		model.InstancePort,
 	)
 
 	resp, err := model.HttpClient.Get(serviceURL)

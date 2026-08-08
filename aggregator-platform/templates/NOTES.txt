@@ -9,29 +9,17 @@ This is displayed after helm install / upgrade
 
 Aggregation platform is available at:
 
-{{- if .Values.tls.enabled }}
-https://{{ .Values.external.host }}
-{{- else }}
-http://{{ .Values.external.host }}
-{{- end }}
+{{ .Values.external.proto }}://{{ .Values.external.host }}:{{ .Values.external.port }}
 
 ----------------------------------------------------------
 Browse deployment functions:
 
-{{- if .Values.tls.enabled }}
-- https://{{ .Values.external.host }}{{ .Values.spec.deployment_catalog }}
-{{- else }}
-- http://{{ .Values.external.host }}{{ .Values.spec.deployment_catalog }}
-{{- end }}
+- {{ .Values.external.proto }}://{{ .Values.external.host }}:{{ .Values.external.port }}{{ .Values.spec.deployment_catalog }}
 
 ----------------------------------------------------------
 Create aggregators at:
 
-{{- if .Values.tls.enabled }}
-- https://{{ .Values.external.host }}{{ .Values.spec.registration }}
-{{- else }}
-- http://{{ .Values.external.host }}{{ .Values.spec.registration }}
-{{- end }}
+- {{ .Values.external.proto }}://{{ .Values.external.host }}:{{ .Values.external.port }}{{ .Values.spec.registration }}
 
 ##########################################################
 # End of NOTES

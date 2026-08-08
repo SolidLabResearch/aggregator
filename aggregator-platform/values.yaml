@@ -1,5 +1,10 @@
 loglevel: info
 
+internal:
+  serverPort: 5000
+  serverInternalPort: 5001
+  instancePort: 5000
+
 auth:
   oidc: {}
   client_credentials: {}

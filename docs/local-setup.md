@@ -16,8 +16,13 @@ external host, ingress class, and an allowed registration flow:
 ```yaml
 external:
   host: aggregator.local
-  httpPort: 5080
-  httpsPort: 5443
+  proto: http
+  port: 5080
+
+internal:
+  serverPort: 5000
+  serverInternalPort: 5001
+  instancePort: 5000
 
 auth:
   allowedRegistrationTypes:
@@ -27,6 +32,12 @@ ingressClassName: aggregator-traefik
 tls:
   enabled: false
 ```
+
+`internal.serverPort` is the server's cluster-facing HTTP listener and
+`internal.serverInternalPort` is its private catalog listener. They are separate
+from the externally published ingress ports under `external`.
+`internal.instancePort` controls the HTTP listener, Service, Ingress backend,
+and readiness probe of dynamically deployed aggregator instances.
 
 For authenticated registration, replace `none` and configure one of the flows
 documented in [Registering aggregators](deploying-aggregators.md). Provider
