@@ -20,6 +20,7 @@ The example below uses:
 | --- | --- |
 | Aggregator host | `https://aggregator.local:5443` |
 | Doctor source slice | `http://localhost:8080/doctor/PatientSlice` |
+| Patient slice name | `PatientSlice` |
 | Weight slice name | `WeightObservationsSlice` |
 | Oxford slice name | `OxfordResponseSlice` |
 | Bariatric Procedure slice name | `BariatricProcedureSlice` |
@@ -100,6 +101,7 @@ Content-Type: text/turtle
   a aggr:ServiceRequest ;
   aggr:deploymentFunction <https://aggregator.local:5443/deployments/pacsoi> ;
   pacsoi:sources <http://localhost:8080/doctor/PatientSlice> ;
+  pacsoi:patient-slice "PatientSlice" ;
   pacsoi:weight-slice "WeightObservationsSlice" ;
   pacsoi:oxford-slice "OxfordResponseSlice" ;
   pacsoi:bar-procedure-slice "BariatricProcedureSlice" ;
@@ -113,6 +115,7 @@ agg create-service \
   --name pacsoi \
   --deployment-function pacsoi \
   --param sources=http://localhost:8080/doctor/PatientSlice \
+  --param patient-slice=PatientSlice \
   --param weight-slice=WeightObservationsSlice \
   --param oxford-slice=OxfordResponseSlice \
   --param bar-procedure-slice=BariatricProcedureSlice \

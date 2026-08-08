@@ -5,21 +5,8 @@ import { WeightDistribution } from "./weight-dist.js";
 import { Mutex } from "async-mutex";
 import { OxfordScoreDistribution } from "./oxford-dist.js";
 
-/**
- * Watches the doctor's HCP slice and turns every discovered patient pod into
- * five live GraphQL sources. Additions and removals are propagated to the
- * corresponding QuerySourceIterator, so downstream incremental queries track
- * the current set of pods without restarting the service. When the HCP relation
- * is deleted, the canonical patient binding is also removed from both in-memory
- * projections.
- *
- * Slice names passed here must not start with a slash (normalised by index.ts),
- * except patientSlice, which is accepted in either form for compatibility.
- */
 export async function querySources(
   endpoint: string,
-  patientSlice: string,
-  patientSourceIterator: QuerySourceIterator,
   barProcedureSlice: string,
   barProcedureSourceIterator: QuerySourceIterator,
   kneeProcedureSlice: string,
@@ -27,11 +14,7 @@ export async function querySources(
   weightSlice: string,
   weightSourceIterator: QuerySourceIterator,
   oxfordSlice: string,
-  oxfordSourceIterator: QuerySourceIterator,
-  wMutex: Mutex,
-  wDist: WeightDistribution,
-  oMutex: Mutex,
-  oDist: OxfordScoreDistribution,
+  oxfordSourceIterator: QuerySourceIterator
 ) {
   const engine = new QueryEngine();
   console.log('[querySources] Starting sources query');
@@ -52,18 +35,6 @@ export async function querySources(
 
   bindingsStream.on('data', async (b) => {
     if (b.has('pod')) {
-      const normalizedPatientSlice = patientSlice.startsWith("/")
-        ? patientSlice.slice(1)
-        : patientSlice;
-      const patientSource = {
-        value: b.get('pod').value + "/slices/" + normalizedPatientSlice + "/query",
-        type: "graphql",
-        context: {
-          schema: Schemas.PATIENT_SLICE_SCHEMA,
-          context: Schemas.PATIENT_SLICE_CONTEXT
-        }
-      };
-
       const barProcedureSource = {
         value: b.get('pod').value + "/slices/" + barProcedureSlice + "/query",
         type: "graphql",
@@ -71,7 +42,7 @@ export async function querySources(
           schema: Schemas.BAR_PROCEDURE_SLICE_SCHEMA,
           context: Schemas.BAR_PROCEDURE_SLICE_CONTEXT
         }
-      };
+      }
 
       const kneeProcedureSource = {
         value: b.get('pod').value + "/slices/" + kneeProcedureSlice + "/query",
@@ -80,7 +51,7 @@ export async function querySources(
           schema: Schemas.KNEE_PROCEDURE_SLICE_SCHEMA,
           context: Schemas.KNEE_PROCEDURE_SLICE_CONTEXT
         }
-      };
+      }
 
       const weightSource = {
         value: b.get('pod').value + "/slices/" + weightSlice + "/query",
@@ -89,7 +60,7 @@ export async function querySources(
           schema: Schemas.WEIGHT_SLICE_SCHEMA,
           context: Schemas.WEIGHT_SLICE_CONTEXT
         }
-      };
+      }
 
       const oxfordSource = {
         value: b.get('pod').value + "/slices/" + oxfordSlice + "/query",
@@ -98,34 +69,21 @@ export async function querySources(
           schema: Schemas.OXFORD_SLICE_SCHEMA,
           context: Schemas.OXFORD_SLICE_CONTEXT
         }
-      };
+      }
 
       if (isAddition(b)) {
         console.log('[querySources] Received addition:', b.toString());
-        patientSourceIterator.addSource(patientSource);
         barProcedureSourceIterator.addSource(barProcedureSource);
         kneeProcedureSourceIterator.addSource(kneeProcedureSource);
         weightSourceIterator.addSource(weightSource);
         oxfordSourceIterator.addSource(oxfordSource);
       } else {
         console.log('[querySources] Received deletion:', b.toString());
-        patientSourceIterator.removeSource(patientSource);
         barProcedureSourceIterator.removeSource(barProcedureSource);
         kneeProcedureSourceIterator.removeSource(kneeProcedureSource);
         weightSourceIterator.removeSource(weightSource);
         oxfordSourceIterator.removeSource(oxfordSource);
-
-        if (b.has('patient')) {
-          const patientID = b.get('patient').value;
-          console.log(`[querySources] Removing inactive patient ${patientID}`);
-          await wMutex.runExclusive(() => wDist.removePatient(patientID));
-          await oMutex.runExclusive(() => oDist.removePatient(patientID));
-        } else {
-          console.warn(
-            '[querySources] Source deletion has no patient binding; projections were not cleaned:',
-            b.toString(),
-          );
-        }
+        // await mutex.runExclusive(() => dist.removePatient(b.get('id').value));
       }
     }
   });
@@ -139,64 +97,6 @@ export async function querySources(
   });
 }
 
-/**
- * Streams patient identities into both projections. The optional pseudo
- * identifier joins procedure/observation slices that do not use the patient URI.
- * Deletions here are deliberately ignored: patient activity is owned by the
- * HCP source query, while this stream can also delete bindings during identifier
- * changes. Removing a whole patient for an identifier update would be incorrect.
- */
-export async function queryPatients(
-  sourceIterator: QuerySourceIterator,
-  wMutex: Mutex,
-  wDist: WeightDistribution,
-  oMutex: Mutex,
-  oDist: OxfordScoreDistribution
-) {
-  const engine = new QueryEngine();
-  console.log(`[queryPatients] Starting patients query`);
-
-  const bindingsStream = await engine.queryBindings(Schemas.PATIENT_QUERY, {
-    sources: [{
-      value: sourceIterator,
-      type: "stream-graphql"
-    } as any],
-    fetch: umaProxyFetch
-  });
-
-  bindingsStream.on('data', async (b) => {
-    if (!b.has('patient')) {
-      console.warn('[queryPatients] Ignoring binding without patient:', b.toString());
-      return;
-    }
-
-    const patientID = b.get('patient').value;
-
-    if (isAddition(b)) {
-      console.log('[queryPatients] Received addition:', b.toString());
-      if (b.has('idValue')) {
-        const ID = b.get('idValue').value;
-        await wMutex.runExclusive(() => wDist.addPatientIdentifier(patientID, ID));
-        await oMutex.runExclusive(() => oDist.addPatientIdentifier(patientID, ID));
-      } else {
-        await wMutex.runExclusive(() => wDist.addPatientIdentifier(patientID));
-        await oMutex.runExclusive(() => oDist.addPatientIdentifier(patientID));
-      }
-    } else {
-      console.log('[queryPatients] Ignoring patient-detail deletion:', b.toString());
-    }
-  });
-
-  bindingsStream.on('end', () => {
-    console.log('[queryPatients] Patient stream ended');
-  });
-
-  bindingsStream.on('error', (err) => {
-    console.log('[queryPatients] Patient stream error: ', err);
-  });
-}
-
-/** Streams weight observations into the weight projection. */
 export async function queryWeights(sourceIterater: QuerySourceIterator, dist: WeightDistribution, mutex: Mutex) {
   const engine = new QueryEngine();
   console.log('[queryWeights] Starting weight query');
@@ -232,10 +132,6 @@ export async function queryWeights(sourceIterater: QuerySourceIterator, dist: We
   });
 }
 
-/**
- * Streams individual Oxford questionnaire answers into the Oxford projection.
- * A response becomes visible in the aggregate only after all 12 answers arrive.
- */
 export async function queryOxfordResponses(sourceIterater: QuerySourceIterator, dist: OxfordScoreDistribution, mutex: Mutex) {
   const engine = new QueryEngine();
   console.log('[queryOxfordResponses] Starting oxford response query');
@@ -258,22 +154,21 @@ export async function queryOxfordResponses(sourceIterater: QuerySourceIterator, 
         const value = b.get('value').value;
         const question = b.get('question').value
 
-        console.log(`[queryOxfordResponses] Adding answer for patient ${patientID}: response=${res}, question=${question}, timestamp=${timestamp.toISOString()}`);
+        console.log(`[queryWeights] Adding weight observation for patient ${patientID}: value=${value}, timestamp=${timestamp.toISOString()}`);
         await mutex.runExclusive(() => dist.addPartialAnswer(patientID, res, timestamp, question, value));
       }
     }
   });
 
   bindingsStream.on('end', () => {
-    console.log('[queryOxfordResponses] Oxford response stream ended');
+    console.log('[queryWeights] Weight stream ended');
   });
 
   bindingsStream.on('error', (err) => {
-    console.log('[queryOxfordResponses] Oxford response stream error: ', err)
+    console.log('[queryWeights] Weight stream error: ', err)
   });
 }
 
-/** Streams procedure dates into either projection. */
 export async function queryProcedures(sourceIterater: QuerySourceIterator, dist: WeightDistribution | OxfordScoreDistribution, mutex: Mutex) {
   const engine = new QueryEngine();
   console.log('[queryProcedures] Starting procedure query');
@@ -300,14 +195,6 @@ export async function queryProcedures(sourceIterater: QuerySourceIterator, dist:
   });
 }
 
-/**
- * Fetch adapter used by every query engine.
- *
- * With HTTP_PROXY/http_proxy set, requests are encoded for the Aggregator UMA
- * proxy's POST /fetch endpoint. Without it, native fetch is used. Failures use
- * unbounded exponential retry (1 second to 5 minutes); this favours eventual
- * recovery, but a permanently invalid endpoint will keep retrying forever.
- */
 async function umaProxyFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   let target = input.toString();
   const originalUrl = target;

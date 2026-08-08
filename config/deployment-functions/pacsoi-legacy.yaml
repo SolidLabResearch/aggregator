@@ -1,19 +1,14 @@
 deploymentFunctions:
-  pacsoi:
+  pacsoi-legacy:
     function:
-      title: Deploy PACSOI service
-      description: Deploys the PACSOI weight and oxford distribution workload.
+      title: Deploy legacy PACSOI service
+      description: Deploys the legacy PACSOI weight and Oxford distribution workload as a fallback.
       expects:
         - name: sources
           predicate: sources
           type: xsd:anyURI
           required: true
           title: Patient source collection
-        - name: patient-slice
-          predicate: patient-slice
-          type: xsd:string
-          required: true
-          title: Patient observation slice
         - name: weight-slice
           predicate: weight-slice
           type: xsd:string
@@ -37,9 +32,9 @@ deploymentFunctions:
       returns:
         name: deployedService
         predicate: service
-        title: Deployed PACSOI service
+        title: Deployed legacy PACSOI service
     profileRef:
-      name: pacsoi
+      name: pacsoi-legacy
     orchestration:
       resources:
         - id: workload
@@ -50,15 +45,15 @@ deploymentFunctions:
               replicas: 1
               selector:
                 matchLabels:
-                  app: pacsoi
+                  app: pacsoi-legacy
               template:
                 metadata:
                   labels:
-                    app: pacsoi
+                    app: pacsoi-legacy
                 spec:
                   containers:
-                    - name: pacsoi
-                      image: pacsoi-service
+                    - name: pacsoi-legacy
+                      image: pacsoi-service-legacy
                       imagePullPolicy: Never
                       ports:
                         - name: http
@@ -67,44 +62,39 @@ deploymentFunctions:
         - parameter: sources
           targets:
             - resource: workload
-              container: pacsoi
+              container: pacsoi-legacy
               env: SOURCES
-        - parameter: patient-slice
-          targets:
-            - resource: workload
-              container: pacsoi
-              env: PATIENT_SLICE
         - parameter: weight-slice
           targets:
             - resource: workload
-              container: pacsoi
+              container: pacsoi-legacy
               env: WEIGHT_SLICE
         - parameter: oxford-slice
           targets:
             - resource: workload
-              container: pacsoi
+              container: pacsoi-legacy
               env: OXFORD_SLICE
         - parameter: bar-procedure-slice
           targets:
             - resource: workload
-              container: pacsoi
+              container: pacsoi-legacy
               env: BAR_PROCEDURE_SLICE
         - parameter: knee-procedure-slice
           targets:
             - resource: workload
-              container: pacsoi
+              container: pacsoi-legacy
               env: KNEE_PROCEDURE_SLICE
       routeBindings:
         distributions:
           weight-distribution:
             csv:
               resource: workload
-              container: pacsoi
+              container: pacsoi-legacy
               port: http
               internalPath: /w-dist
           oxford-distribution:
             csv:
               resource: workload
-              container: pacsoi
+              container: pacsoi-legacy
               port: http
               internalPath: /o-dist

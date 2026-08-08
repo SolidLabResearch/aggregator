@@ -95,12 +95,14 @@ const VALUE_MAP = new Map<string, Map<string, number>>([
 ]);
 
 interface PatientData {
-  procedureTs: Date;
+  identifiers: string[];
+  procedureTs: Date | undefined;
   responses: Map<string, ResponseBuffer>;
   monthlyScores: Map<number, number[]>;
 }
 
-interface MonthStats {
+/** Aggregate statistics returned for a single relative calendar month. */
+export interface OxfordDistributionStats {
   mean: number;
   stdev: number;
   q25: number;
@@ -108,116 +110,267 @@ interface MonthStats {
   count: number;
 }
 
+/**
+ * In-memory projection of Oxford Knee Scores relative to knee procedures.
+ *
+ * Answers, procedures, and identifiers may arrive in any order. Incomplete
+ * questionnaire responses remain buffered until all 12 expected answers are
+ * present. Calls must be protected by the Oxford mutex owned by index.ts.
+ */
 class OxfordScoreDistribution {
+  private identifiers = new Map<string, string>();
   private patients = new Map<string, PatientData>();
-  private preProcedureBuffer = new Map<string, Map<string, ResponseBuffer>>();
-
-  // monthSinceProcedure -> list of scores (across all patients)
   private monthly = new Map<number, number[]>();
+  private procedureBuffer = new Map<string, Date>();
+  private responseBuffer = new Map<string, Map<string, ResponseBuffer>>();
 
   // ================================
-  // Input
+  // Public API
   // ================================
-
-  addPatientProcedure(patientID: string, timestamp: Date) {
-    console.log(`[addPatientProcedure] Adding procedure for patient ${patientID} at ${timestamp.toISOString()}`);
+  /** Registers the canonical patient URI and, optionally, a pseudo identifier. */
+  addPatientIdentifier(patientID: string, identifier?: string) {
     const existing = this.patients.get(patientID);
-
-    if (!existing || timestamp <= existing.procedureTs) {
+    if (!existing) {
+      console.log(`[addPatientIdentifier] Adding new patient ${patientID}`);
       this.patients.set(patientID, {
-        procedureTs: timestamp,
+        identifiers: [patientID],
+        procedureTs: undefined,
         responses: new Map<string, ResponseBuffer>(),
-        monthlyScores: new Map<number, number[]>()
+        monthlyScores: new Map<number, number[]>(),
       });
+      this.identifiers.set(patientID, patientID);
+    }
 
-      // Flush any buffered responses
-      const buffered = this.preProcedureBuffer.get(patientID);
-      if (buffered) {
-        console.log(`[addPatientProcedure] Flushing ${buffered.size} buffered responses for patient ${patientID}`);
-        for (const res of buffered.values()) {
-          this.addResponse(patientID, res);
-        }
-        this.preProcedureBuffer.delete(patientID);
-      }
+    if (identifier) {
+      console.log(`[addPatientIdentifier] Adding external identifier ${identifier} for patient ${patientID}`);
+      this.identifiers.set(identifier, patientID);
+      this.patients.get(patientID)!.identifiers.push(identifier);
+    }
+
+    this.flushProcedures(patientID);
+    // TODO only flush responses for this identifier
+    this.flushResponses(patientID);
+  }
+
+  /** Records the first knee procedure observed, buffering if the patient is unknown. */
+  addPatientProcedure(identifier: string, timestamp: Date) {
+    console.log(`[addPatientProcedure] Recieved procedure for ID ${identifier} at ${timestamp.toISOString()}`);
+    const patientID = this.identifiers.get(identifier);
+    if (!patientID) {
+      console.log(`[addPatientProcedure] No data yet for ID ${identifier}. Buffering procedure at ${timestamp.toISOString()}`);
+      const buffer = this.procedureBuffer.get(identifier);
+      if (!buffer) this.procedureBuffer.set(identifier, timestamp);
+      else
+        console.warn(`[addPatientProcedure] ID ${identifier} already has a procedure. Skipping procedure at ${timestamp.toISOString()}`);
+      return
+    }
+
+    const data = this.patients.get(patientID);
+    if (!data) {
+      console.warn(`[addPatientProcedure] Patient ${patientID} has identifiers but no data. Skipping...`);
+      return
+    } else if (!data.procedureTs) {
+      data.procedureTs = timestamp;
+      console.log(`[addPatientProcedure] Set Procedure for patient ${patientID} at ${timestamp.toISOString()}`);
+      this.flushResponses(patientID);
     } else {
-      console.log(`[addPatientProcedure] Procedure not added, existing procedure is earlier.`);
+      console.warn(`[addPatientProcedure] Patient ${patientID} already has a procedure. Skipping procedure at ${timestamp.toISOString()}`);
     }
   }
 
+  /** Adds one answer and emits a score once its 12-answer response is complete. */
   addPartialAnswer(
-    patientID: string,
+    identifier: string,
     responseID: string,
     timestamp: Date,
     question: string,
     value: string
   ) {
-    const patient = this.patients.get(patientID);
+    const bufferAnswer = (reason: string) => {
+      console.log(
+        `[addPartialAnswer] ${reason}. Buffering answer for ${question} from response ${responseID}`
+      );
 
-    if (!patient) {
-      console.log(`[addPartialAnswer] No procedure yet for patient ${patientID}. Buffering response ${responseID} at ${timestamp.toISOString()}`);
-      if (!this.preProcedureBuffer.has(patientID)) {
-        this.preProcedureBuffer.set(patientID, new Map<string, ResponseBuffer>());
+      if (!this.responseBuffer.has(identifier)) {
+        this.responseBuffer.set(identifier, new Map<string, ResponseBuffer>());
       }
-      if (!this.preProcedureBuffer.get(patientID)!.has(responseID)) {
-        this.preProcedureBuffer.get(patientID)!.set(responseID, new ResponseBuffer(responseID, timestamp));
+
+      if (!this.responseBuffer.get(identifier)!.has(responseID)) {
+        this.responseBuffer.get(identifier)!.set(responseID, new ResponseBuffer(responseID, timestamp));
       }
-      this.preProcedureBuffer.get(patientID)!.get(responseID)!.addAnswer(question, value);
+
+      this.responseBuffer.get(identifier)!.get(responseID)!.addAnswer(question, value);
+    };
+
+    const patientID = this.identifiers.get(identifier);
+
+    if (!patientID) {
+      bufferAnswer(`No patient yet for ID ${identifier}`);
       return;
     }
 
-    if (!patient.responses.has(responseID)) {
-      patient.responses.set(responseID, new ResponseBuffer(responseID, timestamp));
-    }
-    patient.responses.get(responseID)!.addAnswer(question, value);
+    const data = this.patients.get(patientID);
 
-    if (patient.responses.get(responseID)!.complete()) {
-      this.addScore(patientID, patient.responses.get(responseID)!);
-    }
-  }
-
-  private addResponse(patientID: string, res: ResponseBuffer) {
-    if (!this.patients.has(patientID)) {
-      throw new Error(`Cannot add response: ${patientID} not yet registered`);
+    if (!data) {
+      console.warn(
+        `[addPartialAnswer] Patient ${patientID} has identifiers but no data. Skipping...`
+      );
+      return;
     }
 
-    if (res.complete()) {
-      this.addScore(patientID, res);
-    } else {
-      const patient = this.patients.get(patientID)!;
-      patient.responses.set(res.id, res);
+    if (!data.procedureTs) {
+      bufferAnswer(`No procedure yet for patient ${patientID}`);
+      return;
+    }
+
+    // Check if response already encountered
+    if (!data.responses.has(responseID)) {
+      // create buffer for newly encountered responses
+      data.responses.set(responseID, new ResponseBuffer(responseID, timestamp));
+    }
+    // Add partial answer to response buffer
+    data.responses.get(responseID)!.addAnswer(question, value);
+
+    // Check if response is complete
+    if (data.responses.get(responseID)!.complete()) {
+      // If response complete, add score
+      this.addScore(patientID, data.responses.get(responseID)!);
     }
   }
 
   private addScore(patientID: string, res: ResponseBuffer) {
-    if (!this.patients.has(patientID)) {
-      throw new Error(`Cannot add score: ${patientID} not yet registered`);
+    const data = this.patients.get(patientID);
+    if (!data) {
+      console.warn(`[addScore] Cannot add score: ${patientID} not yet registered`);
+      return;
     }
 
-    const patient = this.patients.get(patientID)!;
 
-    const month = this.monthsSince(patient.procedureTs, res.timestamp);
-
-    if (!patient.monthlyScores.has(month)) {
-      patient.monthlyScores.set(month, []);
+    if (!data.procedureTs) {
+      console.warn(`[addScore] Cannot add score: No procedure yet for patient ${patientID}`);
+      return;
     }
-    patient.monthlyScores.get(month)!.push(res.getScore());
 
-    if (!this.monthly.has(month)) {
-      this.monthly.set(month, []);
-    }
-    this.monthly.get(month)!.push(res.getScore());
+    const month = this.monthsSince(data.procedureTs, res.timestamp);
 
-    patient.responses.delete(res.id);
+    const patientMonthlyData = data.monthlyScores.get(month) ?? [];
+    patientMonthlyData.push(res.getScore());
+    data.monthlyScores.set(month, patientMonthlyData)
+
+    const globalMonthlyData = this.monthly.get(month) ?? [];
+    globalMonthlyData.push(res.getScore());
+    this.monthly.set(month, globalMonthlyData);
+
+    data.responses.delete(res.id);
 
     console.log(`[addScore] Added score ${res.getScore()} for patient ${patientID}, month ${month}`);
+  }
+
+  flushProcedures(patientID: string) {
+    const data = this.patients.get(patientID);
+    if (!data) {
+      console.warn(`[flushProcedures] Patient ${patientID} has no data. Skipping...`);
+      return;
+    }
+
+    if (data.procedureTs) {
+      console.log(`[flushProcedures] Patient ${patientID} already has a procedure. Skipping...`);
+      return;
+    }
+
+    for (const identifier of data.identifiers) {
+      const buffer = this.procedureBuffer.get(identifier);
+      if (buffer) {
+        console.log(`[flushProcedures] Set Procedure for patient ${patientID} at ${buffer.toISOString()}`);
+        data.procedureTs = buffer;
+        this.flushResponses(patientID);
+        break;
+      }
+    }
+
+    if (data.procedureTs) {
+      for (const identifier of data.identifiers) {
+        this.procedureBuffer.delete(identifier);
+      }
+    }
+  }
+
+  flushResponses(patientID: string) {
+    const data = this.patients.get(patientID);
+    if (!data) {
+      console.warn(`[flushResponses] Patient ${patientID} has no data. Skipping...`);
+      return
+    }
+    if (!data.procedureTs) {
+      console.log(`[flushObservations] Patient ${patientID} has no procedure yet. Skipping...`);
+      return
+    }
+
+    // Check all the patients identifiers for available buffers
+    for (const identifier of data.identifiers) {
+      const buffer = this.responseBuffer.get(identifier);
+      if (buffer) {
+        for (const [responseID, responseBuffer] of buffer) {
+          // patient did not have this responseID registered
+          if (!data.responses.has(responseID)) {
+            data.responses.set(responseID, responseBuffer);
+          } else {
+            // Merge answers from buffered response with registered response
+            data.responses.get(responseID)!.merge(responseBuffer);
+          }
+          // If the newly added response buffer is complete, add the score
+          if (data.responses.get(responseID)!.complete()) {
+            this.addScore(patientID, data.responses.get(responseID)!);
+          }
+        }
+      }
+      this.responseBuffer.delete(identifier);
+    }
+  }
+
+  /** Removes a patient and that patient's scores from every aggregate. */
+  removePatient(patientID: string) {
+    console.log(`[removePatient] Removing patient ${patientID}`);
+    const patient = this.patients.get(patientID);
+    if (!patient) {
+      console.log(`[removePatient] Patient ${patientID} not found`);
+      return;
+    }
+
+    // Remove buffers
+    for (const identifier of patient.identifiers) {
+      this.procedureBuffer.delete(identifier);
+      this.responseBuffer.delete(identifier);
+      this.identifiers.delete(identifier);
+    }
+
+    if (patient.procedureTs) {
+      // Remove scores already included in the global month buckets.
+      for (const [month, scores] of patient.monthlyScores) {
+        const bucket = this.monthly.get(month);
+        if (!bucket) continue;
+
+        for (const score of scores) {
+          const idx = bucket.indexOf(score);
+          if (idx !== -1) bucket.splice(idx, 1);
+        }
+        if (bucket.length === 0) this.monthly.delete(month);
+      }
+    }
+
+    // This must also happen when no procedure was seen; otherwise re-adding the
+    // patient leaves a stale record without an identifier mapping.
+    this.patients.delete(patientID);
+    console.log(`[removePatient] Patient ${patientID} removed`);
   }
 
   // ================================
   // Stats
   // ================================
 
-  getStats(): Record<number, MonthStats> {
-    const result: Record<number, MonthStats> = {};
+  /** Returns population statistics for every non-empty month bucket. */
+  getStats(): Record<number, OxfordDistributionStats> {
+    const result: Record<number, OxfordDistributionStats> = {};
 
     for (const [month, values] of this.monthly.entries()) {
       if (values.length === 0) continue;
@@ -290,6 +443,7 @@ class OxfordScoreDistribution {
   }
 }
 
+/** Collects and validates the 12 answers belonging to one questionnaire response. */
 class ResponseBuffer {
   public timestamp: Date;
   public id: string;
@@ -301,6 +455,7 @@ class ResponseBuffer {
     this.timestamp = timestamp;
   }
 
+  /** Maps and stores one answer; malformed or duplicate answers fail loudly. */
   addAnswer(question: string, value: string) {
     const code = this.resolveQuestionCode(question);
 
@@ -318,6 +473,41 @@ class ResponseBuffer {
     this.answers.set(code, mapped);
   }
 
+  merge(other: ResponseBuffer) {
+    if (other.id !== this.id) {
+      console.warn(
+        `[ResponseBuffer.merge] Cannot merge response with ID ${other.id} (expected: ${this.id})`
+      );
+      return;
+    }
+
+    if (other.timestamp.getTime() !== this.timestamp.getTime()) {
+      console.warn(
+        `[ResponseBuffer.merge] Cannot merge response with timestamp ` +
+        `${other.timestamp.toISOString()} (expected: ${this.timestamp.toISOString()})`
+      );
+      return;
+    }
+
+    // Check for conflicts before modifying anything
+    for (const [code, value] of other.answers) {
+      const existing = this.answers.get(code);
+
+      if (existing !== undefined && existing !== value) {
+        console.warn(
+          `[ResponseBuffer.merge] Cannot merge response: conflicting value ` +
+          `for ${code}: ${existing} vs ${value}`
+        );
+        return;
+      }
+    }
+
+    // Safe to merge
+    for (const [code, value] of other.answers) {
+      this.answers.set(code, value);
+    }
+  }
+
   private resolveQuestionCode(question: string): string | undefined {
     for (const code of EXPECTED_QUESTIONS) {
       if (question.endsWith(code)) {
@@ -327,6 +517,7 @@ class ResponseBuffer {
     return undefined;
   }
 
+  /** Returns the 0-48 Oxford Knee Score (higher is better). */
   getScore(): number {
     let sum = 0;
     for (const x of this.answers.values()) {

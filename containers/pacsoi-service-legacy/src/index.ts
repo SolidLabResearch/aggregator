@@ -1,22 +1,12 @@
 import { QuerySourceIterator } from '@incremunica/user-tools';
 import { WeightDistribution } from "./weight-dist.js";
-import { queryOxfordResponses, queryPatients, queryProcedures, querySources, queryWeights } from "./query.js";
+import { queryOxfordResponses, queryProcedures, querySources, queryWeights } from "./query.js";
 import Fastify from "fastify";
 import { Mutex } from "async-mutex";
 import { OxfordScoreDistribution } from './oxford-dist.js';
 
-/**
- * Application entry point.
- *
- * The service maintains two independent in-memory projections (weight and
- * Oxford scores). Incremental SPARQL streams update those projections while
- * Fastify exposes consistent CSV snapshots. Separate mutexes ensure a request
- * cannot read a projection halfway through an update.
- */
 async function main() {
   console.log('[MAIN] Starting application');
-
-  const patientSourceIterator = new QuerySourceIterator({ distinct: true });
 
   const barProcedureSourceIterator = new QuerySourceIterator({ distinct: true });
   const kneeProcedureSourceIterator = new QuerySourceIterator({ distinct: true });
@@ -24,19 +14,13 @@ async function main() {
   const weightSourceIterator = new QuerySourceIterator({ distinct: true });
   const oxfordSourceIterator = new QuerySourceIterator({ distinct: true });
 
-  const weightMutex = new Mutex();
+  const mutex = new Mutex();
   const weightDist = new WeightDistribution();
-  const oxfordMutex = new Mutex();
   const oxfordDist = new OxfordScoreDistribution();
 
   const SOURCES = process.env.SOURCES;
   if (!SOURCES) {
     throw new Error("Environment variable SOURCES must be set");
-  }
-
-  const PATIENT_SLICE = process.env.PATIENT_SLICE;
-  if (!PATIENT_SLICE) {
-    throw new Error("Environment variable PATIENT_SLICE must be set");
   }
 
   const BAR_PROCEDURE_SLICE = process.env.BAR_PROCEDURE_SLICE;
@@ -61,8 +45,6 @@ async function main() {
 
   querySources(
     SOURCES,
-    PATIENT_SLICE,
-    patientSourceIterator,
     BAR_PROCEDURE_SLICE.startsWith("/") ? BAR_PROCEDURE_SLICE.slice(1) : BAR_PROCEDURE_SLICE,
     barProcedureSourceIterator,
     KNEE_PROCEDURE_SLICE.startsWith("/") ? KNEE_PROCEDURE_SLICE.slice(1) : KNEE_PROCEDURE_SLICE,
@@ -71,25 +53,21 @@ async function main() {
     weightSourceIterator,
     OXFORD_SLICE.startsWith("/") ? OXFORD_SLICE.slice(1) : OXFORD_SLICE,
     oxfordSourceIterator,
-    weightMutex,
-    weightDist,
-    oxfordMutex,
-    oxfordDist,
   );
 
-  queryPatients(patientSourceIterator, weightMutex, weightDist, oxfordMutex, oxfordDist);
-  queryProcedures(barProcedureSourceIterator, weightDist, weightMutex);
-  queryProcedures(kneeProcedureSourceIterator, oxfordDist, oxfordMutex);
-  queryWeights(weightSourceIterator, weightDist, weightMutex);
-  queryOxfordResponses(oxfordSourceIterator, oxfordDist, oxfordMutex);
+  queryProcedures(barProcedureSourceIterator, weightDist, mutex);
+  queryProcedures(kneeProcedureSourceIterator, oxfordDist, mutex);
+  queryWeights(weightSourceIterator, weightDist, mutex);
+  queryOxfordResponses(oxfordSourceIterator, oxfordDist, mutex);
 
-  // The query functions attach long-lived stream handlers and return after
-  // setup. They deliberately run for the lifetime of this process.
+  // =========================
+  // HTTP SERVER
+  // =========================
   const app = Fastify();
 
   app.get("/w-dist", async (request, reply) => {
-    const csv = await weightMutex.runExclusive(() => weightDist.toCSV());
-
+    const csv = await mutex.runExclusive(() => weightDist.toCSV());
+    
     reply
       .header("Content-Type", "text/csv")
       .header("Content-Disposition", "attachment; filename=dist.csv")
@@ -97,8 +75,8 @@ async function main() {
   });
 
   app.get("/o-dist", async (request, reply) => {
-    const csv = await oxfordMutex.runExclusive(() => oxfordDist.toCSV());
-
+    const csv = await mutex.runExclusive(() => oxfordDist.toCSV());
+    
     reply
       .header("Content-Type", "text/csv")
       .header("Content-Disposition", "attachment; filename=dist.csv")

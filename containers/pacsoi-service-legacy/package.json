@@ -1,11 +1,10 @@
 {
-  "name": "pacsoi-service",
+  "name": "pacsoi-service-legacy",
   "version": "1.0.0",
-  "description": "Incremental weight and Oxford Knee Score distribution service",
+  "description": "Legacy fallback for the PACSOI aggregation service",
   "main": "index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

@@ -1,0 +1,46 @@
+profiles:
+  pacsoi-legacy:
+    serviceProfile:
+      title: PACSOI legacy service
+      description: |
+        Fallback implementation that computes monthly weight distributions after bariatric procedures
+        and monthly Oxford score distributions after knee procedures.
+      outputs:
+        weightDistribution:
+          predicate: weight-distribution
+          title: Weight distribution
+          datasetProfileRef:
+            dataset: weight-distribution
+        oxfordDistribution:
+          predicate: oxford-distribution
+          title: Oxford distribution
+          datasetProfileRef:
+            dataset: oxford-distribution
+      functions:
+        calculateWeightDistribution:
+          name: Calculate weight distribution
+          expects: []
+          returns: [weightDistribution]
+        calculateOxfordDistribution:
+          name: Calculate Oxford distribution
+          expects: []
+          returns: [oxfordDistribution]
+    datasetProfiles:
+      weight-distribution:
+        title: Weight distribution
+        description: Monthly aggregate patient weights relative to the procedure date.
+        distributions:
+          csv:
+            title: Weight distribution CSV
+            path: /w-dist
+            urlType: downloadURL
+            mediaType: text/csv
+      oxford-distribution:
+        title: Oxford distribution
+        description: Monthly aggregate patient Oxford scores relative to the procedure date.
+        distributions:
+          csv:
+            title: Oxford distribution CSV
+            path: /o-dist
+            urlType: downloadURL
+            mediaType: text/csv
