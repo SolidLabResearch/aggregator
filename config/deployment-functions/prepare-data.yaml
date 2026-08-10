@@ -103,7 +103,7 @@ deploymentFunctions:
 
                   containers:
                     - name: prepare-data
-                      image: ghcr.io/knows-aggregator/k8s-fl-services/prepare-data:latest
+                      image: ghcr.io/knows-aggregator/k8s-fl-services/data-preparation:latest
                       ports:
                         - name: http
                           containerPort: 8080

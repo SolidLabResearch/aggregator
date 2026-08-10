@@ -304,7 +304,7 @@ export async function queryProcedures(sourceIterater: QuerySourceIterator, dist:
 /**
  * Fetch adapter used by every query engine.
  *
- * With HTTP_PROXY/http_proxy set, requests are encoded for the Aggregator UMA
+ * With EGRESS_UMA_URL set, requests are encoded for the Aggregator UMA
  * proxy's POST /fetch endpoint. Without it, native fetch is used. Failures use
  * unbounded exponential retry (1 second to 5 minutes); this favours eventual
  * recovery, but a permanently invalid endpoint will keep retrying forever.
@@ -325,12 +325,13 @@ async function umaProxyFetch(input: RequestInfo | URL, init?: RequestInit): Prom
     try {
       let response: Response;
 
-      if (!process.env.HTTP_PROXY && !process.env.http_proxy) {
+      const egressUmaUrl = process.env.EGRESS_UMA_URL?.replace(/\/+$/, "");
+      if (!egressUmaUrl) {
         console.log("[FETCH] No proxy configured, direct request");
         response = await fetch(input, init);
       } else {
         console.log("[FETCH] Using proxy");
-        target = (process.env.HTTP_PROXY || process.env.http_proxy) + "/fetch";
+        target = egressUmaUrl + "/fetch";
 
         const bodyHeaders: Record<string, string> = {};
         if (init?.headers) {

@@ -211,12 +211,13 @@ async function umaProxyFetch(input: RequestInfo | URL, init?: RequestInit): Prom
     try {
       let response: Response;
 
-      if (!process.env.HTTP_PROXY && !process.env.http_proxy) {
+      const egressUmaUrl = process.env.EGRESS_UMA_URL?.replace(/\/+$/, "");
+      if (!egressUmaUrl) {
         console.log("[FETCH] No proxy configured, direct request");
         response = await fetch(input, init);
       } else {
         console.log("[FETCH] Using proxy");
-        target = (process.env.HTTP_PROXY || process.env.http_proxy) + "/fetch";
+        target = egressUmaUrl + "/fetch";
 
         const bodyHeaders: Record<string, string> = {};
         if (init?.headers) {

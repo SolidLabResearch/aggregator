@@ -6,11 +6,16 @@ app = Flask(__name__)
 
 # Get the GET_URL from environment variable
 GET_URL = os.getenv("GET_URL")
-# Get the HTTP_PROXY from environment variable
-HTTP_PROXY = os.getenv("HTTP_PROXY")
+EGRESS_UMA_URL = os.getenv("EGRESS_UMA_URL", "").rstrip("/")
 
-# Prepare the proxies dictionary if HTTP_PROXY is set
-proxies = {"http": HTTP_PROXY} if HTTP_PROXY else None
+
+def fetch(url):
+    if not EGRESS_UMA_URL:
+        return requests.get(url)
+    return requests.post(
+        f"{EGRESS_UMA_URL}/fetch",
+        json={"url": url, "method": "GET", "headers": {}, "body": ""},
+    )
 
 @app.route("/")
 def index():
@@ -18,8 +23,7 @@ def index():
         return "GET_URL environment variable is not set", 500
 
     try:
-        # Perform GET request to GET_URL using proxy if provided
-        resp = requests.get(GET_URL, proxies=proxies)
+        resp = fetch(GET_URL)
         # Return the response content and status code
         return Response(
             resp.content,

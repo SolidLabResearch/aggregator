@@ -81,7 +81,7 @@ All variables except the proxy are required.
 Slice names may be supplied with or without a leading slash. Discovered patient
 URLs are built as `<pod>/slices/<slice-name>/query`.
 
-When a proxy is configured, outbound requests are sent to `<proxy>/fetch` as a
+When `EGRESS_UMA_URL` is configured, outbound requests are sent to `<proxy>/fetch` as a
 JSON request envelope. Without a proxy they are fetched directly. Failed fetches
 retry indefinitely with exponential backoff, beginning at one second and capped
 at five minutes. A pod or authorization problem therefore does not terminate the

@@ -1,15 +1,15 @@
 import { KeycloakOIDCAuth } from "./util.js";
 import { config, updateConfig } from "./config.js";
 
-export async function main(opts: { agg?: string, svc?: string } = {}) {
+export async function main(opts: { agg?: string, name?: string } = {}) {
   const aggId = opts.agg ?? config.activeAggregator;
   if (!aggId) throw new Error("No active aggregator. Use --agg or run `agg set-active`.");
 
   const agg = config.aggregators[aggId];
   if (!agg) throw new Error(`Aggregator "${aggId}" not found.`);
 
-  const svcName = opts.svc ?? config.service.name;
-  if (!svcName) throw new Error("No service name provided. Use --svc");
+  const svcName = opts.name ?? config.service.name;
+  if (!svcName) throw new Error("No service name provided. Use --name or configure service.name.");
 
   const svc = agg.services[svcName];
   if (!svc) throw new Error(`Service "${svcName}" not found on Aggregator "${aggId}"`);
@@ -26,22 +26,15 @@ export async function main(opts: { agg?: string, svc?: string } = {}) {
   console.log("\n=== Deleting service ===");
   console.log(`➡️  Endpoint: ${SERVICE_ENDPOINT}\n`);
 
-  try {
-    const response = await umaFetch(SERVICE_ENDPOINT, { method: "DELETE" });
-    console.log(`📡 Response status: ${response.status}`);
-    console.log("📄 Response body:\n");
-    console.log(await response.text() || "(empty response)");
-
-    if (response.ok) {
-      const { [svcName]: _, ...remainingServices } = agg.services;
-      const updatedAgg = { ...agg, services: remainingServices };
-      updateConfig({ aggregators: { ...config.aggregators, [aggId]: updatedAgg } });
-      console.log(`✅ Service "${svcName}" removed from aggregator "${aggId}" in config.`);
-    }
-  } catch (err: any) {
-    console.error("\n❌ Failed to delete service:");
-    console.error(err?.message || err);
+  const response = await umaFetch(SERVICE_ENDPOINT, { method: "DELETE" });
+  const body = await response.text();
+  console.log(`📡 Response status: ${response.status}`);
+  if (!response.ok) {
+    throw new Error(`Failed to delete service "${svcName}": ${response.status}${body ? `, response: ${body}` : ""}`);
   }
 
-  console.log("\n=== Done ===");
+  const { [svcName]: _, ...remainingServices } = agg.services;
+  const updatedAgg = { ...agg, services: remainingServices };
+  updateConfig({ aggregators: { ...config.aggregators, [aggId]: updatedAgg } });
+  console.log(`✅ Service "${svcName}" deleted from aggregator "${aggId}".`);
 }

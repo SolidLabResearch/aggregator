@@ -137,21 +137,13 @@ async function umaProxyFetch(input: RequestInfo | URL, init?: RequestInit): Prom
 
   console.log(`[FETCH] Requesting: ${originalUrl}`);
 
-  if (target.startsWith("https")) {
-    if (!process.env.HTTPS_PROXY && !process.env.https_proxy) {
-      console.log("[FETCH] No HTTPS proxy configured, direct request");
-      return fetch(input, init);
-    }
-    console.log("[FETCH] Using HTTPS proxy");
-    target = (process.env.HTTPS_PROXY || process.env.https_proxy) + "/fetch";
-  } else {
-    if (!process.env.HTTP_PROXY && !process.env.http_proxy) {
-      console.log("[FETCH] No HTTP proxy configured, direct request");
-      return fetch(input, init);
-    }
-    console.log("[FETCH] Using HTTP proxy");
-    target = (process.env.HTTP_PROXY || process.env.http_proxy) + "/fetch";
+  const egressUmaUrl = process.env.EGRESS_UMA_URL?.replace(/\/+$/, "");
+  if (!egressUmaUrl) {
+    console.log("[FETCH] No UMA egress configured, direct request");
+    return fetch(input, init);
   }
+  console.log("[FETCH] Using UMA egress");
+  target = egressUmaUrl + "/fetch";
 
   // Prepare headers for the proxy payload
   const bodyHeaders: Record<string, string> = {};

@@ -193,6 +193,21 @@ agg get-service --agg https://aggregator.example.org/id  # specific aggregator
 | `--svc <name>` | Service name (overrides active) |
 | `--agg <id>` | Aggregator ID to use instead of the active one |
 
+#### `agg delete-service`
+
+Delete a deployed service and remove it from the local CLI configuration.
+
+```bash
+agg delete-service --name prepare-data
+agg delete-service --name prepare-data --agg https://aggregator.example.org/id
+```
+
+| Option | Description |
+|---|---|
+| `--name <name>` | Service name (defaults to `service.name` from config) |
+| `--agg <id>` | Aggregator ID to use instead of the active one |
+| `--svc <name>` | Deprecated alias for `--name` |
+
 #### `agg list-outputs`
 
 List every dataset distribution available for a service. The output ID has the

@@ -75,10 +75,10 @@ func decodeK8sObject(
 func applyResolvedInputBindings(obj interface{}, resourceID string, bindings []model.ResolvedInputBinding, values map[string]rdfgo.ITerm) error {
 	for _, binding := range bindings {
 		term, ok := values[binding.Predicate]
-		if !ok {
-			continue
+		value := ""
+		if ok {
+			value = strings.Trim(term.GetValue(), "<>")
 		}
-		value := strings.Trim(term.GetValue(), "<>")
 		for _, target := range binding.Targets {
 			if target.Resource != resourceID {
 				continue
@@ -186,8 +186,7 @@ func buildUMAEnv() []corev1.EnvVar {
 	)
 
 	return []corev1.EnvVar{
-		{Name: "HTTP_PROXY", Value: proxy},
-		{Name: "http_proxy", Value: proxy},
+		{Name: "EGRESS_UMA_URL", Value: proxy},
 	}
 }
 

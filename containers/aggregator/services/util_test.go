@@ -90,6 +90,42 @@ func TestApplyResolvedInputBindingsSetsTargetEnvironment(t *testing.T) {
 	}
 }
 
+func TestApplyResolvedInputBindingsSetsMissingValueToEmptyString(t *testing.T) {
+	deployment := &appsv1.Deployment{
+		Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name: "prepare-data",
+				Env:  []corev1.EnvVar{{Name: "POLL_INTERVAL", Value: "existing-default"}},
+			}},
+		}}},
+	}
+	bindings := []model.ResolvedInputBinding{{
+		Parameter: "pollInterval",
+		Predicate: "https://aggregator.example/deployments/prepare-data#poll-interval",
+		Targets: []model.ResolvedEnvironmentTarget{{
+			Resource: "workload", Container: "prepare-data", Env: "POLL_INTERVAL",
+		}},
+	}}
+
+	if err := applyResolvedInputBindings(deployment, "workload", bindings, map[string]rdfgo.ITerm{}); err != nil {
+		t.Fatalf("applyResolvedInputBindings: %v", err)
+	}
+	if got := deployment.Spec.Template.Spec.Containers[0].Env; len(got) != 1 || got[0].Name != "POLL_INTERVAL" || got[0].Value != "" {
+		t.Fatalf("unexpected environment: %#v", got)
+	}
+}
+
+func TestBuildUMAEnvUsesDedicatedProxyVariable(t *testing.T) {
+	oldID, oldNamespace := model.ID, model.Namespace
+	model.ID, model.Namespace = "aggregator-1", "test"
+	t.Cleanup(func() { model.ID, model.Namespace = oldID, oldNamespace })
+
+	env := buildUMAEnv()
+	if len(env) != 1 || env[0].Name != "EGRESS_UMA_URL" || env[0].Value != "http://egress-uma-aggregator-1.test.svc.cluster.local:8080" {
+		t.Fatalf("unexpected UMA environment: %#v", env)
+	}
+}
+
 func TestResolveResourceReferences(t *testing.T) {
 	deployment := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 		Volumes: []corev1.Volume{

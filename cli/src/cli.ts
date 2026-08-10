@@ -94,10 +94,11 @@ program
   .command("delete-service")
   .description("Delete a service on the aggregator")
   .option("--agg <id>",   "Aggregator ID to use instead of active")
-  .option("--svc <name>", "Service name to use instead of active")
+  .option("--name <name>", "Service name")
+  .option("--svc <name>", "Deprecated alias for --name")
   .action(async (opts) => {
     const { main } = await import("./delete-service.js");
-    await main({ agg: opts.agg, svc: opts.svc });
+    await main({ agg: opts.agg, name: opts.name ?? opts.svc });
   });
 
 program
