@@ -107,9 +107,9 @@ export const PATIENT_QUERY = `
     ?patient a foaf:Person .
 
     OPTIONAL {
-      ?patient sphn:hasIdentifier ?identifier ;
-        ?identifier saref:hasValue ?idValue ;
-        ?identifier fhir:issuer ?issuer .
+      ?patient sphn:hasIdentifier ?identifier .
+      ?identifier saref:hasValue ?idValue ;
+        fhir:issuer ?issuer .
     }
   }
 `;
@@ -343,6 +343,7 @@ export const OXFORD_QUERY = `
 PREFIX moveUp: <http://moveup.care/>
 PREFIX prov: <https://www.w3.org/TR/prov-o/>
 PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX qo: <https://ns.faqir.org/q-o#>
 SELECT ?res ?timestamp ?patient ?question ?value WHERE {
     ?res a qo:QuestionnaireResponse ;
         prov:atTime ?timestamp ;
