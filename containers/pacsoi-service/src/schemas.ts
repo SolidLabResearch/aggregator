@@ -102,12 +102,14 @@ export const PATIENT_QUERY = `
   PREFIX foaf: <http://xmlns.com/foaf/0.1/>
   PREFIX sphn: <https://sphn.ch/>
   PREFIX saref: <https://saref.etsi.org/core/>
-  SELECT ?patient ?idValue WHERE {
+  PREFIX fhir: <http://hl7.org/fhir/>
+  SELECT ?patient ?idValue ?issuer WHERE {
     ?patient a foaf:Person .
 
     OPTIONAL {
       ?patient sphn:hasIdentifier ?identifier ;
-        ?identifier saref:hasValue ?idValue .
+        ?identifier saref:hasValue ?idValue ;
+        ?identifier fhir:issuer ?issuer .
     }
   }
 `;

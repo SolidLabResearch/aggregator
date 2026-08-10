@@ -4,7 +4,8 @@ type WeightObservation = {
 };
 
 type PatientData = {
-  identifiers: string[]
+  patientIDs: Set<string>;
+  identifiers: Set<string>;
   procedureTs: Date | undefined;
   observations: WeightObservation[];
 };
@@ -27,7 +28,9 @@ export type DistributionStats = {
  * index.ts; this class does not perform its own locking.
  */
 export class WeightDistribution {
+  private nextRecordID = 1;
   private identifiers = new Map<string, string>();
+  private issuedIdentifiers = new Map<string, string>();
   private patients = new Map<string, PatientData>();
   private monthly = new Map<number, number[]>();
   private procedureBuffer = new Map<string, Date>();
@@ -37,26 +40,41 @@ export class WeightDistribution {
   // Public API
   // ================================
   /** Registers the canonical patient URI and, optionally, a pseudo identifier. */
-  addPatientIdentifier(patientID: string, identifier?: string) {
-    const existing = this.patients.get(patientID);
-    if (!existing) {
-      console.log(`[addPatientIdentifiers] Adding new patient ${patientID}`);
-      this.patients.set(patientID, {
-        identifiers: [patientID],
+  addPatientIdentifier(patientID: string, identifier?: string, issuer?: string) {
+    let recordID = this.identifiers.get(patientID);
+    if (!recordID) {
+      recordID = `record-${this.nextRecordID++}`;
+      console.log(`[addPatientIdentifier] Adding ${patientID} to new record ${recordID}`);
+      this.patients.set(recordID, {
+        patientIDs: new Set([patientID]),
+        identifiers: new Set([patientID]),
         procedureTs: undefined,
         observations: []
       });
-      this.identifiers.set(patientID, patientID);
+      this.identifiers.set(patientID, recordID);
     }
 
     if (identifier) {
-      console.log(`[addPatientIdentifier] Adding external identifier ${identifier} for patient ${patientID}`);
-      this.identifiers.set(identifier, patientID);
-      this.patients.get(patientID)!.identifiers.push(identifier);
+      if (!issuer) {
+        console.warn(`[addPatientIdentifier] Ignoring identifier ${identifier} without issuer`);
+      } else {
+        const identityKey = JSON.stringify([issuer, identifier]);
+        const matchingRecordID = this.issuedIdentifiers.get(identityKey);
+        if (matchingRecordID && matchingRecordID !== recordID) {
+          recordID = this.mergeRecords(recordID, matchingRecordID);
+        }
+        const record = this.patients.get(recordID)!;
+        record.patientIDs.add(patientID);
+        record.identifiers.add(identifier);
+        this.identifiers.set(patientID, recordID);
+        this.identifiers.set(identifier, recordID);
+        this.issuedIdentifiers.set(identityKey, recordID);
+        console.log(`[addPatientIdentifier] Added ${issuer}|${identifier} to ${recordID}`);
+      }
     }
 
-    this.flushProcedures(patientID);
-    this.flushObservations(patientID);
+    this.flushProcedures(recordID);
+    this.flushObservations(recordID);
   }
 
   /** Records the first procedure observed for a patient, buffering if unknown. */
@@ -190,9 +208,18 @@ export class WeightDistribution {
   /** Removes a patient and that patient's contribution from every aggregate. */
   removePatient(patientID: string) {
     console.log(`[removePatient] Removing patient ${patientID}`);
-    const patient = this.patients.get(patientID);
+    const recordID = this.identifiers.get(patientID);
+    const patient = recordID ? this.patients.get(recordID) : undefined;
     if (!patient) {
       console.log(`[removePatient] Patient ${patientID} not found`);
+      return;
+    }
+
+    patient.patientIDs.delete(patientID);
+    patient.identifiers.delete(patientID);
+    this.identifiers.delete(patientID);
+    if (patient.patientIDs.size > 0) {
+      console.log(`[removePatient] Removed ${patientID} from ${recordID}; record retained`);
       return;
     }
 
@@ -201,6 +228,9 @@ export class WeightDistribution {
       this.procedureBuffer.delete(identifier);
       this.observationsBuffer.delete(identifier);
       this.identifiers.delete(identifier);
+    }
+    for (const [key, owner] of this.issuedIdentifiers) {
+      if (owner === recordID) this.issuedIdentifiers.delete(key);
     }
 
     if (patient.procedureTs) {
@@ -218,7 +248,7 @@ export class WeightDistribution {
 
     // This must also happen when no procedure was seen; otherwise re-adding the
     // patient leaves a stale record without an identifier mapping.
-    this.patients.delete(patientID);
+    this.patients.delete(recordID!);
     console.log(`[removePatient] Patient ${patientID} removed`);
   }
 
@@ -269,6 +299,58 @@ export class WeightDistribution {
   // ================================
   // Helpers
   // ================================
+
+  private mergeRecords(firstID: string, secondID: string): string {
+    const first = this.patients.get(firstID)!;
+    const second = this.patients.get(secondID)!;
+    const recordID = `record-${this.nextRecordID++}`;
+    const procedures = [first.procedureTs, second.procedureTs].filter((d): d is Date => !!d);
+    const procedureTs = procedures.length
+      ? new Date(Math.min(...procedures.map(date => date.getTime())))
+      : undefined;
+
+    if (first.procedureTs && second.procedureTs && first.procedureTs.getTime() !== second.procedureTs.getTime()) {
+      console.warn(`[mergeRecords] ${firstID} and ${secondID} have different procedures; using earliest ${procedureTs!.toISOString()}`);
+    }
+
+    this.removeWeightContributions(first);
+    this.removeWeightContributions(second);
+    const merged: PatientData = {
+      patientIDs: new Set([...first.patientIDs, ...second.patientIDs]),
+      identifiers: new Set([...first.identifiers, ...second.identifiers]),
+      procedureTs,
+      observations: [...first.observations, ...second.observations],
+    };
+    this.patients.delete(firstID);
+    this.patients.delete(secondID);
+    this.patients.set(recordID, merged);
+    for (const alias of merged.identifiers) this.identifiers.set(alias, recordID);
+    for (const [key, owner] of this.issuedIdentifiers) {
+      if (owner === firstID || owner === secondID) this.issuedIdentifiers.set(key, recordID);
+    }
+    if (procedureTs) {
+      for (const obs of merged.observations) {
+        const month = this.monthsSince(procedureTs, obs.timestamp);
+        const bucket = this.monthly.get(month) ?? [];
+        bucket.push(obs.value);
+        this.monthly.set(month, bucket);
+      }
+    }
+    console.log(`[mergeRecords] Merged ${firstID} and ${secondID} into ${recordID}`);
+    return recordID;
+  }
+
+  private removeWeightContributions(patient: PatientData) {
+    if (!patient.procedureTs) return;
+    for (const obs of patient.observations) {
+      const month = this.monthsSince(patient.procedureTs, obs.timestamp);
+      const bucket = this.monthly.get(month);
+      if (!bucket) continue;
+      const index = bucket.indexOf(obs.value);
+      if (index !== -1) bucket.splice(index, 1);
+      if (!bucket.length) this.monthly.delete(month);
+    }
+  }
 
   /** Calendar-month difference; day and time within a month are intentionally ignored. */
   private monthsSince(start: Date, end: Date): number {

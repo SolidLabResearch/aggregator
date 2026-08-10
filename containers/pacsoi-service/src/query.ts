@@ -174,10 +174,11 @@ export async function queryPatients(
 
     if (isAddition(b)) {
       console.log('[queryPatients] Received addition:', b.toString());
-      if (b.has('idValue')) {
+      if (b.has('idValue') && b.has('issuer')) {
         const ID = b.get('idValue').value;
-        await wMutex.runExclusive(() => wDist.addPatientIdentifier(patientID, ID));
-        await oMutex.runExclusive(() => oDist.addPatientIdentifier(patientID, ID));
+        const issuer = b.get('issuer').value;
+        await wMutex.runExclusive(() => wDist.addPatientIdentifier(patientID, ID, issuer));
+        await oMutex.runExclusive(() => oDist.addPatientIdentifier(patientID, ID, issuer));
       } else {
         await wMutex.runExclusive(() => wDist.addPatientIdentifier(patientID));
         await oMutex.runExclusive(() => oDist.addPatientIdentifier(patientID));

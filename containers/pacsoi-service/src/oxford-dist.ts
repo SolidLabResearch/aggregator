@@ -95,10 +95,11 @@ const VALUE_MAP = new Map<string, Map<string, number>>([
 ]);
 
 interface PatientData {
-  identifiers: string[];
+  patientIDs: Set<string>;
+  identifiers: Set<string>;
   procedureTs: Date | undefined;
   responses: Map<string, ResponseBuffer>;
-  monthlyScores: Map<number, number[]>;
+  scores: { value: number; timestamp: Date }[];
 }
 
 /** Aggregate statistics returned for a single relative calendar month. */
@@ -118,7 +119,9 @@ export interface OxfordDistributionStats {
  * present. Calls must be protected by the Oxford mutex owned by index.ts.
  */
 class OxfordScoreDistribution {
+  private nextRecordID = 1;
   private identifiers = new Map<string, string>();
+  private issuedIdentifiers = new Map<string, string>();
   private patients = new Map<string, PatientData>();
   private monthly = new Map<number, number[]>();
   private procedureBuffer = new Map<string, Date>();
@@ -128,28 +131,42 @@ class OxfordScoreDistribution {
   // Public API
   // ================================
   /** Registers the canonical patient URI and, optionally, a pseudo identifier. */
-  addPatientIdentifier(patientID: string, identifier?: string) {
-    const existing = this.patients.get(patientID);
-    if (!existing) {
-      console.log(`[addPatientIdentifier] Adding new patient ${patientID}`);
-      this.patients.set(patientID, {
-        identifiers: [patientID],
+  addPatientIdentifier(patientID: string, identifier?: string, issuer?: string) {
+    let recordID = this.identifiers.get(patientID);
+    if (!recordID) {
+      recordID = `record-${this.nextRecordID++}`;
+      console.log(`[addPatientIdentifier] Adding ${patientID} to new record ${recordID}`);
+      this.patients.set(recordID, {
+        patientIDs: new Set([patientID]),
+        identifiers: new Set([patientID]),
         procedureTs: undefined,
         responses: new Map<string, ResponseBuffer>(),
-        monthlyScores: new Map<number, number[]>(),
+        scores: [],
       });
-      this.identifiers.set(patientID, patientID);
+      this.identifiers.set(patientID, recordID);
     }
 
     if (identifier) {
-      console.log(`[addPatientIdentifier] Adding external identifier ${identifier} for patient ${patientID}`);
-      this.identifiers.set(identifier, patientID);
-      this.patients.get(patientID)!.identifiers.push(identifier);
+      if (!issuer) {
+        console.warn(`[addPatientIdentifier] Ignoring identifier ${identifier} without issuer`);
+      } else {
+        const identityKey = JSON.stringify([issuer, identifier]);
+        const matchingRecordID = this.issuedIdentifiers.get(identityKey);
+        if (matchingRecordID && matchingRecordID !== recordID) {
+          recordID = this.mergeRecords(recordID, matchingRecordID);
+        }
+        const record = this.patients.get(recordID)!;
+        record.patientIDs.add(patientID);
+        record.identifiers.add(identifier);
+        this.identifiers.set(patientID, recordID);
+        this.identifiers.set(identifier, recordID);
+        this.issuedIdentifiers.set(identityKey, recordID);
+        console.log(`[addPatientIdentifier] Added ${issuer}|${identifier} to ${recordID}`);
+      }
     }
 
-    this.flushProcedures(patientID);
-    // TODO only flush responses for this identifier
-    this.flushResponses(patientID);
+    this.flushProcedures(recordID);
+    this.flushResponses(recordID);
   }
 
   /** Records the first knee procedure observed, buffering if the patient is unknown. */
@@ -253,13 +270,10 @@ class OxfordScoreDistribution {
 
     const month = this.monthsSince(data.procedureTs, res.timestamp);
 
-    const patientMonthlyData = data.monthlyScores.get(month) ?? [];
-    patientMonthlyData.push(res.getScore());
-    data.monthlyScores.set(month, patientMonthlyData)
-
     const globalMonthlyData = this.monthly.get(month) ?? [];
     globalMonthlyData.push(res.getScore());
     this.monthly.set(month, globalMonthlyData);
+    data.scores.push({ value: res.getScore(), timestamp: res.timestamp });
 
     data.responses.delete(res.id);
 
@@ -331,9 +345,18 @@ class OxfordScoreDistribution {
   /** Removes a patient and that patient's scores from every aggregate. */
   removePatient(patientID: string) {
     console.log(`[removePatient] Removing patient ${patientID}`);
-    const patient = this.patients.get(patientID);
+    const recordID = this.identifiers.get(patientID);
+    const patient = recordID ? this.patients.get(recordID) : undefined;
     if (!patient) {
       console.log(`[removePatient] Patient ${patientID} not found`);
+      return;
+    }
+
+    patient.patientIDs.delete(patientID);
+    patient.identifiers.delete(patientID);
+    this.identifiers.delete(patientID);
+    if (patient.patientIDs.size > 0) {
+      console.log(`[removePatient] Removed ${patientID} from ${recordID}; record retained`);
       return;
     }
 
@@ -343,24 +366,25 @@ class OxfordScoreDistribution {
       this.responseBuffer.delete(identifier);
       this.identifiers.delete(identifier);
     }
+    for (const [key, owner] of this.issuedIdentifiers) {
+      if (owner === recordID) this.issuedIdentifiers.delete(key);
+    }
 
     if (patient.procedureTs) {
       // Remove scores already included in the global month buckets.
-      for (const [month, scores] of patient.monthlyScores) {
+      for (const score of patient.scores) {
+        const month = this.monthsSince(patient.procedureTs, score.timestamp);
         const bucket = this.monthly.get(month);
         if (!bucket) continue;
-
-        for (const score of scores) {
-          const idx = bucket.indexOf(score);
-          if (idx !== -1) bucket.splice(idx, 1);
-        }
+        const idx = bucket.indexOf(score.value);
+        if (idx !== -1) bucket.splice(idx, 1);
         if (bucket.length === 0) this.monthly.delete(month);
       }
     }
 
     // This must also happen when no procedure was seen; otherwise re-adding the
     // patient leaves a stale record without an identifier mapping.
-    this.patients.delete(patientID);
+    this.patients.delete(recordID!);
     console.log(`[removePatient] Patient ${patientID} removed`);
   }
 
@@ -410,6 +434,68 @@ class OxfordScoreDistribution {
   // ================================
   // Helpers
   // ================================
+
+  private mergeRecords(firstID: string, secondID: string): string {
+    const first = this.patients.get(firstID)!;
+    const second = this.patients.get(secondID)!;
+    const recordID = `record-${this.nextRecordID++}`;
+    const procedures = [first.procedureTs, second.procedureTs].filter((d): d is Date => !!d);
+    const procedureTs = procedures.length
+      ? new Date(Math.min(...procedures.map(date => date.getTime())))
+      : undefined;
+
+    if (first.procedureTs && second.procedureTs && first.procedureTs.getTime() !== second.procedureTs.getTime()) {
+      console.warn(`[mergeRecords] ${firstID} and ${secondID} have different procedures; using earliest ${procedureTs!.toISOString()}`);
+    }
+
+    this.removeScoreContributions(first);
+    this.removeScoreContributions(second);
+    const responses = new Map(first.responses);
+    for (const [responseID, response] of second.responses) {
+      const existing = responses.get(responseID);
+      if (existing) existing.merge(response);
+      else responses.set(responseID, response);
+    }
+    const merged: PatientData = {
+      patientIDs: new Set([...first.patientIDs, ...second.patientIDs]),
+      identifiers: new Set([...first.identifiers, ...second.identifiers]),
+      procedureTs,
+      responses,
+      scores: [...first.scores, ...second.scores],
+    };
+    this.patients.delete(firstID);
+    this.patients.delete(secondID);
+    this.patients.set(recordID, merged);
+    for (const alias of merged.identifiers) this.identifiers.set(alias, recordID);
+    for (const [key, owner] of this.issuedIdentifiers) {
+      if (owner === firstID || owner === secondID) this.issuedIdentifiers.set(key, recordID);
+    }
+    if (procedureTs) {
+      for (const score of merged.scores) {
+        const month = this.monthsSince(procedureTs, score.timestamp);
+        const bucket = this.monthly.get(month) ?? [];
+        bucket.push(score.value);
+        this.monthly.set(month, bucket);
+      }
+    }
+    for (const response of [...merged.responses.values()]) {
+      if (response.complete()) this.addScore(recordID, response);
+    }
+    console.log(`[mergeRecords] Merged ${firstID} and ${secondID} into ${recordID}`);
+    return recordID;
+  }
+
+  private removeScoreContributions(patient: PatientData) {
+    if (!patient.procedureTs) return;
+    for (const score of patient.scores) {
+      const month = this.monthsSince(patient.procedureTs, score.timestamp);
+      const bucket = this.monthly.get(month);
+      if (!bucket) continue;
+      const index = bucket.indexOf(score.value);
+      if (index !== -1) bucket.splice(index, 1);
+      if (!bucket.length) this.monthly.delete(month);
+    }
+  }
 
   private monthsSince(start: Date, end: Date): number {
     return (

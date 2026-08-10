@@ -35,8 +35,10 @@ iterators, starts the incremental queries, and starts Fastify on port 3000.
 discovers, it attaches the patient, procedure, measurement, and questionnaire
 slices to their iterators.
 
-The patient query maps the canonical patient URI and any pseudo identifiers to
-one patient. Procedure and observation streams can use either form. Since the
+The patient query maps canonical patient URIs and pseudo identifiers to internal
+records. A record may contain multiple patient URIs. When two records contain
+the same identifier value from the same issuer, they are merged under a new
+record ID. Procedure and observation streams can use either form. Since the
 streams are independent, their events may arrive in any order. The distribution
 classes buffer procedures, weights, and questionnaire answers until the patient
 mapping and relevant procedure date are known.
@@ -138,8 +140,9 @@ Logs use a component prefix. Follow them in this order when an output is empty:
 4. `[queryPatients]` should register canonical and pseudo identifiers. Without
    these, procedure/observation events remain buffered. Detail-stream deletions
    are ignored because an identifier update must not deactivate the patient.
-5. `[queryProcedures]` should establish the baseline procedure. Only the first
-   procedure received per patient is used; later ones are logged and skipped.
+5. `[queryProcedures]` should establish the baseline procedure. When identity
+   resolution merges records with different procedures, the earliest is used
+   and a warning is logged.
 6. `[queryWeights]` and `[queryOxfordResponses]` confirm source bindings. The
    distribution logs then say whether data was buffered or assigned to a month.
 7. `[getStats]` and `[toCSV]` report how many populated month rows were emitted.
@@ -153,8 +156,10 @@ Logs use a component prefix. Follow them in this order when an output is empty:
   discovered pod sources and the patient's complete in-memory projection from
   both distributions. Patient-detail or pseudo-identifier deletion events do
   not remove the patient.
-- Only the first procedure encountered for a patient is retained. Event arrival
-  order, rather than earliest timestamp, determines which one wins. Currently only one procedure is expected per patient, but a future version may support multiple procedures.
+- Only one procedure is retained per internal record. Later procedures on an
+  already-resolved record are skipped. If records with different procedures are
+  merged, the earliest timestamp wins and existing results are re-bucketed.
+  A future version may support multiple procedures.
 - Buffered data has no expiry or size limit. Missing patient/procedure events can
   therefore grow memory usage over a long run.
 - Data is held at observation level: `count` is the number of weights or completed
