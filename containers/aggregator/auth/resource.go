@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 
 	"github.com/sirupsen/logrus"
 )
@@ -46,5 +47,34 @@ func RegisterResource(resourceId string, scopes []model.Scope) error {
 	}
 
 	logrus.Infof("Resource %s registered successfully", resourceId)
+	return nil
+}
+
+func DeleteResource(resourceID string) error {
+	if model.Owner.AuthzServerURL == "" {
+		return nil
+	}
+	body, err := json.Marshal(map[string]string{"resource_id": resourceID})
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequest(
+		http.MethodDelete,
+		fmt.Sprintf("http://ingress-uma.%s.svc.cluster.local:8080/resources", model.Namespace),
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := model.HttpClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		data, _ := io.ReadAll(response.Body)
+		return fmt.Errorf("resource deletion failed: status=%d, body=%s", response.StatusCode, data)
+	}
 	return nil
 }

@@ -122,12 +122,9 @@ func (collec *ServiceCollection) removeServiceState(serviceID string) {
 func (collec *ServiceCollection) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request), scopes []model.Scope) error {
 	fullURL := model.ExternalBaseURL() + pattern
 
-	// Register resource and define policies
+	// Registering a resource instantiates all active default policies.
 	if err := auth.RegisterResource(fullURL, scopes); err != nil {
 		return fmt.Errorf("failed to register resource %s: %w", fullURL, err)
-	}
-	if err := auth.DefinePolicy(fullURL, scopes); err != nil {
-		return fmt.Errorf("failed to define policy for resource %s: %w", fullURL, err)
 	}
 
 	// Register HTTP handler

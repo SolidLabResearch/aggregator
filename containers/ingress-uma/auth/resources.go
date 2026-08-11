@@ -172,9 +172,13 @@ func createResource(aggData AggregatorAuthData, resourceId string, scopes []Scop
 			return nil
 		}
 		resourceIndexMu.Lock()
-		resourceIndex[resourceId] = ResourceData{UmaID: responseData.ID, AggData: aggData, Scopes: append([]Scope(nil), scopes...)}
+		resourceData := ResourceData{UmaID: responseData.ID, AggData: aggData, Scopes: append([]Scope(nil), scopes...)}
+		resourceIndex[resourceId] = resourceData
 		resourceIndexMu.Unlock()
 		logrus.WithFields(logrus.Fields{"resource_id": resourceId, "uma_id": responseData.ID}).Info("Registered resource with UMA")
+		if err := instantiateDefaultsForResource(resourceId, resourceData); err != nil {
+			return fmt.Errorf("failed to instantiate default policies: %w", err)
+		}
 	}
 	return nil
 }

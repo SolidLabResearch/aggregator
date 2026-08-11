@@ -44,6 +44,7 @@ func main() {
 	mux.HandleFunc("/resources", auth.HandleResourceRequest)
 	mux.HandleFunc("/derived-resources", auth.HandleDerivedResourceRequest)
 	mux.HandleFunc("/policies", auth.HandlePolicyRequest)
+	mux.HandleFunc("/default-policies", auth.HandleDefaultPolicyRequest)
 
 	// healthz endpoint
 	mux.HandleFunc("/healthz", healthz)

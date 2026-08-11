@@ -10,6 +10,92 @@ These policies ensure that only authorized users can:
 
 By default, the Aggregator automatically creates these policies for the user who deployed it. If you are using a different account, you must configure the required permissions via the authorization server API.
 
+## Default policy API
+
+Each Aggregator exposes a `/policies` collection for reusable default policies.
+Its public URL is the Aggregator base URL followed by `/policies`, and the path
+is registered as a protected resource when the Aggregator is deployed.
+
+A default policy is a complete JSON-LD ODRL `Offer` or `Agreement` template and
+can contain profiles, assignees, duties, remedies, and arbitrary constraints.
+Its permissions must omit `odrl:action`, `odrl:target`, and `odrl:assigner`.
+The Aggregator supplies those fields for each resource: actions come from the
+resource's scopes, the target is its UMA resource identifier, and the assigner
+is the Aggregator-controlled subject.
+
+Instantiated policies, permissions, and nested JSON-LD nodes receive unique
+`urn:uuid:` identifiers. Before submission to UMA, any blank nodes introduced
+by JSON-LD expansion are replaced with `urn:uuid:` identifiers, so no blank
+nodes reach the authorization server.
+
+Creating a policy applies it to every resource already registered by the
+Aggregator. It is also applied automatically to service descriptions,
+distributions, operational endpoints, and other resources registered later.
+Policy-management resources are the exception: `/policies` and individual
+`/policies/<policy-id>` resources receive only the automatically created owner
+Agreement. User-created default policies can therefore grant access to services
+and data, but cannot grant permission to list, create, or delete policies.
+
+```http
+POST http://aggregator.local/agg1/policies
+Content-Type: application/ld+json
+
+{
+  "@context": [
+    "http://www.w3.org/ns/odrl.jsonld",
+    {
+      "gx": "https://registry.lab.gaia-x.eu/development/api/trusted-shape-registry/v1/shapes/jsonld/trustframework#",
+      "ovc": "https://w3id.org/gaia-x/ovc/1/"
+    }
+  ],
+  "@type": "Offer",
+  "uid": "http://example.com/policy/123",
+  "profile": "https://w3id.org/gaia-x/ovc/1/",
+  "permission": [
+    {
+      "@type": "Permission",
+      "ovc:constraint": [
+        {
+          "ovc:leftOperand": "$.credentialSubject.gx:legalAddress.gx:countrySubdivisionCode",
+          "operator": "http://www.w3.org/ns/odrl/2/isAnyOf",
+          "rightOperand": ["FR-HDF", "BE-BRU"],
+          "ovc:credentialSubjectType": "gx:LegalParticipant"
+        }
+      ]
+    }
+  ]
+}
+```
+
+The response is `201 Created`, includes the policy URL in `Location`, and
+returns the unchanged JSON-LD template. `GET` returns a JSON-LD array of active
+templates. Each entry includes
+`https://w3id.org/aggregator#policyId`, the management identifier used in its
+delete URL; this is separate from the policy's ODRL `uid`.
+
+List active defaults or delete one by its identifier:
+
+```http
+GET http://aggregator.local/agg1/policies
+
+DELETE http://aggregator.local/agg1/policies/<policy-id>
+```
+
+The CLI provides shortcuts for listing policies and creating a default
+Agreement for an assignee:
+
+```bash
+agg list-policies
+agg add-default-agreement https://example.org/alice/profile/card#me
+```
+
+Both commands use the active Aggregator by default. Pass `--agg <id>` to select
+another configured Aggregator.
+
+Deleting a default revokes its instantiated permissions from existing
+resources and prevents it from being applied to new resources. The owner policy
+is created automatically when the Aggregator starts and is returned by `GET`.
+
 ## Assumed Setup
 
 The examples in this guide assume the following configuration:

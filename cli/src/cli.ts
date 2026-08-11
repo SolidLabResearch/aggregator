@@ -142,6 +142,24 @@ program
   });
 
 program
+  .command("list-policies")
+  .description("List active default ODRL policies")
+  .option("--agg <id>", "Aggregator ID to use instead of active")
+  .action(async (opts) => {
+    const { listPolicies } = await import("./policies.js");
+    await listPolicies({ agg: opts.agg });
+  });
+
+program
+  .command("add-default-agreement <assignee>")
+  .description("Add a default ODRL Agreement for an assignee ID")
+  .option("--agg <id>", "Aggregator ID to use instead of active")
+  .action(async (assignee: string, opts) => {
+    const { addDefaultAgreement } = await import("./policies.js");
+    await addDefaultAgreement({ assignee, agg: opts.agg });
+  });
+
+program
   .command("set-config <file>")
   .description("Load a JSON file as config")
   .action((file: string) => {

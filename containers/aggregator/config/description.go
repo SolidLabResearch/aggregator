@@ -22,16 +22,13 @@ type AggregatorDescription struct {
 	TokenExpiry       string `json:"token_expiry,omitempty"`
 	DeploymentCatalog string `json:"deployment_catalog"`
 	ServiceCollection string `json:"service_collection"`
+	Policies          string `json:"policies"`
 }
 
 func InitAggregatorDescription(mux *http.ServeMux) error {
 	if err := auth.RegisterResource(model.ExternalBaseURL(), []model.Scope{model.Read}); err != nil {
 		return fmt.Errorf("failed to register resource %s: %w", model.ExternalBaseURL(), err)
 	}
-	if err := auth.DefinePolicy(model.ExternalBaseURL(), []model.Scope{model.Read}); err != nil {
-		return fmt.Errorf("failed to define policy for resource %s: %w", model.ExternalBaseURL(), err)
-	}
-
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		handleAggregatorDescription(w, r)
 	})
@@ -65,6 +62,7 @@ func handleAggregatorDescription(w http.ResponseWriter, r *http.Request) {
 		TokenExpiry:       tokenExpiry,
 		DeploymentCatalog: model.ExternalServerURL() + model.DeploymentCatalog,
 		ServiceCollection: model.ExternalBaseURL() + model.ServiceCollection,
+		Policies:          model.ExternalBaseURL() + "/policies",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
