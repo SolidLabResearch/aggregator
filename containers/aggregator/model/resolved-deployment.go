@@ -56,9 +56,10 @@ type ResolvedInputBinding struct {
 }
 
 type ResolvedEnvironmentTarget struct {
-	Resource  string
-	Container string
-	Env       string
+	Resource      string
+	Container     string
+	Env           string
+	ValueTemplate string
 }
 
 type ResolvedDataset struct {

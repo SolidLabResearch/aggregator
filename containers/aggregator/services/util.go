@@ -83,6 +83,10 @@ func applyResolvedInputBindings(obj interface{}, resourceID string, bindings []m
 			if target.Resource != resourceID {
 				continue
 			}
+			targetValue := value
+			if target.ValueTemplate != "" {
+				targetValue = strings.ReplaceAll(target.ValueTemplate, "{{value}}", value)
+			}
 			deployment, ok := obj.(*appsv1.Deployment)
 			if !ok {
 				return fmt.Errorf("input %q environment target %q is not a Deployment", binding.Parameter, resourceID)
@@ -94,7 +98,7 @@ func applyResolvedInputBindings(obj interface{}, resourceID string, bindings []m
 					continue
 				}
 				found = true
-				setEnvironmentVariable(container, target.Env, value)
+				setEnvironmentVariable(container, target.Env, targetValue)
 			}
 			if !found {
 				return fmt.Errorf("input %q references unknown container %q", binding.Parameter, target.Container)

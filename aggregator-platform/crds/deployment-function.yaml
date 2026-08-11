@@ -153,6 +153,9 @@ spec:
                                 env:
                                   type: string
                                   pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+                                valueTemplate:
+                                  type: string
+                                  minLength: 1
                     routeBindings:
                       type: object
                       properties:

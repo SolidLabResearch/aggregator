@@ -90,6 +90,28 @@ func TestApplyResolvedInputBindingsSetsTargetEnvironment(t *testing.T) {
 	}
 }
 
+func TestApplyResolvedInputBindingsTemplatesTargetEnvironment(t *testing.T) {
+	deployment := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+		Containers: []corev1.Container{{Name: "pacsoi"}},
+	}}}}
+	predicate := "https://aggregator.example/deployments/pacsoi#id"
+	bindings := []model.ResolvedInputBinding{{
+		Parameter: "id", Predicate: predicate,
+		Targets: []model.ResolvedEnvironmentTarget{{
+			Resource: "workload", Container: "pacsoi", Env: "SOURCES",
+			ValueTemplate: "https://pacsoi-kvasir.faqir.org/faqir-management/slices/{{value}}-ActivePatients/query",
+		}},
+	}}
+	values := map[string]rdfgo.ITerm{predicate: rdfgo.NewLiteral("hospital-1", "", nil)}
+	if err := applyResolvedInputBindings(deployment, "workload", bindings, values); err != nil {
+		t.Fatalf("applyResolvedInputBindings: %v", err)
+	}
+	want := "https://pacsoi-kvasir.faqir.org/faqir-management/slices/hospital-1-ActivePatients/query"
+	if got := deployment.Spec.Template.Spec.Containers[0].Env; len(got) != 1 || got[0].Name != "SOURCES" || got[0].Value != want {
+		t.Fatalf("unexpected environment: %#v", got)
+	}
+}
+
 func TestApplyResolvedInputBindingsSetsMissingValueToEmptyString(t *testing.T) {
 	deployment := &appsv1.Deployment{
 		Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{

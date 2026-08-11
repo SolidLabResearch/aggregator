@@ -4,36 +4,11 @@ deploymentFunctions:
       title: Deploy PACSOI service
       description: Deploys the PACSOI weight and oxford distribution workload.
       expects:
-        - name: sources
-          predicate: sources
-          type: xsd:anyURI
-          required: true
-          title: Patient source collection
-        - name: patient-slice
-          predicate: patient-slice
+        - name: id
+          predicate: id
           type: xsd:string
           required: true
-          title: Patient observation slice
-        - name: weight-slice
-          predicate: weight-slice
-          type: xsd:string
-          required: true
-          title: Weight observation slice
-        - name: oxford-slice
-          predicate: oxford-slice
-          type: xsd:string
-          required: true
-          title: Oxford Questionnaire Responses slice
-        - name: bar-procedure-slice
-          predicate: bar-procedure-slice
-          type: xsd:string
-          required: true
-          title: Bariatric Procedure slice
-        - name: knee-procedure-slice
-          predicate: knee-procedure-slice
-          type: xsd:string
-          required: true
-          title: Knee Procedure slice
+          title: FAQIR management ID
       returns:
         name: deployedService
         predicate: service
@@ -60,40 +35,27 @@ deploymentFunctions:
                     - name: pacsoi
                       image: pacsoi-service
                       imagePullPolicy: Never
+                      env:
+                        - name: PATIENT_SLICE
+                          value: PatientSlice
+                        - name: WEIGHT_SLICE
+                          value: WeightObservationsSlice
+                        - name: OXFORD_SLICE
+                          value: OxfordResponseSlice
+                        - name: BAR_PROCEDURE_SLICE
+                          value: BariatricProcedureSlice
+                        - name: KNEE_PROCEDURE_SLICE
+                          value: KneeProcedureSlice
                       ports:
                         - name: http
                           containerPort: 3000
       inputBindings:
-        - parameter: sources
+        - parameter: id
           targets:
             - resource: workload
               container: pacsoi
               env: SOURCES
-        - parameter: patient-slice
-          targets:
-            - resource: workload
-              container: pacsoi
-              env: PATIENT_SLICE
-        - parameter: weight-slice
-          targets:
-            - resource: workload
-              container: pacsoi
-              env: WEIGHT_SLICE
-        - parameter: oxford-slice
-          targets:
-            - resource: workload
-              container: pacsoi
-              env: OXFORD_SLICE
-        - parameter: bar-procedure-slice
-          targets:
-            - resource: workload
-              container: pacsoi
-              env: BAR_PROCEDURE_SLICE
-        - parameter: knee-procedure-slice
-          targets:
-            - resource: workload
-              container: pacsoi
-              env: KNEE_PROCEDURE_SLICE
+              valueTemplate: https://pacsoi-kvasir.faqir.org/faqir-management/slices/{{value}}-ActivePatients/query
       routeBindings:
         distributions:
           weight-distribution:

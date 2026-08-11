@@ -101,6 +101,7 @@ func ResolveDeploymentBundle(uri string, bundle *DeploymentBundle) (*ResolvedDep
 			}
 			resolvedBinding.Targets = append(resolvedBinding.Targets, ResolvedEnvironmentTarget{
 				Resource: target.Resource, Container: target.Container, Env: target.Env,
+				ValueTemplate: target.ValueTemplate,
 			})
 		}
 		resolved.InputBindings = append(resolved.InputBindings, resolvedBinding)

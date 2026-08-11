@@ -19,7 +19,8 @@ The example below uses:
 | Setting | Value |
 | --- | --- |
 | Aggregator host | `https://aggregator.local:5443` |
-| Doctor source slice | `http://localhost:8080/doctor/PatientSlice` |
+| FAQIR management ID | `hospital-1` |
+| Generated source slice | `https://pacsoi-kvasir.faqir.org/faqir-management/slices/hospital-1-ActivePatients/query` |
 | Patient slice name | `PatientSlice` |
 | Weight slice name | `WeightObservationsSlice` |
 | Oxford slice name | `OxfordResponseSlice` |
@@ -37,6 +38,31 @@ The PACSOI configuration consists of:
   dataset distribution; and
 - `config/deployment-functions/pacsoi.yaml`, which describes the workload,
   inputs, environment bindings, and route binding.
+
+The slice names are deployment settings rather than service input parameters.
+If your Kvasir deployment uses different names, change the `PATIENT_SLICE`,
+`WEIGHT_SLICE`, `OXFORD_SLICE`, `BAR_PROCEDURE_SLICE`, and
+`KNEE_PROCEDURE_SLICE` values in
+[`config/deployment-functions/pacsoi.yaml`](../config/deployment-functions/pacsoi.yaml),
+under `orchestration.resources[].manifest.spec.template.spec.containers[].env`.
+
+The same file constructs `SOURCES` from the service's `id` input. To use a
+different Kvasir host, path, or slice naming convention, change the
+`valueTemplate` on the `SOURCES` input binding:
+
+```yaml
+inputBindings:
+  - parameter: id
+    targets:
+      - resource: workload
+        container: pacsoi
+        env: SOURCES
+        valueTemplate: https://pacsoi-kvasir.faqir.org/faqir-management/slices/{{value}}-ActivePatients/query
+```
+
+At deployment time, every `{{value}}` placeholder is replaced with the supplied
+`id`. For example, `hospital-1` produces
+`https://pacsoi-kvasir.faqir.org/faqir-management/slices/hospital-1-ActivePatients/query`.
 
 The standard deployment commands load both files automatically:
 
@@ -100,12 +126,7 @@ Content-Type: text/turtle
 <https://aggregator.local:5443/doc-aggregator/services/pacsoi>
   a aggr:ServiceRequest ;
   aggr:deploymentFunction <https://aggregator.local:5443/deployments/pacsoi> ;
-  pacsoi:sources <http://localhost:8080/doctor/PatientSlice> ;
-  pacsoi:patient-slice "PatientSlice" ;
-  pacsoi:weight-slice "WeightObservationsSlice" ;
-  pacsoi:oxford-slice "OxfordResponseSlice" ;
-  pacsoi:bar-procedure-slice "BariatricProcedureSlice" ;
-  pacsoi:knee-procedure-slice "KneeProcedureSlice" .
+  pacsoi:id "hospital-1" .
 ```
 
 The equivalent CLI command is:
@@ -114,12 +135,7 @@ The equivalent CLI command is:
 agg create-service \
   --name pacsoi \
   --deployment-function pacsoi \
-  --param sources=http://localhost:8080/doctor/PatientSlice \
-  --param patient-slice=PatientSlice \
-  --param weight-slice=WeightObservationsSlice \
-  --param oxford-slice=OxfordResponseSlice \
-  --param bar-procedure-slice=BariatricProcedureSlice \
-  --param knee-procedure-slice=KneeProcedureSlice
+  --param id=hospital-1
 ```
 
 ## Retrieve the result

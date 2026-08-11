@@ -191,9 +191,10 @@ type InputBinding struct {
 }
 
 type EnvironmentBinding struct {
-	Resource  string `json:"resource"`
-	Container string `json:"container"`
-	Env       string `json:"env"`
+	Resource      string `json:"resource"`
+	Container     string `json:"container"`
+	Env           string `json:"env"`
+	ValueTemplate string `json:"valueTemplate,omitempty"`
 }
 
 type RouteBindings struct {
