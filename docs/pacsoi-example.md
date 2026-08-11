@@ -64,6 +64,42 @@ At deployment time, every `{{value}}` placeholder is replaced with the supplied
 `id`. For example, `hospital-1` produces
 `https://pacsoi-kvasir.faqir.org/faqir-management/slices/hospital-1-ActivePatients/query`.
 
+### Update contexts, slice definitions, and queries
+
+The data model used to read each slice is defined in
+[`containers/pacsoi-service/src/schemas.ts`](../containers/pacsoi-service/src/schemas.ts).
+For each slice, that file keeps three related definitions together:
+
+- the `*_SLICE_CONTEXT` maps compact names and prefixes to RDF IRIs;
+- the `*_SLICE_SCHEMA` describes the GraphQL-LD types, fields, filters, and
+  subscription exposed by the slice; and
+- the `*_QUERY` SPARQL query selects the data consumed by the PACSOI service.
+
+Use this map to find the definitions to update:
+
+| Slice | JSON-LD context | GraphQL-LD slice schema | SPARQL query |
+| --- | --- | --- | --- |
+| Active patients/HCP | `HCP_SLICE_CONTEXT` | `HCP_SLICE_SCHEMA` | `HCP_QUERY` |
+| Patient details | `PATIENT_SLICE_CONTEXT` | `PATIENT_SLICE_SCHEMA` | `PATIENT_QUERY` |
+| Weight values | `WEIGHT_SLICE_CONTEXT` | `WEIGHT_SLICE_SCHEMA` | `WEIGHT_QUERY` |
+| Bariatric procedures | `BAR_PROCEDURE_SLICE_CONTEXT` | `BAR_PROCEDURE_SLICE_SCHEMA` | `PROCEDURE_QUERY` |
+| Knee procedures | `KNEE_PROCEDURE_SLICE_CONTEXT` | `KNEE_PROCEDURE_SLICE_SCHEMA` | `PROCEDURE_QUERY` |
+| Oxford responses | `OXFORD_SLICE_CONTEXT` | `OXFORD_SLICE_SCHEMA` | `OXFORD_QUERY` |
+
+When changing a slice model, keep all three layers aligned:
+
+1. Update its context if a prefix or RDF predicate/class IRI changes.
+2. Update its slice schema if the query root, RDF types, relationships, fields,
+   filters, or subscription shape changes.
+3. Update its SPARQL query to match the new RDF model. The `SELECT` variable
+   names are consumed directly by
+   [`containers/pacsoi-service/src/query.ts`](../containers/pacsoi-service/src/query.ts),
+   so preserve those binding names or update `query.ts` at the same time.
+
+`PROCEDURE_QUERY` is shared by the bariatric and knee procedure slices. A
+change to it affects both; if the models diverge, define separate queries and
+wire each one into `query.ts`.
+
 The standard deployment commands load both files automatically:
 
 ```bash

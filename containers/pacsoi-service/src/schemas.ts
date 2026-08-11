@@ -143,20 +143,13 @@ export const WEIGHT_SLICE_CONTEXT = {
 };
 export const WEIGHT_SLICE_SCHEMA = `
 type Query {
-    weightObservations: [WeightObservation!]!
+    weightValues: [WeightValue!]!
 }
 
-type WeightObservation @class(iri: "sosa:Observation") {
-  id: ID!
-  sosa_hasFeatureOfInterest: ID!
-  sosa_hasResult: WeightValue!
-  ...
-}
-
-// TODO make sure this property is a weight property
-// How do we do this?
 type WeightProperty @class(iri: "saref:Property"){
     id: ID!
+    ofSubject: ID!
+        @predicate(iri: "saref:hasProperty", reverse: true)
 }
 
 type WeightValue @class(iri: "saref:PropertyValue") {
