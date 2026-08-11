@@ -15,6 +15,13 @@ profiles:
           name: Prepare data
           expects: []
           returns: [preparedData]
+      endpoints:
+        status:
+          title: Preparation status
+          description: Current and most recent data-preparation run state.
+          path: /status
+          operations:
+            - method: GET
     datasetProfiles:
       prepared-data:
         title: Prepared data

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -87,6 +88,7 @@ func handleFetchRequest(w http.ResponseWriter, r *http.Request) {
 		TargetMethod  string                 `json:"method"`
 		TargetHeaders map[string]interface{} `json:"headers"`
 		TargetBody    string                 `json:"body"`
+		TargetBodyB64 string                 `json:"bodyBase64"`
 	}
 
 	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
@@ -110,8 +112,20 @@ func handleFetchRequest(w http.ResponseWriter, r *http.Request) {
 		"target_method": payload.TargetMethod,
 	}).Info("Preparing outbound request")
 
+	if payload.TargetBody != "" && payload.TargetBodyB64 != "" {
+		http.Error(w, "body and bodyBase64 are mutually exclusive", http.StatusBadRequest)
+		return
+	}
 	var outboundBody io.Reader
-	if payload.TargetBody != "" {
+	if payload.TargetBodyB64 != "" {
+		decoded, err := base64.StdEncoding.DecodeString(payload.TargetBodyB64)
+		if err != nil {
+			http.Error(w, "bodyBase64 must be valid base64", http.StatusBadRequest)
+			return
+		}
+		outboundBody = bytes.NewReader(decoded)
+		logrus.WithField("target_body_size", len(decoded)).Debug("Prepared base64-decoded outbound body")
+	} else if payload.TargetBody != "" {
 		outboundBody = bytes.NewReader([]byte(payload.TargetBody))
 		logrus.WithField("target_body_size", len(payload.TargetBody)).Debug("Prepared outbound body")
 	}

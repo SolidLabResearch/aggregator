@@ -223,6 +223,22 @@ agg list-outputs --svc my-svc --agg <id>
 | `--svc <name>` | Service name (overrides active) |
 | `--agg <id>` | Aggregator ID to use instead of the active one |
 
+#### `agg list-endpoints`
+
+List every operational endpoint advertised by a service description. Endpoint
+IDs are derived from the endpoint path relative to the service URL, for example
+`/status` becomes `status` and `/session/start` becomes `session/start`.
+
+```bash
+agg list-endpoints
+agg list-endpoints --svc prepare-data --agg <id>
+```
+
+| Option | Description |
+|---|---|
+| `--svc <name>` | Service name (overrides active) |
+| `--agg <id>` | Aggregator ID to use instead of the active one |
+
 #### `agg get-output <dataset/distribution>`
 
 Fetch exactly one distribution using an ID reported by `list-outputs`. Dataset
@@ -232,6 +248,22 @@ created; they are not supplied manually to the CLI.
 ```bash
 agg get-output result/content
 agg get-output result/content --svc my-svc --agg <id>
+```
+
+| Option | Description |
+|---|---|
+| `--svc <name>` | Service name (overrides active) |
+| `--agg <id>` | Aggregator ID to use instead of the active one |
+
+#### `agg get-endpoint <endpoint>`
+
+Fetch exactly one operational endpoint using an ID reported by
+`list-endpoints`. The CLI first loads the UMA-protected service description,
+discovers the endpoint URL, and then performs a GET on that endpoint.
+
+```bash
+agg get-endpoint status
+agg get-endpoint session/start --svc my-svc --agg <id>
 ```
 
 | Option | Description |

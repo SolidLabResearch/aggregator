@@ -122,6 +122,26 @@ program
   });
 
 program
+  .command("list-endpoints")
+  .description("List the available operational endpoints")
+  .option("--agg <id>",   "Aggregator ID to use instead of active")
+  .option("--svc <name>", "Service name to use instead of configured default")
+  .action(async (opts) => {
+    const { main } = await import("./list-endpoints.js");
+    await main({ agg: opts.agg, svc: opts.svc });
+  });
+
+program
+  .command("get-endpoint <endpoint>")
+  .description("Fetch one operational endpoint by endpoint ID")
+  .option("--agg <id>",   "Aggregator ID to use instead of active")
+  .option("--svc <name>", "Service name to use instead of configured default")
+  .action(async (endpoint, opts) => {
+    const { main } = await import("./get-endpoint.js");
+    await main({ endpoint, agg: opts.agg, svc: opts.svc });
+  });
+
+program
   .command("set-config <file>")
   .description("Load a JSON file as config")
   .action((file: string) => {

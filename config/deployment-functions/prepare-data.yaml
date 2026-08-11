@@ -21,9 +21,10 @@ deploymentFunctions:
           title: Polling enabled
         - name: pollInterval
           predicate: poll-interval
-          type: xsd:duration
+          type: xsd:string
           required: false
-          title: Polling interval
+          title: Polling schedule
+          description: Cron expression or alias such as @hourly used for scheduled polling.
       returns:
         name: DataPreparationService
         predicate: service
@@ -53,6 +54,12 @@ deploymentFunctions:
               container: prepare-data
               env: POLL_INTERVAL
       routeBindings:
+        endpoints:
+          status:
+            resource: workload
+            container: prepare-data
+            port: http
+            internalPath: /status
         distributions:
           prepared-data:
             zip:
