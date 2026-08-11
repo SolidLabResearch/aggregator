@@ -58,6 +58,7 @@ constructing output URLs.
 - [CLI reference](cli/README.md)
 - [UMA policies](docs/uma-policies.md)
 - [Slices cluster access](slices/docs/kubectl.md)
+- [Adding Slices worker nodes](slices/docs/workers.md)
 
 The CSS and KSS documents describe identity-provider-specific setup and are
 only needed when using those environments.

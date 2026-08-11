@@ -117,6 +117,14 @@ not automatically exposed as a dataset. Every function output exposed as a
 dataset must reference a `DatasetProfile`, and every distribution in that
 profile must have a route binding.
 
+Endpoint semantics also determine their UMA authorization actions. An
+operation with `executes` requires the ODRL `execute` action, while an operation
+with `updates` requires ODRL `modify`; an operation containing both requires
+both actions. These full ODRL action IRIs are registered directly as UMA scopes
+and used unchanged in policies and authorization tickets. Operations without
+semantic annotations retain the HTTP fallback: GET/HEAD require `odrl:read`,
+POST/PUT/PATCH require `odrl:write`, and DELETE requires `odrl:delete`.
+
 ## Profiled fetch example
 
 The profile is optional, but a profiled fetch deployment can reference this
@@ -257,6 +265,11 @@ inputs directly into the selected container environment fields, and creates a
 Kubernetes Service per routed workload.
 Multiple distributions and operational endpoints may therefore target
 different resources and named ports.
+
+Every container also receives `AGG_PUBLIC_URL`, containing the canonical public
+URL of its deployed service instance. Services should use this value when they
+need to construct their own endpoint or callback URLs. The platform owns this
+variable and overrides a conflicting value from an embedded manifest.
 
 Within a Deployment manifest, ConfigMap and PVC resource IDs are local symbolic
 names in standard PodSpec reference fields. For example, `configMap.name:

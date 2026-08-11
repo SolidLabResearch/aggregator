@@ -89,28 +89,6 @@ Deploy after verification:
 make slices-deploy
 ```
 
-## Fallback: deploy through an SSH tunnel
-
-If changing the launcher allowlist is undesirable, deploy through a temporary
-tunnel:
-
-```sh
-./slices/deploy-tunnel.sh
-```
-
-This forwards local port `16443` directly to the internal API, verifies the API
-certificate against its `193.191.169.51` subject alternative name, deploys the
-Slices configuration plus all profile and deployment-function values, waits for the
-Aggregator Server rollout, and closes the tunnel on exit.
-
-Environment overrides:
-
-```sh
-SLICES_LOCAL_PORT=26443 \
-SLICES_CONTEXT=admin@aggregator-cluster \
-./slices/deploy-tunnel.sh
-```
-
 ## Install or refresh the kubeconfig
 
 Obtain the launcher connection details:
@@ -142,40 +120,3 @@ Verify the named context without changing the active context:
 ```sh
 kubectl --context admin@aggregator-cluster get nodes
 ```
-
-## Troubleshooting
-
-An error such as:
-
-```text
-Kubernetes cluster unreachable
-unexpected EOF
-connection reset by peer
-```
-
-usually means the current public IP is denied by Nginx. Check the launcher:
-
-```sh
-slices bi ssh kublauncher \
-  --experiment aggregator-platform \
-  --proxy auto
-sudo tail -n 50 /var/log/nginx/error.log
-```
-
-`access forbidden by rule while initializing session` confirms an allowlist
-failure. Exit the launcher and rerun:
-
-```sh
-./slices/configure-proxy.sh
-```
-
-If TCP connects but Nginx does not report an allowlist denial, verify the
-internal control plane from the launcher:
-
-```sh
-nc -vz -w 10 10.10.210.167 6443
-openssl s_client -connect 10.10.210.167:6443 </dev/null
-```
-
-The public API port is continuously probed by internet scanners. Never replace
-the Kubernetes proxy's `deny all` rule with `allow all`.

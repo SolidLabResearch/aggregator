@@ -36,3 +36,29 @@ func TestDetermineScopesRejectsUnsupportedMethod(t *testing.T) {
 		t.Fatal("determineScopes(OPTIONS) unexpectedly succeeded")
 	}
 }
+
+func TestRequestedScopesUsesRegisteredODRLActions(t *testing.T) {
+	available := []Scope{Execute, Modify}
+	got, err := requestedScopes([]Scope{Execute, Modify, Execute}, available, "POST")
+	if err != nil {
+		t.Fatalf("requestedScopes: %v", err)
+	}
+	if len(got) != 2 || got[0] != Execute || got[1] != Modify {
+		t.Fatalf("requestedScopes = %v", got)
+	}
+	if string(got[0]) != OdrlPrefix+"execute" {
+		t.Fatalf("scope is not an ODRL action: %q", got[0])
+	}
+}
+
+func TestRequestedScopesRejectsUnregisteredAction(t *testing.T) {
+	if _, err := requestedScopes([]Scope{Delete}, []Scope{Execute}, "POST"); err == nil {
+		t.Fatal("requestedScopes accepted an unregistered action")
+	}
+}
+
+func TestScopeToActionIsIdentityConversion(t *testing.T) {
+	if got := scopeToAction(Execute); got == nil || got.GetValue() != string(Execute) {
+		t.Fatalf("scopeToAction(%q) = %#v", Execute, got)
+	}
+}

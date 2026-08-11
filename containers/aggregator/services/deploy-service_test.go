@@ -24,6 +24,7 @@ func TestDeployAggregatorServiceCreatesNativeResources(t *testing.T) {
 	service := &model.Service{
 		KubernetesName: "service-123e4567-e89b-12d3-a456-426614174000",
 		InstanceID:     "services-fetch-1",
+		FullPath:       "https://aggregator.example/aggregator-1/services/fetch-1",
 		Deployment: &model.DeploymentRequest{
 			Bindings: map[string]rdfgo.ITerm{predicate: rdfgo.NewNamedNode("https://example.org/data")},
 			Definition: &model.ResolvedDeployment{
@@ -58,6 +59,9 @@ func TestDeployAggregatorServiceCreatesNativeResources(t *testing.T) {
 	pod := deployment.Spec.Template.Spec
 	if pod.Containers[0].Env[0].Value != "https://example.org/data" {
 		t.Fatalf("input binding not applied: %#v", pod.Containers[0].Env)
+	}
+	if len(pod.Containers[0].Env) != 2 || pod.Containers[0].Env[1].Name != "AGG_PUBLIC_URL" || pod.Containers[0].Env[1].Value != service.FullPath {
+		t.Fatalf("public service URL not injected: %#v", pod.Containers[0].Env)
 	}
 	if pod.Volumes[0].ConfigMap.Name != ResourceKubernetesName(service.KubernetesName, "settings") ||
 		pod.Volumes[1].PersistentVolumeClaim.ClaimName != ResourceKubernetesName(service.KubernetesName, "data") {

@@ -10,14 +10,12 @@ import (
 type Scope string
 
 const (
-	Read   Scope = "urn:example:css:modes:read"
-	Create Scope = "urn:example:css:modes:create"
-	Delete Scope = "urn:example:css:modes:delete"
-	Write  Scope = "urn:example:css:modes:write"
-
-	// Future semantic UMA scopes:
-	// Execute Scope = "urn:example:css:modes:execute"
-	// Modify  Scope = "urn:example:css:modes:modify"
+	Read    Scope = OdrlPrefix + "read"
+	Create  Scope = OdrlPrefix + "create"
+	Delete  Scope = OdrlPrefix + "delete"
+	Write   Scope = OdrlPrefix + "write"
+	Execute Scope = OdrlPrefix + "execute"
+	Modify  Scope = OdrlPrefix + "modify"
 )
 
 func stringsToScopes(scopeStrings []string) []Scope {
@@ -29,23 +27,35 @@ func stringsToScopes(scopeStrings []string) []Scope {
 }
 
 func scopeToAction(scope Scope) rdfgo.INamedNode {
-	switch scope {
-	case Read:
-		return rdfgo.NewNamedNode(OdrlPrefix + "read")
-	case Write:
-		return rdfgo.NewNamedNode(OdrlPrefix + "write")
-	case Create:
-		return rdfgo.NewNamedNode(OdrlPrefix + "create")
-	case Delete:
-		return rdfgo.NewNamedNode(OdrlPrefix + "delete")
-	// Future semantic UMA scope mappings:
-	// case Execute:
-	// 	return rdfgo.NewNamedNode(OdrlPrefix + "execute")
-	// case Modify:
-	// 	return rdfgo.NewNamedNode(OdrlPrefix + "modify")
-	default:
+	if scope == "" {
 		return nil
 	}
+	return rdfgo.NewNamedNode(string(scope))
+}
+
+func requestedScopes(explicit, available []Scope, method string) ([]Scope, error) {
+	if len(explicit) == 0 {
+		return determineScopes(method, available)
+	}
+	availableSet := make(map[Scope]bool, len(available))
+	for _, scope := range available {
+		availableSet[scope] = true
+	}
+	seen := map[Scope]bool{}
+	result := make([]Scope, 0, len(explicit))
+	for _, scope := range explicit {
+		if !availableSet[scope] {
+			return nil, fmt.Errorf("scope %q is not registered for this resource", scope)
+		}
+		if scope != "" && !seen[scope] {
+			seen[scope] = true
+			result = append(result, scope)
+		}
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no authorization scopes requested")
+	}
+	return result, nil
 }
 
 func determineScopes(method string, resourceScopes []Scope) ([]Scope, error) {

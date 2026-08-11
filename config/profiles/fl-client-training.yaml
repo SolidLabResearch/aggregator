@@ -1,0 +1,164 @@
+profiles:
+  fl-client-training:
+    serviceProfile:
+      title: Federated learning client
+      description: |
+        Prepares hospital data, trains local model weights, and evaluates
+        aggregated model weights as one federated learning client.
+      parameters:
+        sessionId:
+          predicate: session-id
+          type: xsd:string
+          required: true
+          title: Session identifier
+        clientId:
+          predicate: client-id
+          type: xsd:string
+          required: true
+          title: Client identifier
+        expectedRounds:
+          predicate: expected-rounds
+          type: xsd:positiveInteger
+          required: true
+          title: Expected rounds
+        trainingConfig:
+          predicate: training-config
+          type: xsd:string
+          required: false
+          title: Training configuration
+        roundId:
+          predicate: round-id
+          type: xsd:nonNegativeInteger
+          required: true
+          title: Round identifier
+        replyUrl:
+          predicate: reply-url
+          type: xsd:anyURI
+          required: true
+          title: Result callback URL
+        globalWeights:
+          predicate: global-weights
+          type: xsd:base64Binary
+          required: true
+          title: Global model weights
+      outputs:
+        preparedData:
+          predicate: prepared-data
+          title: Prepared data
+          datasetProfileRef:
+            dataset: prepared-data
+        clientWeights:
+          predicate: client-weights
+          title: Client weights
+          datasetProfileRef:
+            dataset: client-weights
+        trainingMetrics:
+          predicate: training-metrics
+          title: Training metrics
+          datasetProfileRef:
+            dataset: training-metrics
+        evaluationMetrics:
+          predicate: evaluation-metrics
+          title: Evaluation metrics
+          datasetProfileRef:
+            dataset: evaluation-metrics
+      functions:
+        prepareData:
+          name: Prepare hospital data
+          expects: []
+          returns: [preparedData]
+        train:
+          name: Train local model
+          expects:
+            - sessionId
+            - clientId
+            - expectedRounds
+            - trainingConfig
+            - roundId
+            - replyUrl
+            - globalWeights
+          returns: [clientWeights, trainingMetrics]
+        evaluate:
+          name: Evaluate aggregated model
+          expects:
+            - sessionId
+            - clientId
+            - trainingConfig
+            - roundId
+            - replyUrl
+            - globalWeights
+          returns: [evaluationMetrics]
+      endpoints:
+        session-start:
+          title: Start client session
+          path: /session/start
+          operations:
+            - method: POST
+              updates:
+                function: train
+                parameters: [sessionId, clientId, expectedRounds, trainingConfig]
+        session-end:
+          title: End client session
+          path: /session/end
+          operations:
+            - method: POST
+              updates:
+                function: train
+                parameters: [sessionId, clientId, expectedRounds, trainingConfig]
+        train:
+          title: Train local model
+          path: /train
+          operations:
+            - method: POST
+              executes: train
+              updates:
+                function: train
+                parameters: [roundId, replyUrl, globalWeights]
+        evaluate:
+          title: Evaluate global model
+          path: /evaluate
+          operations:
+            - method: POST
+              executes: evaluate
+              updates:
+                function: evaluate
+                parameters: [roundId, replyUrl, globalWeights]
+        status:
+          title: Client status
+          path: /status
+          operations:
+            - method: GET
+    datasetProfiles:
+      prepared-data:
+        title: Prepared hospital data
+        description: Aggregated Parquet data prepared from the hospital slices.
+        distributions:
+          zip:
+            title: Prepared data archive
+            path: /results
+            urlType: downloadURL
+            mediaType: application/zip
+      client-weights:
+        title: Client model weights
+        distributions:
+          binary:
+            title: Client weights
+            path: /weights
+            urlType: downloadURL
+            mediaType: application/octet-stream
+      training-metrics:
+        title: Client training metrics
+        distributions:
+          json:
+            title: Training metrics
+            path: /metrics
+            urlType: accessURL
+            mediaType: application/json
+      evaluation-metrics:
+        title: Client evaluation metrics
+        distributions:
+          json:
+            title: Evaluation metrics
+            path: /evaluation-metrics
+            urlType: accessURL
+            mediaType: application/json

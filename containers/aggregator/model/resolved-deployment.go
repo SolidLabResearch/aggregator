@@ -33,8 +33,7 @@ type ResolvedOperation struct {
 	Executes          string
 	UpdatesFunction   string
 	UpdatesParameters []string
-	// Future semantic UMA scopes:
-	// Scopes []Scope
+	Scopes            []Scope
 }
 
 type ResolvedServiceProfile struct {

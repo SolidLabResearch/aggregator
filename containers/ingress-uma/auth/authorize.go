@@ -35,10 +35,9 @@ func InitAuth(extHost string, disbaleAuth bool) {
 
 func HandleAuthorizationRequest(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
-		ResourceID string `json:"resource_id"`
-		Method     string `json:"method"`
-		// Future semantic UMA scopes:
-		// Scopes []Scope `json:"scopes"`
+		ResourceID string  `json:"resource_id"`
+		Method     string  `json:"method"`
+		Scopes     []Scope `json:"scopes"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -79,16 +78,16 @@ func HandleAuthorizationRequest(w http.ResponseWriter, r *http.Request) {
 
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		ticketlessAuthorization(w, resData, payload.Method)
+		ticketlessAuthorization(w, resData, payload.Method, payload.Scopes)
 		return
 	}
 
-	ticketedAuthorization(w, r, resData, payload.Method)
+	ticketedAuthorization(w, r, resData, payload.Method, payload.Scopes)
 }
 
-func ticketlessAuthorization(w http.ResponseWriter, data ResourceData, method string) {
+func ticketlessAuthorization(w http.ResponseWriter, data ResourceData, method string, explicitScopes []Scope) {
 	permissions := make(map[string][]Scope)
-	scopes, err := determineScopes(method, data.Scopes)
+	scopes, err := requestedScopes(explicitScopes, data.Scopes, method)
 	if err != nil {
 		logrus.WithError(err).Error("Error determining scopes")
 		http.Error(w, "Error determining scopes", http.StatusUnauthorized)
@@ -119,7 +118,7 @@ func ticketlessAuthorization(w http.ResponseWriter, data ResourceData, method st
 	w.WriteHeader(http.StatusUnauthorized)
 }
 
-func ticketedAuthorization(w http.ResponseWriter, r *http.Request, data ResourceData, method string) {
+func ticketedAuthorization(w http.ResponseWriter, r *http.Request, data ResourceData, method string, explicitScopes []Scope) {
 	logrus.WithFields(logrus.Fields{"method": method, "path": r.URL.Path}).Info("🔍 Verifying authorization token")
 	permission, err := verifyTicket(r.Header.Get("Authorization"), []string{data.AggData.AuthzServer})
 	if err != nil {
@@ -131,7 +130,7 @@ func ticketedAuthorization(w http.ResponseWriter, r *http.Request, data Resource
 	logrus.WithFields(logrus.Fields{"count": len(permission), "permissions": permission}).Debug("🔑 User permissions retrieved")
 
 	// Determine required scopes for this request
-	requiredScopes, err := determineScopes(method, data.Scopes)
+	requiredScopes, err := requestedScopes(explicitScopes, data.Scopes, method)
 	if err != nil {
 		logrus.WithError(err).Error("Error determining scopes")
 		w.WriteHeader(http.StatusBadRequest)

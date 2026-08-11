@@ -1,0 +1,122 @@
+profiles:
+  weight-aggregation:
+    serviceProfile:
+      title: Federated weight aggregation
+      description: Coordinates federated clients and aggregates model weights and evaluation metrics.
+      parameters:
+        expectedRounds:
+          predicate: expected-rounds
+          type: xsd:positiveInteger
+          required: true
+          title: Expected rounds
+        minimumClients:
+          predicate: minimum-clients
+          type: xsd:positiveInteger
+          required: false
+          title: Minimum clients
+        roundTimeout:
+          predicate: round-timeout
+          type: xsd:positiveInteger
+          required: false
+          title: Round timeout in seconds
+        trainingConfig:
+          predicate: training-config
+          type: xsd:string
+          required: false
+          title: Training configuration
+        sessionId:
+          predicate: session-id
+          type: xsd:string
+          required: true
+          title: Session identifier
+        roundId:
+          predicate: round-id
+          type: xsd:nonNegativeInteger
+          required: true
+          title: Round identifier
+        clientId:
+          predicate: client-id
+          type: xsd:string
+          required: true
+          title: Client identifier
+        clientWeights:
+          predicate: client-weights
+          type: xsd:base64Binary
+          required: true
+          title: Client weights
+        trainingMetrics:
+          predicate: training-metrics
+          type: xsd:string
+          required: true
+          title: Client training metrics
+        clientEvaluationMetrics:
+          predicate: client-evaluation-metrics
+          type: xsd:string
+          required: true
+          title: Client evaluation metrics
+      outputs:
+        aggregatedEvaluationMetrics:
+          predicate: aggregated-evaluation-metrics
+          title: Aggregated evaluation metrics
+          datasetProfileRef:
+            dataset: aggregated-evaluation-metrics
+      functions:
+        startSession:
+          name: Start federated training session
+          expects: [expectedRounds, minimumClients, roundTimeout, trainingConfig]
+          returns: []
+        acceptTrainingResult:
+          name: Accept client training result
+          expects: [sessionId, roundId, clientId, clientWeights, trainingMetrics]
+          returns: []
+        acceptEvaluationResult:
+          name: Accept client evaluation result
+          expects: [sessionId, roundId, clientId, clientEvaluationMetrics]
+          returns: []
+        getEvaluationMetrics:
+          name: Get aggregated evaluation metrics
+          expects: []
+          returns: [aggregatedEvaluationMetrics]
+      endpoints:
+        session-start:
+          title: Start federated training session
+          path: /session/start
+          operations:
+            - method: POST
+              executes: startSession
+              updates:
+                function: startSession
+                parameters: [expectedRounds, minimumClients, roundTimeout, trainingConfig]
+        training-results:
+          title: Receive client training results
+          path: /training-results
+          operations:
+            - method: POST
+              executes: acceptTrainingResult
+              updates:
+                function: acceptTrainingResult
+                parameters: [sessionId, roundId, clientId, clientWeights, trainingMetrics]
+        evaluation-results:
+          title: Receive client evaluation results
+          path: /evaluation-results
+          operations:
+            - method: POST
+              executes: acceptEvaluationResult
+              updates:
+                function: acceptEvaluationResult
+                parameters: [sessionId, roundId, clientId, clientEvaluationMetrics]
+        status:
+          title: Aggregation status
+          path: /status
+          operations:
+            - method: GET
+    datasetProfiles:
+      aggregated-evaluation-metrics:
+        title: Aggregated evaluation metrics
+        description: Most recent weighted evaluation loss and accuracy.
+        distributions:
+          json:
+            title: Aggregated evaluation metrics
+            path: /evaluation-metrics
+            urlType: accessURL
+            mediaType: application/json

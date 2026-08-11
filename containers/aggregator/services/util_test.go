@@ -148,6 +148,33 @@ func TestBuildUMAEnvUsesDedicatedProxyVariable(t *testing.T) {
 	}
 }
 
+func TestInjectPublicServiceURLIntoEveryContainer(t *testing.T) {
+	deployment := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+		Containers: []corev1.Container{
+			{Name: "first", Env: []corev1.EnvVar{{Name: "AGG_PUBLIC_URL", Value: "https://wrong.example"}}},
+			{Name: "second"},
+		},
+	}}}}
+	const publicURL = "https://aggregator.example/owner/services/training"
+	if err := injectPublicServiceURL(deployment, publicURL); err != nil {
+		t.Fatalf("injectPublicServiceURL: %v", err)
+	}
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		found := false
+		for _, env := range container.Env {
+			if env.Name == "AGG_PUBLIC_URL" {
+				found = true
+				if env.Value != publicURL {
+					t.Fatalf("container %q has AGG_PUBLIC_URL %q", container.Name, env.Value)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("container %q has no AGG_PUBLIC_URL", container.Name)
+		}
+	}
+}
+
 func TestResolveResourceReferences(t *testing.T) {
 	deployment := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 		Volumes: []corev1.Volume{

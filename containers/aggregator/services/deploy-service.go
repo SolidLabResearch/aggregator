@@ -68,6 +68,9 @@ func deploy(
 			return err
 		}
 		resolveResourceReferences(obj, resourceNames)
+		if err := injectPublicServiceURL(obj, service.FullPath); err != nil {
+			return err
+		}
 		if useUMA {
 			if err := injectUMAEnv(obj); err != nil {
 				return err

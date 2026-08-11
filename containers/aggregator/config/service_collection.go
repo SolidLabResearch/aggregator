@@ -29,11 +29,10 @@ type ServiceCollection struct {
 }
 
 type serviceRoute struct {
-	serviceID  string
-	forwardURL string
-	methods    map[string]bool
-	// Future semantic UMA scopes:
-	// methodScopes map[string][]model.Scope
+	serviceID    string
+	forwardURL   string
+	methods      map[string]bool
+	methodScopes map[string][]model.Scope
 }
 
 func InitServiceCollection(mux *http.ServeMux) error {
@@ -77,6 +76,15 @@ func (collec *ServiceCollection) setRoute(pattern string, route serviceRoute, sc
 	alreadyRegistered := collec.registeredPatterns[pattern]
 	collec.servicesMu.Unlock()
 	if alreadyRegistered {
+		if err := auth.RegisterResource(model.ExternalBaseURL()+pattern, scopes); err != nil {
+			collec.servicesMu.Lock()
+			delete(collec.routes, pattern)
+			collec.servicesMu.Unlock()
+			return fmt.Errorf("failed to refresh resource %s: %w", model.ExternalBaseURL()+pattern, err)
+		}
+		if len(route.methodScopes) > 0 {
+			model.SetAuthorizationScopes(model.ExternalBaseURL()+pattern, route.methodScopes)
+		}
 		return nil
 	}
 	err := collec.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
@@ -100,8 +108,9 @@ func (collec *ServiceCollection) setRoute(pattern string, route serviceRoute, sc
 		collec.servicesMu.Unlock()
 		return err
 	}
-	// Future semantic UMA scopes:
-	// model.SetAuthorizationScopes(model.ExternalBaseURL()+pattern, route.methodScopes)
+	if len(route.methodScopes) > 0 {
+		model.SetAuthorizationScopes(model.ExternalBaseURL()+pattern, route.methodScopes)
+	}
 	collec.servicesMu.Lock()
 	collec.registeredPatterns[pattern] = true
 	collec.servicesMu.Unlock()
@@ -114,6 +123,7 @@ func (collec *ServiceCollection) removeServiceState(serviceID string) {
 	delete(collec.services, serviceID)
 	for path, route := range collec.routes {
 		if route.serviceID == serviceID {
+			model.DeleteAuthorizationScopes(model.ExternalBaseURL() + path)
 			delete(collec.routes, path)
 		}
 	}
@@ -418,11 +428,18 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 		}
 		seen[path] = true
 		methods := map[string]bool{}
+		methodScopes := map[string][]model.Scope{}
+		resourceScopes := []model.Scope{}
 		for _, operation := range endpoint.Operations {
-			methods[strings.ToUpper(operation.Method)] = true
+			method := strings.ToUpper(operation.Method)
+			methods[method] = true
+			scopes := append([]model.Scope(nil), operation.Scopes...)
+			if len(scopes) == 0 {
+				scopes = defaultEndpointScopes(method)
+			}
+			methodScopes[method] = uniqueScopes(append(methodScopes[method], scopes...))
+			resourceScopes = uniqueScopes(append(resourceScopes, scopes...))
 		}
-		// Future semantic UMA scopes can build a methodScopes map from each
-		// operation's Scopes and register the union instead of read/write.
 		internalPath := endpoint.Target.InternalPath
 		if internalPath == "" {
 			internalPath = "/"
@@ -430,7 +447,10 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 		forwardURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s",
 			services.ResourceKubernetesName(service.KubernetesName, endpoint.Target.Resource),
 			model.Namespace, endpoint.Target.Port, internalPath)
-		err = collec.setRoute(path, serviceRoute{serviceID: service.InstanceID, forwardURL: forwardURL, methods: methods}, []model.Scope{model.Read, model.Write})
+		err = collec.setRoute(path, serviceRoute{
+			serviceID: service.InstanceID, forwardURL: forwardURL,
+			methods: methods, methodScopes: methodScopes,
+		}, resourceScopes)
 		if err != nil {
 			logrus.WithError(err).Errorf("Error registering operational endpoint %s", endpointID)
 			http.Error(w, "Failed to create service endpoint", http.StatusInternalServerError)
@@ -459,6 +479,32 @@ func (collec *ServiceCollection) postService(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Failed to write response", http.StatusInternalServerError)
 		return
 	}
+}
+
+func defaultEndpointScopes(method string) []model.Scope {
+	switch strings.ToUpper(method) {
+	case http.MethodGet, http.MethodHead:
+		return []model.Scope{model.Read}
+	case http.MethodPost, http.MethodPut, http.MethodPatch:
+		return []model.Scope{model.Write}
+	case http.MethodDelete:
+		return []model.Scope{model.Delete}
+	default:
+		return nil
+	}
+}
+
+func uniqueScopes(scopes []model.Scope) []model.Scope {
+	seen := map[model.Scope]bool{}
+	result := make([]model.Scope, 0, len(scopes))
+	for _, scope := range scopes {
+		if scope == "" || seen[scope] {
+			continue
+		}
+		seen[scope] = true
+		result = append(result, scope)
+	}
+	return result
 }
 
 // DELETE config deletes a service with the given ID

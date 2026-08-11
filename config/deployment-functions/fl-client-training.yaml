@@ -1,0 +1,188 @@
+deploymentFunctions:
+  fl-client-training:
+    function:
+      title: Deploy federated learning client
+      description: Deploys data preparation and model training in one shared-volume workload.
+      expects:
+        - name: caseSlice
+          predicate: case-slice
+          type: xsd:anyURI
+          required: true
+          title: Hospital case slice
+          description: Case slice URL without the /query suffix.
+        - name: datasetId
+          predicate: dataset-id
+          type: xsd:string
+          required: true
+          title: Dataset identifier
+        - name: pollEnabled
+          predicate: poll-enabled
+          type: xsd:boolean
+          required: true
+          title: Polling enabled
+        - name: pollInterval
+          predicate: poll-interval
+          type: xsd:string
+          required: true
+          title: Polling schedule
+          description: Cron expression or alias such as @hourly.
+      returns:
+        name: deployedService
+        predicate: service
+        title: Deployed federated learning client
+    profileRef:
+      name: fl-client-training
+    orchestration:
+      inputBindings:
+        - parameter: caseSlice
+          targets:
+            - resource: workload
+              container: data-preparation
+              env: SOURCES
+        - parameter: datasetId
+          targets:
+            - resource: workload
+              container: data-preparation
+              env: DATASET
+        - parameter: pollEnabled
+          targets:
+            - resource: workload
+              container: data-preparation
+              env: POLL_ENABLED
+        - parameter: pollInterval
+          targets:
+            - resource: workload
+              container: data-preparation
+              env: POLL_INTERVAL
+      routeBindings:
+        endpoints:
+          session-start: &training-route
+            resource: workload
+            container: model-training
+            port: training
+            internalPath: /session/start
+          session-end:
+            <<: *training-route
+            internalPath: /session/end
+          train:
+            <<: *training-route
+            internalPath: /train
+          evaluate:
+            <<: *training-route
+            internalPath: /evaluate
+          status:
+            <<: *training-route
+            internalPath: /status
+        distributions:
+          prepared-data:
+            zip:
+              resource: workload
+              container: data-preparation
+              port: preparation
+              internalPath: /results
+          client-weights:
+            binary: &training-distribution
+              resource: workload
+              container: model-training
+              port: training
+              internalPath: /weights
+          training-metrics:
+            json:
+              <<: *training-distribution
+              internalPath: /metrics
+          evaluation-metrics:
+            json:
+              <<: *training-distribution
+              internalPath: /evaluation-metrics
+      resources:
+        - id: storage
+          manifest:
+            apiVersion: v1
+            kind: PersistentVolumeClaim
+            spec:
+              accessModes:
+                - ReadWriteOnce
+              resources:
+                requests:
+                  storage: 100Gi
+        - id: workload
+          manifest:
+            apiVersion: apps/v1
+            kind: Deployment
+            spec:
+              replicas: 1
+              strategy:
+                type: Recreate
+              selector:
+                matchLabels:
+                  app: fl-client-training
+              template:
+                metadata:
+                  labels:
+                    app: fl-client-training
+                    storage-workload: "true"
+                spec:
+                  securityContext:
+                    fsGroup: 65532
+                  nodeSelector:
+                    storage: local
+                  topologySpreadConstraints:
+                    - maxSkew: 1
+                      topologyKey: kubernetes.io/hostname
+                      whenUnsatisfiable: DoNotSchedule
+                      labelSelector:
+                        matchLabels:
+                          storage-workload: "true"
+                  containers:
+                    - name: data-preparation
+                      image: ghcr.io/knows-aggregator/k8s-fl-services/data-preparation:latest
+                      ports:
+                        - name: preparation
+                          containerPort: 8080
+                      env:
+                        - name: DATA_DIR
+                          value: /app/data
+                      readinessProbe:
+                        httpGet:
+                          path: /readyz
+                          port: preparation
+                        initialDelaySeconds: 5
+                        periodSeconds: 10
+                      livenessProbe:
+                        httpGet:
+                          path: /healthz
+                          port: preparation
+                        initialDelaySeconds: 10
+                        periodSeconds: 30
+                      volumeMounts:
+                        - name: data
+                          mountPath: /app/data
+                    - name: model-training
+                      image: ghcr.io/knows-aggregator/k8s-fl-services/model-training:latest
+                      ports:
+                        - name: training
+                          containerPort: 8081
+                      env:
+                        - name: PORT
+                          value: "8081"
+                        - name: DATA_DIR
+                          value: /app/data
+                      readinessProbe:
+                        httpGet:
+                          path: /healthz
+                          port: training
+                        initialDelaySeconds: 5
+                        periodSeconds: 10
+                      livenessProbe:
+                        httpGet:
+                          path: /healthz
+                          port: training
+                        initialDelaySeconds: 10
+                        periodSeconds: 30
+                      volumeMounts:
+                        - name: data
+                          mountPath: /app/data
+                  volumes:
+                    - name: data
+                      persistentVolumeClaim:
+                        claimName: storage

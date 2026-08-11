@@ -126,7 +126,10 @@ func TestResolveAcceptsMultipleResources(t *testing.T) {
 func TestResolveOperationalEndpoint(t *testing.T) {
 	bundle := testDeploymentBundle()
 	bundle.Profile.Spec.ServiceProfile.Endpoints = map[string]BundledEndpoint{
-		"refresh": {Path: "/refresh", Operations: []BundledOperation{{Method: http.MethodPost, Executes: "fetch"}}},
+		"refresh": {Path: "/refresh", Operations: []BundledOperation{{
+			Method: http.MethodPost, Executes: "fetch",
+			Updates: &BundledOperationUpdate{Function: "fetch", Parameters: []string{"source"}},
+		}}},
 	}
 	bundle.DeploymentFunction.Spec.Orchestration.RouteBindings.Endpoints = map[string]BundledRouteTarget{
 		"refresh": {Resource: "workload", Container: "fetch", Port: "http", InternalPath: "/refresh"},
@@ -138,5 +141,9 @@ func TestResolveOperationalEndpoint(t *testing.T) {
 	endpoint := definition.Endpoints["refresh"]
 	if endpoint.Path != "/refresh" || endpoint.Target.Port != 8080 || len(endpoint.Operations) != 1 || endpoint.Operations[0].Executes != "fetch" {
 		t.Fatalf("unexpected endpoint: %#v", endpoint)
+	}
+	operation := endpoint.Operations[0]
+	if len(operation.Scopes) != 2 || operation.Scopes[0] != Execute || operation.Scopes[1] != Modify {
+		t.Fatalf("unexpected semantic scopes: %#v", operation.Scopes)
 	}
 }

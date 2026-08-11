@@ -1,72 +1,71 @@
 deploymentFunctions:
-  prepare-data:
+  weight-aggregation:
     function:
-      title: PACSOI FL Data Preparation
-      description: Aggregates and prepares data for a federated learning local client.
+      title: Deploy federated weight aggregation
+      description: Deploys the central federated learning coordinator.
       expects:
         - name: caseSlice
-          predicate: case
+          predicate: case-slice
           type: xsd:anyURI
           required: true
-          title: Case slice
-        - name: datasetId
-          predicate: dataset
-          type: xsd:string
-          required: true
-          title: Dataset identifier
+          title: Researcher case slice
         - name: pollEnabled
           predicate: poll-enabled
           type: xsd:boolean
-          required: false
+          required: true
           title: Polling enabled
         - name: pollInterval
           predicate: poll-interval
           type: xsd:string
-          required: false
+          required: true
           title: Polling schedule
-          description: Cron expression or alias such as @hourly used for scheduled polling.
+          description: Cron expression or alias such as @hourly.
       returns:
-        name: DataPreparationService
+        name: deployedService
         predicate: service
-        title: Data preparation service
+        title: Deployed weight aggregation service
     profileRef:
-      name: prepare-data
+      name: weight-aggregation
     orchestration:
       inputBindings:
         - parameter: caseSlice
           targets:
             - resource: workload
-              container: prepare-data
-              env: SOURCES
-        - parameter: datasetId
-          targets:
-            - resource: workload
-              container: prepare-data
-              env: DATASET
+              container: weight-aggregation
+              env: CASE_SLICE
         - parameter: pollEnabled
           targets:
             - resource: workload
-              container: prepare-data
+              container: weight-aggregation
               env: POLL_ENABLED
         - parameter: pollInterval
           targets:
             - resource: workload
-              container: prepare-data
+              container: weight-aggregation
               env: POLL_INTERVAL
       routeBindings:
         endpoints:
-          status:
+          session-start: &aggregation-route
             resource: workload
-            container: prepare-data
+            container: weight-aggregation
             port: http
+            internalPath: /session/start
+          training-results:
+            <<: *aggregation-route
+            internalPath: /training-results
+          evaluation-results:
+            <<: *aggregation-route
+            internalPath: /evaluation-results
+          status:
+            <<: *aggregation-route
             internalPath: /status
         distributions:
-          prepared-data:
-            zip:
+          aggregated-evaluation-metrics:
+            json:
               resource: workload
-              container: prepare-data
+              container: weight-aggregation
               port: http
-              internalPath: /results
+              internalPath: /evaluation-metrics
       resources:
         - id: storage
           manifest:
@@ -78,7 +77,6 @@ deploymentFunctions:
               resources:
                 requests:
                   storage: 100Gi
-
         - id: workload
           manifest:
             apiVersion: apps/v1
@@ -89,11 +87,11 @@ deploymentFunctions:
                 type: Recreate
               selector:
                 matchLabels:
-                  app: prepare-data
+                  app: weight-aggregation
               template:
                 metadata:
                   labels:
-                    app: prepare-data
+                    app: weight-aggregation
                     storage-workload: "true"
                 spec:
                   securityContext:
@@ -107,28 +105,32 @@ deploymentFunctions:
                       labelSelector:
                         matchLabels:
                           storage-workload: "true"
-
                   containers:
-                    - name: prepare-data
-                      image: ghcr.io/knows-aggregator/k8s-fl-services/data-preparation:latest
+                    - name: weight-aggregation
+                      image: ghcr.io/knows-aggregator/k8s-fl-services/weight-aggregation:latest
                       ports:
                         - name: http
                           containerPort: 8080
                       env:
-                        - name: SOURCES
-                          value: "$(SOURCES)"
-                        - name: DATASET
-                          value: "$(DATASET)"
-                        - name: POLL_ENABLED
-                          value: "$(POLL_ENABLED)"
-                        - name: POLL_INTERVAL
-                          value: "$(POLL_INTERVAL)"
+                        - name: PORT
+                          value: "8080"
                         - name: DATA_DIR
                           value: /app/data
+                      readinessProbe:
+                        httpGet:
+                          path: /readyz
+                          port: http
+                        initialDelaySeconds: 5
+                        periodSeconds: 10
+                      livenessProbe:
+                        httpGet:
+                          path: /healthz
+                          port: http
+                        initialDelaySeconds: 10
+                        periodSeconds: 30
                       volumeMounts:
                         - name: data
                           mountPath: /app/data
-
                   volumes:
                     - name: data
                       persistentVolumeClaim:

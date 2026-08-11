@@ -16,7 +16,9 @@ import (
 )
 
 var ExPrefix = "http://example.org/"
-var OdrlPrefix = "http://www.w3.org/ns/odrl/2/"
+
+const OdrlPrefix = "http://www.w3.org/ns/odrl/2/"
+
 var idPrefix = "http://example.com/id/"
 var RdfType = rdfgo.NewNamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
 

@@ -194,6 +194,20 @@ func buildUMAEnv() []corev1.EnvVar {
 	}
 }
 
+func injectPublicServiceURL(obj interface{}, publicURL string) error {
+	switch r := obj.(type) {
+	case *appsv1.Deployment:
+		for index := range r.Spec.Template.Spec.Containers {
+			setEnvironmentVariable(&r.Spec.Template.Spec.Containers[index], "AGG_PUBLIC_URL", publicURL)
+		}
+	case *corev1.ConfigMap, *corev1.PersistentVolumeClaim:
+		return nil
+	default:
+		return fmt.Errorf("unsupported object type for public service URL injection")
+	}
+	return nil
+}
+
 func injectUMAEnv(obj interface{}) error {
 	envVars := buildUMAEnv()
 
