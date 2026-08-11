@@ -4,31 +4,11 @@ deploymentFunctions:
       title: Deploy legacy PACSOI service
       description: Deploys the legacy PACSOI weight and Oxford distribution workload as a fallback.
       expects:
-        - name: sources
-          predicate: sources
-          type: xsd:anyURI
-          required: true
-          title: Patient source collection
-        - name: weight-slice
-          predicate: weight-slice
+        - name: id
+          predicate: id
           type: xsd:string
           required: true
-          title: Weight observation slice
-        - name: oxford-slice
-          predicate: oxford-slice
-          type: xsd:string
-          required: true
-          title: Oxford Questionnaire Responses slice
-        - name: bar-procedure-slice
-          predicate: bar-procedure-slice
-          type: xsd:string
-          required: true
-          title: Bariatric Procedure slice
-        - name: knee-procedure-slice
-          predicate: knee-procedure-slice
-          type: xsd:string
-          required: true
-          title: Knee Procedure slice
+          title: FAQIR doctor ID
       returns:
         name: deployedService
         predicate: service
@@ -55,35 +35,25 @@ deploymentFunctions:
                     - name: pacsoi-legacy
                       image: pacsoi-service-legacy
                       imagePullPolicy: Never
+                      env:
+                        - name: WEIGHT_SLICE
+                          value: Read-PoC2-Weight-Observations-09
+                        - name: OXFORD_SLICE
+                          value: Read-PoC2-Questionnaire-Oxford-07
+                        - name: BAR_PROCEDURE_SLICE
+                          value: Read-PoC2-Procedure-Bariatric-09
+                        - name: KNEE_PROCEDURE_SLICE
+                          value: Read-PoC2-Procedure-Knee-01
                       ports:
                         - name: http
                           containerPort: 3000
       inputBindings:
-        - parameter: sources
+        - parameter: id
           targets:
             - resource: workload
               container: pacsoi-legacy
               env: SOURCES
-        - parameter: weight-slice
-          targets:
-            - resource: workload
-              container: pacsoi-legacy
-              env: WEIGHT_SLICE
-        - parameter: oxford-slice
-          targets:
-            - resource: workload
-              container: pacsoi-legacy
-              env: OXFORD_SLICE
-        - parameter: bar-procedure-slice
-          targets:
-            - resource: workload
-              container: pacsoi-legacy
-              env: BAR_PROCEDURE_SLICE
-        - parameter: knee-procedure-slice
-          targets:
-            - resource: workload
-              container: pacsoi-legacy
-              env: KNEE_PROCEDURE_SLICE
+              valueTemplate: https://pacsoi-kvasir.faqir.org/faqir-management/slices/{{value}}-ActivePatients/query
       routeBindings:
         distributions:
           weight-distribution:

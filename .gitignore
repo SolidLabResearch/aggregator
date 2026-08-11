@@ -17,9 +17,9 @@ slices/*
 !slices/docs/
 slices/docs/*
 !slices/docs/kubectl.md
+!slices/docs/workers.md
 
 # Keep production deployment configuration private, but track reusable tooling
 # and documentation.
 config/*.yaml
 !config/example.yaml
-

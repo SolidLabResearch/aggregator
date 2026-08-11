@@ -46,7 +46,7 @@ export const PATIENT_SLICE_CONTEXT = {
   "openEHR": "http://openehr.org/",
   "owl": "http://www.w3.org/2002/07/owl#",
   "phro": "https://ns.faqir.org/phr-o#",
-  "prov": "https://www.w3.org/TR/prov-o/",
+  "prov": "http://www.w3.org/ns/prov#",
   "qo": "https://ns.faqir.org/q-o#",
   "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
   "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
@@ -127,7 +127,7 @@ export const WEIGHT_SLICE_CONTEXT = {
   "openEHR": "http://openehr.org/",
   "owl": "http://www.w3.org/2002/07/owl#",
   "phro": "https://ns.faqir.org/phr-o#",
-  "prov": "https://www.w3.org/TR/prov-o/",
+  "prov": "http://www.w3.org/ns/prov#",
   "qo": "https://ns.faqir.org/q-o#",
   "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
   "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
@@ -143,45 +143,49 @@ export const WEIGHT_SLICE_CONTEXT = {
 };
 export const WEIGHT_SLICE_SCHEMA = `
 type Query {
-    weightValues: [WeightValue!]!
+  weightObservations: [WeightObservation!]!
 }
 
-type WeightProperty @class(iri: "saref:Property"){
-    id: ID!
-    ofSubject: ID!
-        @predicate(iri: "saref:hasProperty", reverse: true)
+type WeightObservation @class(iri: "sosa:Observation") {
+  id: ID!
+  sosa_hasFeatureOfInterest: ID!
+  sosa_hasResult: WeightValue!
+  sosa_observedProperty: ID! @filter(if: "it=='http://snomed.info/id/27113001'")
+  saref_isMeasuredIn: ID
 }
 
 type WeightValue @class(iri: "saref:PropertyValue") {
-    id: ID!
-    saref_isValueOfProperty: WeightProperty!
-    saref_hasValue: Float!
-    saref_hasTimestamp: DateTime!
-    prov_hadPrimarySource: ID
-    prov_wasGeneratedBy: prov_Activity
+  id: ID!
+  saref_isValueOfProperty: ID! @filter(if: "it=='http://snomed.info/id/27113001'")
+  saref_hasValue: Float!
+  saref_hasTimestamp: DateTime!
+  prov_hadPrimarySource: ID
+  prov_wasGeneratedBy: prov_Activity
 }
 
 type prov_Activity {
-    id: ID!
-    rdfs_label: String!
-    rdfs_comment: String
-    owl_versionInfo: String
-    prov_atTime: DateTime!
-    prov_wasAssociatedWith: ID
+  id: ID!
+  rdfs_label: String!
+  rdfs_comment: String
+  owl_versionInfo: String
+  prov_atTime: DateTime!
+  prov_wasAssociatedWith: ID
 }
 
 type Subscription {
-    onWeightValueAdded: WeightValue!
+    onWeightObservationAdded: WeightObservation!
 }`;
 
 export const WEIGHT_QUERY = `
   PREFIX saref: <https://saref.etsi.org/core/>
+  PREFIX sosa: <http://www.w3.org/ns/sosa/>
   SELECT ?value ?timestamp ?patient WHERE {
+    ?obs a sosa:Observation ;
+      sosa:hasFeatureOfInterest ?patient ;
+      sosa:hasResult ?weightValue .
     ?weightValue a saref:PropertyValue ;
       saref:hasValue ?value ;
-      saref:hasTimestamp ?timestamp ;
-      saref:isValueOfProperty ?prop .
-    ?patient saref:hasProperty ?prop .
+      saref:hasTimestamp ?timestamp .
   }
 `;
 
@@ -198,7 +202,7 @@ export const BAR_PROCEDURE_SLICE_CONTEXT = {
     "openEHR": "http://openehr.org/",
     "owl": "http://www.w3.org/2002/07/owl#",
     "phro": "https://ns.faqir.org/phr-o#",
-    "prov": "https://www.w3.org/TR/prov-o/",
+    "prov": "http://www.w3.org/ns/prov#",
     "qo": "https://ns.faqir.org/q-o#",
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
     "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
@@ -243,7 +247,7 @@ export const KNEE_PROCEDURE_SLICE_CONTEXT = {
     "openEHR": "http://openehr.org/",
     "owl": "http://www.w3.org/2002/07/owl#",
     "phro": "https://ns.faqir.org/phr-o#",
-    "prov": "https://www.w3.org/TR/prov-o/",
+    "prov": "http://www.w3.org/ns/prov#",
     "qo": "https://ns.faqir.org/q-o#",
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
     "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
@@ -276,7 +280,7 @@ type Subscription {
 }`;
 export const PROCEDURE_QUERY = `
 PREFIX sphn: <https://sphn.ch/>
-PREFIX prov: <https://www.w3.org/TR/prov-o/>
+PREFIX prov: <http://www.w3.org/ns/prov#>
 SELECT ?patient ?timestamp WHERE {
   ?patient sphn:hasIntervention ?proc .
   ?proc a sphn:MedicalProcedure ;
@@ -296,7 +300,7 @@ export const OXFORD_SLICE_CONTEXT = {
   "openEHR": "http://openehr.org/",
   "owl": "http://www.w3.org/2002/07/owl#",
   "phro": "https://ns.faqir.org/phr-o#",
-  "prov": "https://www.w3.org/TR/prov-o/",
+  "prov": "http://www.w3.org/ns/prov#",
   "qo": "https://ns.faqir.org/q-o#",
   "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
   "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
@@ -341,7 +345,7 @@ type Subscription {
 
 export const OXFORD_QUERY = `
 PREFIX moveUp: <http://moveup.care/>
-PREFIX prov: <https://www.w3.org/TR/prov-o/>
+PREFIX prov: <http://www.w3.org/ns/prov#>
 PREFIX dcterms: <http://purl.org/dc/terms/>
 PREFIX qo: <https://ns.faqir.org/q-o#>
 SELECT ?res ?timestamp ?patient ?question ?value WHERE {

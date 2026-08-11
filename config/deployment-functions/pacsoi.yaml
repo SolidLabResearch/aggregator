@@ -8,7 +8,7 @@ deploymentFunctions:
           predicate: id
           type: xsd:string
           required: true
-          title: FAQIR management ID
+          title: FAQIR doctor ID
       returns:
         name: deployedService
         predicate: service
@@ -37,15 +37,15 @@ deploymentFunctions:
                       imagePullPolicy: Never
                       env:
                         - name: PATIENT_SLICE
-                          value: PatientSlice
+                          value: "TODO set patient slice"
                         - name: WEIGHT_SLICE
-                          value: WeightObservationsSlice
+                          value: "TODO set weight slice"
                         - name: OXFORD_SLICE
-                          value: OxfordResponseSlice
+                          value: "TODO set oxford slice"
                         - name: BAR_PROCEDURE_SLICE
-                          value: BariatricProcedureSlice
+                          value: "TODO set bar procedure slice"
                         - name: KNEE_PROCEDURE_SLICE
-                          value: KneeProcedureSlice
+                          value: "TODO set knee procedure slice"
                       ports:
                         - name: http
                           containerPort: 3000
