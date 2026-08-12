@@ -96,6 +96,45 @@ Deleting a default revokes its instantiated permissions from existing
 resources and prevents it from being applied to new resources. The owner policy
 is created automatically when the Aggregator starts and is returned by `GET`.
 
+## Service role grants
+
+The owner can grant one role advertised by a deployed service. The Agreement
+template omits `odrl:target`, `odrl:action`, and `odrl:assigner`; the Aggregator
+derives exact targets and actions from the profile and deployed routes.
+
+```http
+POST http://aggregator.local/agg1/policies/grants?service=services-weight-aggregation&role=training-client
+Content-Type: application/ld+json
+
+{
+  "@context": "http://www.w3.org/ns/odrl.jsonld",
+  "@type": "Agreement",
+  "uid": "urn:uuid:29f8d99d-37de-47ba-9f34-b7aa1d3bb77f",
+  "permission": [{
+    "@type": "Permission",
+    "assignee": "https://example.org/participants/hospital-3"
+  }]
+}
+```
+
+`service` accepts a deployed service instance ID or URL. `role` accepts its
+short profile name or full role IRI. List and revoke grants with:
+
+```http
+GET http://aggregator.local/agg1/policies/grants
+DELETE http://aggregator.local/agg1/policies/grants/<grant-id>
+```
+
+Role grants are restricted to their selected service resources and cannot
+confer access to the policy-management tree. The CLI equivalents are:
+
+```bash
+agg list-available-roles --svc weight-aggregation
+agg list-active-roles --svc weight-aggregation
+agg assign-role training-client https://example.org/participants/hospital-3 \
+  --svc weight-aggregation
+```
+
 ## Assumed Setup
 
 The examples in this guide assume the following configuration:

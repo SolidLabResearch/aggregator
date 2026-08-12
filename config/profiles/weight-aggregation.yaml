@@ -3,6 +3,13 @@ profiles:
     serviceProfile:
       title: Federated weight aggregation
       description: Coordinates federated clients and aggregates model weights and evaluation metrics.
+      accessRoles:
+        training-client:
+          title: Federated learning client
+          description: Submits local training and evaluation results to the coordinator.
+        researcher:
+          title: Federated learning researcher
+          description: Starts sessions and reads aggregation status and evaluation results.
       parameters:
         expectedRounds:
           predicate: expected-rounds
@@ -83,6 +90,7 @@ profiles:
           path: /session/start
           operations:
             - method: POST
+              accessRoles: [researcher]
               executes: startSession
               updates:
                 function: startSession
@@ -92,6 +100,7 @@ profiles:
           path: /training-results
           operations:
             - method: POST
+              accessRoles: [training-client]
               executes: acceptTrainingResult
               updates:
                 function: acceptTrainingResult
@@ -101,6 +110,7 @@ profiles:
           path: /evaluation-results
           operations:
             - method: POST
+              accessRoles: [training-client]
               executes: acceptEvaluationResult
               updates:
                 function: acceptEvaluationResult
@@ -110,6 +120,7 @@ profiles:
           path: /status
           operations:
             - method: GET
+              accessRoles: [researcher]
     datasetProfiles:
       aggregated-evaluation-metrics:
         title: Aggregated evaluation metrics
@@ -120,3 +131,4 @@ profiles:
             path: /evaluation-metrics
             urlType: accessURL
             mediaType: application/json
+            accessRoles: [researcher]

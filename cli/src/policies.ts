@@ -70,11 +70,11 @@ function resolveAggregator(id?: string): AggregatorConfig {
   return aggregator;
 }
 
-function policiesEndpoint(aggregator: AggregatorConfig): string {
+export function policiesEndpoint(aggregator: AggregatorConfig): string {
   return `${aggregator.id.replace(/\/+$/, "")}/policies`;
 }
 
-async function authenticatedFetch() {
+export async function authenticatedFetch() {
   const auth = new KeycloakOIDCAuth();
   await auth.init(config.auth.idp);
   await auth.login(config.auth.username, config.auth.password, config.auth.clientId, config.auth.clientSecret);

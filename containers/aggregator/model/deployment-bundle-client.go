@@ -116,6 +116,13 @@ func ResolveDeploymentBundle(uri string, bundle *DeploymentBundle) (*ResolvedDep
 		resolved.ServiceProfile = &ResolvedServiceProfile{
 			Title: serviceProfile.Title, Description: serviceProfile.Description,
 			ExtraProperties: expandBundleMap(serviceProfile.ExtraProperties, uri, prefixes),
+			AccessRoles:     map[string]ResolvedAccessRole{},
+		}
+		for name, role := range serviceProfile.AccessRoles {
+			resolved.ServiceProfile.AccessRoles[name] = ResolvedAccessRole{
+				URI: profileURI + "#role-" + name, Title: role.Title, Description: role.Description,
+				ExtraProperties: expandBundleMap(role.ExtraProperties, uri, prefixes),
+			}
 		}
 	}
 	for datasetName, datasetProfile := range datasets {
@@ -144,6 +151,7 @@ func ResolveDeploymentBundle(uri string, bundle *DeploymentBundle) (*ResolvedDep
 				MediaType: distributionProfile.MediaType, Format: distributionProfile.Format,
 				ExtraProperties: expandBundleMap(distributionProfile.ExtraProperties, uri, prefixes),
 				Path:            distributionProfile.Path, URLType: distributionProfile.URLType,
+				AccessRoles: append([]string(nil), distributionProfile.AccessRoles...),
 				Target: ResolvedRouteTarget{Resource: target.Resource, Container: target.Container,
 					PortName: target.Port, Port: port, InternalPath: target.InternalPath},
 			}
@@ -157,7 +165,8 @@ func ResolveDeploymentBundle(uri string, bundle *DeploymentBundle) (*ResolvedDep
 				return nil, err
 			}
 			for _, operation := range endpoint.Operations {
-				value := ResolvedOperation{Method: operation.Method, Executes: operation.Executes}
+				value := ResolvedOperation{Method: operation.Method, Executes: operation.Executes,
+					AccessRoles: append([]string(nil), operation.AccessRoles...)}
 				if operation.Executes != "" {
 					value.Scopes = append(value.Scopes, Execute)
 				}

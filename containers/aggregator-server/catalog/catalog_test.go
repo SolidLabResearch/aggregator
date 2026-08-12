@@ -17,14 +17,15 @@ func fetchProfile() Profile {
 		ObjectMeta: metav1.ObjectMeta{Name: "fetch", Namespace: "aggregator-platform"},
 		Spec: ProfileSpec{
 			ServiceProfile: &ServiceProfile{
-				Title:      "Fetch service",
-				Parameters: map[string]Parameter{"source": {Predicate: "source", Type: "xsd:anyURI", Required: true}},
-				Outputs:    map[string]Output{"content": {Predicate: "content", DatasetProfile: DatasetReference{Dataset: "fetched-content"}}},
-				Functions:  map[string]Function{"fetch": {Name: "Fetch remote content", Expects: []string{"source"}, Returns: []string{"content"}}},
+				Title:       "Fetch service",
+				AccessRoles: map[string]AccessRole{"reader": {Title: "Content reader"}},
+				Parameters:  map[string]Parameter{"source": {Predicate: "source", Type: "xsd:anyURI", Required: true}},
+				Outputs:     map[string]Output{"content": {Predicate: "content", DatasetProfile: DatasetReference{Dataset: "fetched-content"}}},
+				Functions:   map[string]Function{"fetch": {Name: "Fetch remote content", Expects: []string{"source"}, Returns: []string{"content"}}},
 			},
 			DatasetProfiles: map[string]DatasetProfile{
 				"fetched-content": {Title: "Fetched content", Distributions: map[string]DistributionProfile{
-					"content": {Path: "/content", URLType: "accessURL"},
+					"content": {Path: "/content", URLType: "accessURL", AccessRoles: []string{"reader"}},
 				}},
 			},
 		},
@@ -72,10 +73,23 @@ func TestCompileProfileUsesDocumentScopedURIs(t *testing.T) {
 		"<https://aggregator.example/profiles/fetch>",
 		"<https://aggregator.example/profiles/fetch#source>",
 		"<https://aggregator.example/profiles/fetch#dataset-fetched-content>",
+		"<https://aggregator.example/profiles/fetch#role-reader>",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Errorf("compiled profile does not contain %s", expected)
 		}
+	}
+}
+
+func TestValidationRejectsUnknownAccessRole(t *testing.T) {
+	profile := fetchProfile()
+	dataset := profile.Spec.DatasetProfiles["fetched-content"]
+	distribution := dataset.Distributions["content"]
+	distribution.AccessRoles = []string{"missing"}
+	dataset.Distributions["content"] = distribution
+	profile.Spec.DatasetProfiles["fetched-content"] = dataset
+	if err := ValidateProfile(&profile); err == nil || !strings.Contains(err.Error(), "unknown access role") {
+		t.Fatalf("expected unknown access role error, got %v", err)
 	}
 }
 

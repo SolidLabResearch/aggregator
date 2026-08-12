@@ -41,6 +41,10 @@ All paths are relative to `http(s)://<host>`:
 | `GET /<aggregator-id>` | Describe an aggregator instance |
 | `GET, POST /<aggregator-id>/services` | List or create services |
 | `GET, HEAD, DELETE /<aggregator-id>/services/<name>` | Inspect or delete a service |
+| `GET, POST /<aggregator-id>/policies` | List or create reusable default policies |
+| `GET, POST /<aggregator-id>/policies/grants` | List or grant a service access role |
+| `DELETE /<aggregator-id>/policies/{id}` | Delete a default policy |
+| `DELETE /<aggregator-id>/policies/grants/{id}` | Revoke a role grant |
 
 Service descriptions advertise resolved dataset distribution URLs. Clients
 should follow those `dcat:accessURL` or `dcat:downloadURL` values instead of

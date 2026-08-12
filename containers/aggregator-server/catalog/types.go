@@ -22,14 +22,21 @@ type ProfileSpec struct {
 }
 
 type ServiceProfile struct {
-	Title           string               `json:"title,omitempty"`
-	Description     string               `json:"description,omitempty"`
-	ExtraProperties map[string]string    `json:"extraProperties,omitempty"`
-	Parameters      map[string]Parameter `json:"parameters,omitempty"`
-	Outputs         map[string]Output    `json:"outputs,omitempty"`
-	Functions       map[string]Function  `json:"functions,omitempty"`
-	Composition     []CompositionMapping `json:"composition,omitempty"`
-	Endpoints       map[string]Endpoint  `json:"endpoints,omitempty"`
+	Title           string                `json:"title,omitempty"`
+	Description     string                `json:"description,omitempty"`
+	ExtraProperties map[string]string     `json:"extraProperties,omitempty"`
+	AccessRoles     map[string]AccessRole `json:"accessRoles,omitempty"`
+	Parameters      map[string]Parameter  `json:"parameters,omitempty"`
+	Outputs         map[string]Output     `json:"outputs,omitempty"`
+	Functions       map[string]Function   `json:"functions,omitempty"`
+	Composition     []CompositionMapping  `json:"composition,omitempty"`
+	Endpoints       map[string]Endpoint   `json:"endpoints,omitempty"`
+}
+
+type AccessRole struct {
+	Title           string            `json:"title,omitempty"`
+	Description     string            `json:"description,omitempty"`
+	ExtraProperties map[string]string `json:"extraProperties,omitempty"`
 }
 
 type Parameter struct {
@@ -90,6 +97,7 @@ type Operation struct {
 	Updates         *OperationUpdate  `json:"updates,omitempty"`
 	Title           string            `json:"title,omitempty"`
 	Description     string            `json:"description,omitempty"`
+	AccessRoles     []string          `json:"accessRoles,omitempty"`
 	ExtraProperties map[string]string `json:"extraProperties,omitempty"`
 }
 
@@ -112,6 +120,7 @@ type DistributionProfile struct {
 	Format          string            `json:"format,omitempty"`
 	Title           string            `json:"title,omitempty"`
 	Description     string            `json:"description,omitempty"`
+	AccessRoles     []string          `json:"accessRoles,omitempty"`
 	ExtraProperties map[string]string `json:"extraProperties,omitempty"`
 }
 

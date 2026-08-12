@@ -100,10 +100,17 @@ type BundledProfileSpec struct {
 }
 
 type BundledServiceProfile struct {
-	Title           string                     `json:"title,omitempty"`
-	Description     string                     `json:"description,omitempty"`
-	ExtraProperties map[string]string          `json:"extraProperties,omitempty"`
-	Endpoints       map[string]BundledEndpoint `json:"endpoints,omitempty"`
+	Title           string                       `json:"title,omitempty"`
+	Description     string                       `json:"description,omitempty"`
+	ExtraProperties map[string]string            `json:"extraProperties,omitempty"`
+	AccessRoles     map[string]BundledAccessRole `json:"accessRoles,omitempty"`
+	Endpoints       map[string]BundledEndpoint   `json:"endpoints,omitempty"`
+}
+
+type BundledAccessRole struct {
+	Title           string            `json:"title,omitempty"`
+	Description     string            `json:"description,omitempty"`
+	ExtraProperties map[string]string `json:"extraProperties,omitempty"`
 }
 
 type BundledEndpoint struct {
@@ -112,9 +119,10 @@ type BundledEndpoint struct {
 }
 
 type BundledOperation struct {
-	Method   string                  `json:"method"`
-	Executes string                  `json:"executes,omitempty"`
-	Updates  *BundledOperationUpdate `json:"updates,omitempty"`
+	Method      string                  `json:"method"`
+	Executes    string                  `json:"executes,omitempty"`
+	Updates     *BundledOperationUpdate `json:"updates,omitempty"`
+	AccessRoles []string                `json:"accessRoles,omitempty"`
 }
 
 type BundledOperationUpdate struct {
@@ -149,5 +157,6 @@ type BundledDistributionProfile struct {
 	Format          string            `json:"format,omitempty"`
 	Title           string            `json:"title,omitempty"`
 	Description     string            `json:"description,omitempty"`
+	AccessRoles     []string          `json:"accessRoles,omitempty"`
 	ExtraProperties map[string]string `json:"extraProperties,omitempty"`
 }

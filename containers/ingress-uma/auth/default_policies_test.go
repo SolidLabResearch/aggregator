@@ -139,14 +139,26 @@ func TestOnlyOwnerPolicyAppliesToPolicyManagementResources(t *testing.T) {
 	resource := "https://aggregator.example/agg-1/policies"
 	ordinary := DefaultPolicy{ID: "ordinary"}
 	owner := DefaultPolicy{ID: "owner", PolicyManagement: true}
-	if policyAppliesToResource(ordinary, resource, "agg-1") {
+	if _, applies := policyActionsForResource(ordinary, resource, "agg-1", []Scope{Read}); applies {
 		t.Fatal("ordinary default policy applies to policy management")
 	}
-	if !policyAppliesToResource(owner, resource, "agg-1") {
+	if _, applies := policyActionsForResource(owner, resource, "agg-1", []Scope{Read}); !applies {
 		t.Fatal("owner policy does not apply to policy management")
 	}
-	if !policyAppliesToResource(ordinary, "https://aggregator.example/agg-1/services", "agg-1") {
+	if _, applies := policyActionsForResource(ordinary, "https://aggregator.example/agg-1/services", "agg-1", []Scope{Read}); !applies {
 		t.Fatal("ordinary default policy does not apply to service resource")
+	}
+}
+
+func TestRoleGrantSelectsExactResourceActions(t *testing.T) {
+	resource := "https://aggregator.example/agg-1/services/client/train"
+	policy := DefaultPolicy{Selector: &PolicySelector{Service: "https://aggregator.example/agg-1/services/client", Role: "https://aggregator.example/profiles/client#role-coordinator", Resources: map[string][]Scope{resource: {Execute}}}}
+	actions, applies := policyActionsForResource(policy, resource, "agg-1", []Scope{Execute, Modify})
+	if !applies || len(actions) != 1 || actions[0] != Execute {
+		t.Fatalf("selected actions = %v, applies = %v", actions, applies)
+	}
+	if _, applies := policyActionsForResource(policy, resource+"/other", "agg-1", []Scope{Read}); applies {
+		t.Fatal("role grant applied outside selected resources")
 	}
 }
 

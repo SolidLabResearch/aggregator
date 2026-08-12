@@ -79,6 +79,13 @@ func (service *Service) InitDescription() error {
 			}
 			description.Service.AddQuad(quad)
 		}
+		for _, role := range profile.AccessRoles {
+			quad, err = rdfgo.NewQuad(svcNode, Agg("availableRoles"), rdfgo.NewNamedNode(role.URI), nil)
+			if err != nil {
+				return err
+			}
+			description.Service.AddQuad(quad)
+		}
 	}
 
 	// A profiled service conforms to its server-wide service profile. An

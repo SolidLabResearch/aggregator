@@ -30,7 +30,7 @@ func TestServiceDescriptionUsesResolvedProfileAndAllDistributions(t *testing.T) 
 		Deployment: &DeploymentRequest{Definition: &ResolvedDeployment{
 			URI: "https://aggregator.example/deployments/fetch", ProfileURI: profileURI,
 			Prefixes:       map[string]string{"dct": "http://purl.org/dc/terms/"},
-			ServiceProfile: &ResolvedServiceProfile{Title: "Fetch service"},
+			ServiceProfile: &ResolvedServiceProfile{Title: "Fetch service", AccessRoles: map[string]ResolvedAccessRole{"reader": {URI: profileURI + "#role-reader"}}},
 			Endpoints:      map[string]ResolvedEndpoint{"refresh": {Path: "/refresh"}},
 			Datasets: map[string]ResolvedDataset{"content": {
 				ProfileURI: profileURI + "#dataset-content",
@@ -49,7 +49,7 @@ func TestServiceDescriptionUsesResolvedProfileAndAllDistributions(t *testing.T) 
 		t.Fatalf("FnORepresentation: %v", err)
 	}
 	text := string(representation)
-	for _, expected := range []string{profileURI, profileURI + "#dataset-content", "/refresh", "/raw", "/file"} {
+	for _, expected := range []string{profileURI, profileURI + "#dataset-content", profileURI + "#role-reader", "/refresh", "/raw", "/file"} {
 		if !strings.Contains(text, expected) {
 			t.Errorf("service description does not contain %q:\n%s", expected, text)
 		}

@@ -69,6 +69,11 @@ func ValidateProfile(profile *Profile) error {
 	seen := map[string]string{}
 	for name, endpoint := range service.Endpoints {
 		for _, operation := range endpoint.Operations {
+			for _, role := range operation.AccessRoles {
+				if _, ok := service.AccessRoles[role]; !ok {
+					errors = append(errors, fmt.Sprintf("endpoint %q references unknown access role %q", name, role))
+				}
+			}
 			key := strings.ToUpper(operation.Method) + " " + endpoint.Path
 			if previous, ok := seen[key]; ok {
 				errors = append(errors, fmt.Sprintf("endpoints %q and %q both define %s", previous, name, key))
@@ -89,6 +94,15 @@ func ValidateProfile(profile *Profile) error {
 							errors = append(errors, fmt.Sprintf("endpoint %q updates parameter %q not expected by function %q", name, parameter, operation.Updates.Function))
 						}
 					}
+				}
+			}
+		}
+	}
+	for datasetName, dataset := range profile.Spec.DatasetProfiles {
+		for distributionName, distribution := range dataset.Distributions {
+			for _, role := range distribution.AccessRoles {
+				if _, ok := service.AccessRoles[role]; !ok {
+					errors = append(errors, fmt.Sprintf("dataset %q distribution %q references unknown access role %q", datasetName, distributionName, role))
 				}
 			}
 		}

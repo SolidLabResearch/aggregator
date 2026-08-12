@@ -34,6 +34,16 @@ spec:
                     extraProperties:
                       type: object
                       additionalProperties: {type: string}
+                    accessRoles:
+                      type: object
+                      additionalProperties:
+                        type: object
+                        properties:
+                          title: {type: string}
+                          description: {type: string}
+                          extraProperties:
+                            type: object
+                            additionalProperties: {type: string}
                     parameters:
                       type: object
                       additionalProperties:
@@ -131,6 +141,9 @@ spec:
                                       items: {type: string, minLength: 1}
                                 title: {type: string}
                                 description: {type: string}
+                                accessRoles:
+                                  type: array
+                                  items: {type: string, minLength: 1}
                                 extraProperties:
                                   type: object
                                   additionalProperties: {type: string}
@@ -161,6 +174,9 @@ spec:
                             format: {type: string}
                             title: {type: string}
                             description: {type: string}
+                            accessRoles:
+                              type: array
+                              items: {type: string, minLength: 1}
                             extraProperties:
                               type: object
                               additionalProperties: {type: string}

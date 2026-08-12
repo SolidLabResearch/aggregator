@@ -24,6 +24,13 @@ type DefaultPolicy struct {
 	ID               string          `json:"id"`
 	Document         json.RawMessage `json:"policy"`
 	PolicyManagement bool            `json:"-"`
+	Selector         *PolicySelector `json:"selector,omitempty"`
+}
+
+type PolicySelector struct {
+	Service   string             `json:"service"`
+	Role      string             `json:"role"`
+	Resources map[string][]Scope `json:"resources"`
 }
 
 type defaultPolicyRequest struct {
@@ -32,6 +39,7 @@ type defaultPolicyRequest struct {
 	ASURL            string          `json:"as_url"`
 	Assigner         string          `json:"assigner"`
 	PolicyManagement bool            `json:"policy_management,omitempty"`
+	Selector         *PolicySelector `json:"selector,omitempty"`
 	Document         json.RawMessage `json:"policy"`
 }
 
@@ -82,7 +90,18 @@ func handlePostDefaultPolicy(w http.ResponseWriter, r *http.Request) {
 
 	policy := DefaultPolicy{
 		ID: uuid.NewString(), Document: append(json.RawMessage(nil), request.Document...),
-		PolicyManagement: request.PolicyManagement,
+		PolicyManagement: request.PolicyManagement, Selector: request.Selector,
+	}
+	if policy.Selector != nil && (strings.TrimSpace(policy.Selector.Service) == "" ||
+		strings.TrimSpace(policy.Selector.Role) == "" || len(policy.Selector.Resources) == 0) {
+		http.Error(w, "selector requires service, role, and resources", http.StatusBadRequest)
+		return
+	}
+	if policy.Selector != nil {
+		if err := validatePolicySelector(request.AggregatorID, policy.Selector); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	set := ensureDefaultPolicySet(request)
 	defaultPoliciesMu.Lock()
@@ -184,6 +203,30 @@ func validateDefaultPolicy(raw json.RawMessage) error {
 	return nil
 }
 
+func validatePolicySelector(aggregatorID string, selector *PolicySelector) error {
+	resourceIndexMu.RLock()
+	defer resourceIndexMu.RUnlock()
+	for resourceID, actions := range selector.Resources {
+		data, ok := resourceIndex[resourceID]
+		if !ok || data.AggData.AggregatorID != aggregatorID {
+			return fmt.Errorf("selected resource %q is not registered by this aggregator", resourceID)
+		}
+		available := map[Scope]bool{}
+		for _, scope := range data.Scopes {
+			available[scope] = true
+		}
+		if len(actions) == 0 {
+			return fmt.Errorf("selected resource %q has no actions", resourceID)
+		}
+		for _, action := range actions {
+			if !available[action] {
+				return fmt.Errorf("action %q is not registered for resource %q", action, resourceID)
+			}
+		}
+	}
+	return nil
+}
+
 func hasODRLType(value interface{}, allowed ...string) bool {
 	values := []interface{}{value}
 	if array, ok := value.([]interface{}); ok {
@@ -280,10 +323,11 @@ func instantiateDefaultPolicy(aggregatorID string, set *defaultPolicySet, policy
 	}
 	resourceIndexMu.RUnlock()
 	for id, data := range resources {
-		if !policyAppliesToResource(policy, id, aggregatorID) {
+		actions, applies := policyActionsForResource(policy, id, aggregatorID, data.Scopes)
+		if !applies {
 			continue
 		}
-		if err := instantiatePolicyForResource(policy.Document, data, set.Assigner); err != nil {
+		if err := instantiatePolicyForResource(policy.Document, data, set.Assigner, actions); err != nil {
 			return fmt.Errorf("resource %s: %w", id, err)
 		}
 	}
@@ -304,18 +348,26 @@ func instantiateDefaultsForResource(resourceID string, data ResourceData) error 
 	}
 	defaultPoliciesMu.RUnlock()
 	for _, policy := range policies {
-		if !policyAppliesToResource(policy, resourceID, data.AggData.AggregatorID) {
+		actions, applies := policyActionsForResource(policy, resourceID, data.AggData.AggregatorID, data.Scopes)
+		if !applies {
 			continue
 		}
-		if err := instantiatePolicyForResource(policy.Document, data, assigner); err != nil {
+		if err := instantiatePolicyForResource(policy.Document, data, assigner, actions); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func policyAppliesToResource(policy DefaultPolicy, resourceID, aggregatorID string) bool {
-	return policy.PolicyManagement || !isPolicyManagementResource(resourceID, aggregatorID)
+func policyActionsForResource(policy DefaultPolicy, resourceID, aggregatorID string, registered []Scope) ([]Scope, bool) {
+	if policy.Selector != nil {
+		actions, ok := policy.Selector.Resources[resourceID]
+		if !ok || isPolicyManagementResource(resourceID, aggregatorID) {
+			return nil, false
+		}
+		return append([]Scope(nil), actions...), true
+	}
+	return append([]Scope(nil), registered...), policy.PolicyManagement || !isPolicyManagementResource(resourceID, aggregatorID)
 }
 
 func isPolicyManagementResource(resourceID, aggregatorID string) bool {
@@ -327,7 +379,7 @@ func isPolicyManagementResource(resourceID, aggregatorID string) bool {
 	return parsed.Path == prefix || strings.HasPrefix(parsed.Path, prefix+"/")
 }
 
-func instantiatePolicyForResource(template json.RawMessage, data ResourceData, assigner string) error {
+func instantiatePolicyForResource(template json.RawMessage, data ResourceData, assigner string, selectedActions []Scope) error {
 	var document map[string]interface{}
 	if err := json.Unmarshal(template, &document); err != nil {
 		return err
@@ -336,8 +388,8 @@ func instantiatePolicyForResource(template json.RawMessage, data ResourceData, a
 	if !ok {
 		return errors.New("policy permissions are invalid")
 	}
-	actions := make([]string, 0, len(data.Scopes))
-	for _, scope := range data.Scopes {
+	actions := make([]string, 0, len(selectedActions))
+	for _, scope := range selectedActions {
 		if action := scopeToAction(scope); action != nil {
 			actions = append(actions, action.GetValue())
 		}

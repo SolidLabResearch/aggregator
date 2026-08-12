@@ -287,6 +287,23 @@ agg delete-service --agg https://aggregator.example.org/id   # specific aggregat
 | `--agg <id>` | Aggregator ID to use instead of the active one |
 
 ---
+
+### Access-role management
+
+```bash
+agg list-available-roles --svc weight-aggregation
+agg list-active-roles --svc weight-aggregation
+agg assign-role training-client https://example.org/participants/hospital-3 \
+  --svc weight-aggregation
+```
+
+Available roles are discovered from the live service and profile RDF. Active
+roles list the assignee and grant identifier. `assign-role` creates a simple
+single-assignee ODRL Agreement; use the HTTP API for more complex templates.
+
+All commands accept `--svc <name>` and `--agg <id>`.
+
+---
 agg get-service --svc my-svc                              # specific service
 agg get-service --agg https://aggregator.example.org/id  # specific aggregator
 ```

@@ -28,6 +28,8 @@ type ServiceCollection struct {
 	serverMux          *http.ServeMux
 }
 
+var activeServiceCollection *ServiceCollection
+
 type serviceRoute struct {
 	serviceID    string
 	forwardURL   string
@@ -45,6 +47,7 @@ func InitServiceCollection(mux *http.ServeMux) error {
 		registeredPatterns: make(map[string]bool),
 		serverMux:          mux,
 	}
+	activeServiceCollection = &collection
 
 	if err := collection.HandleFunc(model.ServiceCollection, collection.HandleServicesEndpoint, []model.Scope{model.Read, model.Create}); err != nil {
 		return fmt.Errorf("failed to add handler: %w", err)

@@ -34,9 +34,18 @@ type ResolvedOperation struct {
 	UpdatesFunction   string
 	UpdatesParameters []string
 	Scopes            []Scope
+	AccessRoles       []string
 }
 
 type ResolvedServiceProfile struct {
+	Title           string
+	Description     string
+	ExtraProperties map[string]string
+	AccessRoles     map[string]ResolvedAccessRole
+}
+
+type ResolvedAccessRole struct {
+	URI             string
 	Title           string
 	Description     string
 	ExtraProperties map[string]string
@@ -77,6 +86,7 @@ type ResolvedDistribution struct {
 	Format          string
 	Path            string
 	URLType         string
+	AccessRoles     []string
 	Target          ResolvedRouteTarget
 }
 

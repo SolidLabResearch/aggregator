@@ -62,6 +62,45 @@ func TestPoliciesPostCreatesDefaultPolicy(t *testing.T) {
 	}
 }
 
+func TestResolveRoleSelectorUsesExactResourcesAndActions(t *testing.T) {
+	serviceURL := "https://aggregator.example/agg-1/services/client"
+	service := &model.Service{
+		InstanceID: "services-client", FullPath: serviceURL,
+		Deployment: &model.DeploymentRequest{Definition: &model.ResolvedDeployment{
+			ServiceProfile: &model.ResolvedServiceProfile{AccessRoles: map[string]model.ResolvedAccessRole{
+				"reader": {URI: "https://aggregator.example/profiles/client#role-reader"},
+			}},
+			Endpoints: map[string]model.ResolvedEndpoint{
+				"status": {Path: "/status", Operations: []model.ResolvedOperation{{Method: http.MethodGet, AccessRoles: []string{"reader"}}}},
+			},
+			Datasets: map[string]model.ResolvedDataset{
+				"data": {Distributions: map[string]model.ResolvedDistribution{
+					"archive": {Path: "/results", AccessRoles: []string{"reader"}},
+				}},
+			},
+		}},
+	}
+	previous := activeServiceCollection
+	activeServiceCollection = &ServiceCollection{services: map[string]*model.Service{service.InstanceID: service}}
+	t.Cleanup(func() { activeServiceCollection = previous })
+
+	selector, err := resolveRoleSelector("client", "reader")
+	if err != nil {
+		t.Fatalf("resolveRoleSelector: %v", err)
+	}
+	if selector.Service != serviceURL || selector.Role != "https://aggregator.example/profiles/client#role-reader" {
+		t.Fatalf("unexpected selector: %#v", selector)
+	}
+	status := selector.Resources[serviceURL+"/status"]
+	if len(status) != 1 || status[0] != model.Read {
+		t.Fatalf("unexpected status scopes: %v", status)
+	}
+	results := selector.Resources[serviceURL+"/results"]
+	if len(results) != 1 || results[0] != model.Read {
+		t.Fatalf("unexpected distribution scopes: %v", results)
+	}
+}
+
 type policyRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (function policyRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {

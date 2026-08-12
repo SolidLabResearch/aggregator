@@ -125,6 +125,37 @@ and used unchanged in policies and authorization tickets. Operations without
 semantic annotations retain the HTTP fallback: GET/HEAD require `odrl:read`,
 POST/PUT/PATCH require `odrl:write`, and DELETE requires `odrl:delete`.
 
+## Access roles
+
+A service profile may declare named `accessRoles`. Operations and dataset
+distributions opt into one or more roles with an `accessRoles` array. Every
+referenced role must be declared by the same service profile.
+
+```yaml
+serviceProfile:
+  accessRoles:
+    reader:
+      title: Prepared data reader
+  endpoints:
+    status:
+      path: /status
+      operations:
+        - method: GET
+          accessRoles: [reader]
+datasetProfiles:
+  prepared-data:
+    distributions:
+      archive:
+        path: /results
+        urlType: downloadURL
+        accessRoles: [reader]
+```
+
+The deployed service advertises the full profile role IRIs through
+`aggr:availableRoles`. A role grant selects only the operations and
+distributions carrying that role. Operations retain their registered scopes;
+selected distributions receive `odrl:read`.
+
 ## Profiled fetch example
 
 The profile is optional, but a profiled fetch deployment can reference this

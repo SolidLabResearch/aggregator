@@ -38,6 +38,7 @@ func CompileProfile(profile *Profile, urls URLs) ([]byte, error) {
 		writeOptionalLiteral(&out, dct+"title", service.Title)
 		writeOptionalLiteral(&out, dct+"description", service.Description)
 		writeExtraProperties(&out, document, service.ExtraProperties, profile.Spec.Prefixes)
+		writeIRIs(&out, aggr+"accessRole", keyedIRIs(document, "role", service.AccessRoles))
 		writeIRIs(&out, aggr+"performs", keyedIRIs(document, "function", service.Functions))
 		writeIRIs(&out, aggr+"supportsEndpoint", keyedIRIs(document, "endpoint", service.Endpoints))
 		if len(service.Composition) > 0 {
@@ -46,6 +47,14 @@ func CompileProfile(profile *Profile, urls URLs) ([]byte, error) {
 			finishSubject(&out)
 		}
 
+		for _, name := range sortedKeys(service.AccessRoles) {
+			role := service.AccessRoles[name]
+			startResource(&out, fragment(document, "role", name), aggr+"AccessRole")
+			writeOptionalLiteral(&out, dct+"title", role.Title)
+			writeOptionalLiteral(&out, dct+"description", role.Description)
+			writeExtraProperties(&out, document, role.ExtraProperties, profile.Spec.Prefixes)
+			finishSubject(&out)
+		}
 		for _, name := range sortedKeys(service.Parameters) {
 			parameter := service.Parameters[name]
 			startResource(&out, fragment(document, "parameter", name), fno+"Parameter")
@@ -102,6 +111,7 @@ func CompileProfile(profile *Profile, urls URLs) ([]byte, error) {
 			writeExtraProperties(&out, document, distribution.ExtraProperties, profile.Spec.Prefixes)
 			writeSubject(&out, "", aggr+"path", literal(distribution.Path), true)
 			writeSubject(&out, "", aggr+"urlProperty", iri(dcat+distribution.URLType), true)
+			writeIRIs(&out, aggr+"accessRole", roleIRIs(document, distribution.AccessRoles))
 			if distribution.MediaType != "" {
 				writeSubject(&out, "", dcat+"mediaType", iri("https://www.iana.org/assignments/media-types/"+distribution.MediaType), true)
 			}
@@ -235,6 +245,7 @@ func compileEndpoints(out *strings.Builder, document string, endpoints map[strin
 			startResource(out, operationIRI, "http://www.w3.org/ns/hydra/core#Operation")
 			writeOptionalLiteral(out, dct+"title", operation.Title)
 			writeOptionalLiteral(out, dct+"description", operation.Description)
+			writeIRIs(out, aggr+"accessRole", roleIRIs(document, operation.AccessRoles))
 			writeExtraProperties(out, document, operation.ExtraProperties, prefixes)
 			writeSubject(out, "", "http://www.w3.org/ns/hydra/core#method", literal(operation.Method), true)
 			if operation.Executes != "" {
@@ -316,6 +327,7 @@ func refs(document, kind string, names []string) []string {
 	}
 	return values
 }
+func roleIRIs(document string, names []string) []string { return refs(document, "role", names) }
 func predicateURI(document, value string, prefixes map[string]string) string {
 	if strings.Contains(value, "://") {
 		return value

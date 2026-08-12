@@ -160,6 +160,36 @@ program
   });
 
 program
+  .command("list-available-roles")
+  .description("List access roles advertised by a deployed service")
+  .option("--agg <id>", "Aggregator ID to use instead of active")
+  .option("--svc <name>", "Service name to use instead of active")
+  .action(async (opts) => {
+    const { listAvailableRoles } = await import("./roles.js");
+    await listAvailableRoles({ agg: opts.agg, svc: opts.svc });
+  });
+
+program
+  .command("list-active-roles")
+  .description("List active access-role grants for a deployed service")
+  .option("--agg <id>", "Aggregator ID to use instead of active")
+  .option("--svc <name>", "Service name to use instead of active")
+  .action(async (opts) => {
+    const { listActiveRoles } = await import("./roles.js");
+    await listActiveRoles({ agg: opts.agg, svc: opts.svc });
+  });
+
+program
+  .command("assign-role <role> <assignee>")
+  .description("Assign one advertised service role to an assignee")
+  .option("--agg <id>", "Aggregator ID to use instead of active")
+  .option("--svc <name>", "Service name to use instead of active")
+  .action(async (role: string, assignee: string, opts) => {
+    const { assignRole } = await import("./roles.js");
+    await assignRole({ role, assignee, agg: opts.agg, svc: opts.svc });
+  });
+
+program
   .command("set-config <file>")
   .description("Load a JSON file as config")
   .action((file: string) => {

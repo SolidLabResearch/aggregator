@@ -5,6 +5,16 @@ profiles:
       description: |
         Prepares hospital data, trains local model weights, and evaluates
         aggregated model weights as one federated learning client.
+      accessRoles:
+        coordinator:
+          title: Federated learning coordinator
+          description: Manages client sessions, training, evaluation, and readiness checks.
+        prepared-data-reader:
+          title: Prepared data reader
+          description: Downloads the hospital data prepared for local training.
+        training-results-reader:
+          title: Training results reader
+          description: Reads client model weights, training metrics, and evaluation metrics.
       parameters:
         sessionId:
           predicate: session-id
@@ -94,6 +104,7 @@ profiles:
           path: /session/start
           operations:
             - method: POST
+              accessRoles: [coordinator]
               updates:
                 function: train
                 parameters: [sessionId, clientId, expectedRounds, trainingConfig]
@@ -102,6 +113,7 @@ profiles:
           path: /session/end
           operations:
             - method: POST
+              accessRoles: [coordinator]
               updates:
                 function: train
                 parameters: [sessionId, clientId, expectedRounds, trainingConfig]
@@ -110,6 +122,7 @@ profiles:
           path: /train
           operations:
             - method: POST
+              accessRoles: [coordinator]
               executes: train
               updates:
                 function: train
@@ -119,6 +132,7 @@ profiles:
           path: /evaluate
           operations:
             - method: POST
+              accessRoles: [coordinator]
               executes: evaluate
               updates:
                 function: evaluate
@@ -128,6 +142,7 @@ profiles:
           path: /status
           operations:
             - method: GET
+              accessRoles: [coordinator]
     datasetProfiles:
       prepared-data:
         title: Prepared hospital data
@@ -138,6 +153,7 @@ profiles:
             path: /results
             urlType: downloadURL
             mediaType: application/zip
+            accessRoles: [prepared-data-reader]
       client-weights:
         title: Client model weights
         distributions:
@@ -146,6 +162,7 @@ profiles:
             path: /weights
             urlType: downloadURL
             mediaType: application/octet-stream
+            accessRoles: [training-results-reader]
       training-metrics:
         title: Client training metrics
         distributions:
@@ -154,6 +171,7 @@ profiles:
             path: /metrics
             urlType: accessURL
             mediaType: application/json
+            accessRoles: [training-results-reader]
       evaluation-metrics:
         title: Client evaluation metrics
         distributions:
@@ -162,3 +180,4 @@ profiles:
             path: /evaluation-metrics
             urlType: accessURL
             mediaType: application/json
+            accessRoles: [training-results-reader]

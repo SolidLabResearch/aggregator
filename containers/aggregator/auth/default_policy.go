@@ -14,6 +14,13 @@ import (
 type DefaultPolicy struct {
 	ID       string          `json:"id"`
 	Document json.RawMessage `json:"policy"`
+	Selector *PolicySelector `json:"selector,omitempty"`
+}
+
+type PolicySelector struct {
+	Service   string                   `json:"service"`
+	Role      string                   `json:"role"`
+	Resources map[string][]model.Scope `json:"resources"`
 }
 
 type defaultPolicyRequest struct {
@@ -22,6 +29,7 @@ type defaultPolicyRequest struct {
 	ASURL            string          `json:"as_url"`
 	Assigner         string          `json:"assigner"`
 	PolicyManagement bool            `json:"policy_management,omitempty"`
+	Selector         *PolicySelector `json:"selector,omitempty"`
 	Document         json.RawMessage `json:"policy"`
 }
 
@@ -35,7 +43,15 @@ func CreateOwnerDefaultPolicy(document json.RawMessage) (DefaultPolicy, error) {
 	return createDefaultPolicy(document, true)
 }
 
+func CreateRoleGrant(document json.RawMessage, selector PolicySelector) (DefaultPolicy, error) {
+	return createPolicyTemplate(document, false, &selector)
+}
+
 func createDefaultPolicy(document json.RawMessage, policyManagement bool) (DefaultPolicy, error) {
+	return createPolicyTemplate(document, policyManagement, nil)
+}
+
+func createPolicyTemplate(document json.RawMessage, policyManagement bool, selector *PolicySelector) (DefaultPolicy, error) {
 	assigner := model.ProvisionID
 	if assigner == "" {
 		assigner = model.Owner.UserId
@@ -46,6 +62,7 @@ func createDefaultPolicy(document json.RawMessage, policyManagement bool) (Defau
 		ASURL:            model.Owner.AuthzServerURL,
 		Assigner:         assigner,
 		PolicyManagement: policyManagement,
+		Selector:         selector,
 		Document:         document,
 	})
 	if err != nil {

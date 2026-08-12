@@ -39,10 +39,10 @@ func testDeploymentBundle() *DeploymentBundle {
 			},
 		}},
 		Profile: &BundledProfile{ObjectMeta: metav1.ObjectMeta{Name: "fetch"}, Spec: BundledProfileSpec{
-			ServiceProfile: &BundledServiceProfile{Title: "Fetch service"},
+			ServiceProfile: &BundledServiceProfile{Title: "Fetch service", AccessRoles: map[string]BundledAccessRole{"reader": {Title: "Content reader"}}},
 			DatasetProfiles: map[string]BundledDatasetProfile{
 				"fetched-content": {Title: "Fetched content", Distributions: map[string]BundledDistributionProfile{
-					"content": {Path: "/content", URLType: "accessURL"},
+					"content": {Path: "/content", URLType: "accessURL", AccessRoles: []string{"reader"}},
 				}},
 			},
 		}},
@@ -105,6 +105,12 @@ func TestResolveProfiledFetchBundle(t *testing.T) {
 	if distribution.Target.Port != 8080 || distribution.Path != "/content" {
 		t.Fatalf("unexpected distribution: %#v", distribution)
 	}
+	if len(distribution.AccessRoles) != 1 || distribution.AccessRoles[0] != "reader" {
+		t.Fatalf("unexpected distribution access roles: %v", distribution.AccessRoles)
+	}
+	if definition.ServiceProfile.AccessRoles["reader"].URI != "http://aggregator.example/profiles/fetch#role-reader" {
+		t.Fatalf("unexpected resolved role: %#v", definition.ServiceProfile.AccessRoles["reader"])
+	}
 	if len(definition.InputBindings) != 1 || definition.InputBindings[0].Targets[0].Env != "GET_URL" {
 		t.Fatalf("unexpected input bindings: %#v", definition.InputBindings)
 	}
@@ -127,7 +133,7 @@ func TestResolveOperationalEndpoint(t *testing.T) {
 	bundle := testDeploymentBundle()
 	bundle.Profile.Spec.ServiceProfile.Endpoints = map[string]BundledEndpoint{
 		"refresh": {Path: "/refresh", Operations: []BundledOperation{{
-			Method: http.MethodPost, Executes: "fetch",
+			Method: http.MethodPost, Executes: "fetch", AccessRoles: []string{"reader"},
 			Updates: &BundledOperationUpdate{Function: "fetch", Parameters: []string{"source"}},
 		}}},
 	}
@@ -145,5 +151,8 @@ func TestResolveOperationalEndpoint(t *testing.T) {
 	operation := endpoint.Operations[0]
 	if len(operation.Scopes) != 2 || operation.Scopes[0] != Execute || operation.Scopes[1] != Modify {
 		t.Fatalf("unexpected semantic scopes: %#v", operation.Scopes)
+	}
+	if len(operation.AccessRoles) != 1 || operation.AccessRoles[0] != "reader" {
+		t.Fatalf("unexpected operation access roles: %v", operation.AccessRoles)
 	}
 }
