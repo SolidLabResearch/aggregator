@@ -59,6 +59,9 @@ deploymentFunctions:
           status:
             <<: *aggregation-route
             internalPath: /status
+          refresh-clients:
+            <<: *aggregation-route
+            internalPath: /refresh-clients
         distributions:
           aggregated-evaluation-metrics:
             json:

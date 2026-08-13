@@ -37,17 +37,27 @@ func TestDetermineScopesRejectsUnsupportedMethod(t *testing.T) {
 	}
 }
 
-func TestRequestedScopesUsesRegisteredODRLActions(t *testing.T) {
-	available := []Scope{Execute, Modify}
-	got, err := requestedScopes([]Scope{Execute, Modify, Execute}, available, "POST")
-	if err != nil {
-		t.Fatalf("requestedScopes: %v", err)
+func TestRequestedScopesSelectsOneRegisteredODRLAction(t *testing.T) {
+	tests := []struct {
+		name     string
+		explicit []Scope
+		want     Scope
+	}{
+		{name: "execute precedes modify", explicit: []Scope{Modify, Execute}, want: Execute},
+		{name: "execute precedes read", explicit: []Scope{Read, Execute}, want: Execute},
+		{name: "first scope used without execute", explicit: []Scope{Modify, Read}, want: Modify},
 	}
-	if len(got) != 2 || got[0] != Execute || got[1] != Modify {
-		t.Fatalf("requestedScopes = %v", got)
-	}
-	if string(got[0]) != OdrlPrefix+"execute" {
-		t.Fatalf("scope is not an ODRL action: %q", got[0])
+	available := []Scope{Read, Execute, Modify}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := requestedScopes(test.explicit, available, "POST")
+			if err != nil {
+				t.Fatalf("requestedScopes: %v", err)
+			}
+			if len(got) != 1 || got[0] != test.want {
+				t.Fatalf("requestedScopes = %v, want [%s]", got, test.want)
+			}
+		})
 	}
 }
 

@@ -143,6 +143,12 @@ profiles:
           operations:
             - method: GET
               accessRoles: [coordinator]
+        preparation-status:
+          title: Data preparation status
+          path: /preparation/status
+          operations:
+            - method: GET
+              accessRoles: [prepared-data-reader]
     datasetProfiles:
       prepared-data:
         title: Prepared hospital data

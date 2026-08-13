@@ -73,6 +73,11 @@ deploymentFunctions:
           status:
             <<: *training-route
             internalPath: /status
+          preparation-status:
+            resource: workload
+            container: data-preparation
+            port: preparation
+            internalPath: /status
         distributions:
           prepared-data:
             zip:

@@ -41,21 +41,21 @@ func requestedScopes(explicit, available []Scope, method string) ([]Scope, error
 	for _, scope := range available {
 		availableSet[scope] = true
 	}
-	seen := map[Scope]bool{}
-	result := make([]Scope, 0, len(explicit))
+	var selected Scope
 	for _, scope := range explicit {
 		if !availableSet[scope] {
 			return nil, fmt.Errorf("scope %q is not registered for this resource", scope)
 		}
-		if scope != "" && !seen[scope] {
-			seen[scope] = true
-			result = append(result, scope)
+		if scope == Execute {
+			selected = Execute
+		} else if selected == "" && scope != "" {
+			selected = scope
 		}
 	}
-	if len(result) == 0 {
+	if selected == "" {
 		return nil, fmt.Errorf("no authorization scopes requested")
 	}
-	return result, nil
+	return []Scope{selected}, nil
 }
 
 func determineScopes(method string, resourceScopes []Scope) ([]Scope, error) {

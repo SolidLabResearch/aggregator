@@ -121,6 +121,12 @@ profiles:
           operations:
             - method: GET
               accessRoles: [researcher]
+        refresh-clients:
+          title: Refresh federated clients
+          path: /refresh-clients
+          operations:
+            - method: POST
+              accessRoles: [researcher]
     datasetProfiles:
       aggregated-evaluation-metrics:
         title: Aggregated evaluation metrics
