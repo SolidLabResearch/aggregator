@@ -63,6 +63,12 @@ deploymentFunctions:
             <<: *aggregation-route
             internalPath: /refresh-clients
         distributions:
+          aggregated-global-weights:
+            binary:
+              resource: workload
+              container: weight-aggregation
+              port: http
+              internalPath: /weights
           aggregated-evaluation-metrics:
             json:
               resource: workload

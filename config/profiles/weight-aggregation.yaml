@@ -62,6 +62,11 @@ profiles:
           required: true
           title: Client evaluation metrics
       outputs:
+        aggregatedGlobalWeights:
+          predicate: aggregated-global-weights
+          title: Aggregated global model weights
+          datasetProfileRef:
+            dataset: aggregated-global-weights
         aggregatedEvaluationMetrics:
           predicate: aggregated-evaluation-metrics
           title: Aggregated evaluation metrics
@@ -84,6 +89,10 @@ profiles:
           name: Get aggregated evaluation metrics
           expects: []
           returns: [aggregatedEvaluationMetrics]
+        getGlobalWeights:
+          name: Get aggregated global model weights
+          expects: []
+          returns: [aggregatedGlobalWeights]
       endpoints:
         session-start:
           title: Start federated training session
@@ -128,6 +137,16 @@ profiles:
             - method: POST
               accessRoles: [researcher]
     datasetProfiles:
+      aggregated-global-weights:
+        title: Aggregated global model weights
+        description: Latest global model from a successfully completed federated learning session.
+        distributions:
+          binary:
+            title: Aggregated global weights
+            path: /weights
+            urlType: downloadURL
+            mediaType: application/octet-stream
+            accessRoles: [researcher]
       aggregated-evaluation-metrics:
         title: Aggregated evaluation metrics
         description: Most recent weighted evaluation loss and accuracy.
