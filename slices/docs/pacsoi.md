@@ -42,6 +42,10 @@ Each supplied item has a different purpose:
 | `slices.yaml` | `config/slices.yaml` | Helm values for the Aggregator Server running in the Slices cluster, including its public address, authentication, images, ingress, and related server settings. `make slices-deploy` reads this file. |
 | Contents of the supplied `slices/` directory | Merge into the repository's `slices/` directory | Contains PACSOI cluster-access and operational material, such as the Kubernetes cluster configuration, dashboard token, and deployment helpers. |
 
+### Update the aggregator server configuration
+
+Update the`slices.yaml` authorization settings under `auth`. When a new kvasir deployments is created, credentials (and URLS) might be deprecated. Create a new (confidential) aggregator client and update the `clientId` and `clientSecret` values in `slices.yaml`. The `issuer` URL should also be updated if the authorization server changes. Make sure the client is configured to allow Service Accounts and the Device Code Flow. Ask the Kvasir team for help.
+
 ## 2. Configure access to the Slices cluster
 
 Follow the complete [Slices Kubernetes access guide](kubectl.md). It explains
@@ -70,6 +74,12 @@ If your public IP changes, run `./slices/configure-proxy.sh` again.
 
 ## 3. Deploy or update the Aggregator Server
 
+If there is already a running Aggregator Server, undeploy it first:
+
+```bash
+make slices-undeploy
+```
+
 After cluster access works and `config/slices.yaml` is in place, deploy the
 server from the repository root:
 
@@ -83,7 +93,7 @@ Server deployment to become ready.
 
 ## 4. Use the Kubernetes dashboard
 
-Open the [PACSOI Kubernetes dashboard](https://dashboard.pacsoi.knows.idlab.ugent.be/).
+Open the [PACSOI Kubernetes dashboard](https://dashboard.aggregator.pacsoi.knows.idlab.ugent.be/).
 Choose token authentication and paste the token stored at:
 
 ```text
@@ -138,7 +148,7 @@ Once the Aggregator Server is running and the CLI configuration is loaded,
 start registration:
 
 ```bash
-agg register-user --set-active
+agg register-user
 ```
 
 The CLI starts a device-login flow and displays a URL. Open that URL, log in,
