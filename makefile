@@ -59,9 +59,6 @@ slices-deploy:
 slices-configure-proxy:
 	@./slices/configure-proxy.sh
 
-slices-deploy-tunnel:
-	@./slices/deploy-tunnel.sh
-
 undeploy:
 	@echo "🧹 Stopping aggregator deployment..."
 	@if kind get clusters 2>/dev/null | grep -q "aggregator"; then \
