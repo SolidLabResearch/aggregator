@@ -2,13 +2,8 @@ deploymentFunctions:
   pacsoi:
     function:
       title: Deploy PACSOI service
-      description: Deploys the PACSOI weight and oxford distribution workload.
-      expects:
-        - name: id
-          predicate: id
-          type: xsd:string
-          required: true
-          title: FAQIR doctor ID
+      description: Deploys the PACSOI weight and bariatric questionnaire score distribution workload.
+      expects: []
       returns:
         name: deployedService
         predicate: service
@@ -36,26 +31,31 @@ deploymentFunctions:
                       image: pacsoi-service
                       imagePullPolicy: Never
                       env:
+                        - name: ACTIVE_PATIENTS_URL
+                          value: "https://pacsoi-services.faqir.org/hcps/active_patients"
+                        - name: ACTIVE_PATIENTS_POLL_INTERVAL_MS
+                          value: "60000"
+                        - name: POD_BASE_URL
+                          value: "https://pacsoi-kvasir.faqir.org"
                         - name: PATIENT_SLICE
-                          value: "TODO set patient slice"
+                          value: "Read-Patient"
                         - name: WEIGHT_SLICE
-                          value: "TODO set weight slice"
-                        - name: OXFORD_SLICE
-                          value: "TODO set oxford slice"
+                          value: "Read-Weight-Observations"
                         - name: BAR_PROCEDURE_SLICE
-                          value: "TODO set bar procedure slice"
-                        - name: KNEE_PROCEDURE_SLICE
-                          value: "TODO set knee procedure slice"
+                          value: "Read-Procedure-Bariatric"
+                        - name: QUESTIONNAIRE_PREOP_SLICE
+                          value: "Read-Questionnaire-Bariatric-preop"
+                        - name: QUESTIONNAIRE_POSTOP6W_SLICE
+                          value: "Read-Questionnaire-Bariatric-postop-6w"
+                        - name: QUESTIONNAIRE_POSTOP3M_SLICE
+                          value: "Read-Questionnaire-Bariatric-postop-3m"
+                        - name: QUESTIONNAIRE_POSTOP6M_SLICE
+                          value: "Read-Questionnaire-Bariatric-postop-6m"
+                        - name: QUESTIONNAIRE_POSTOP1Y_SLICE
+                          value: "Read-Questionnaire-Bariatric-postop-1y"
                       ports:
                         - name: http
                           containerPort: 3000
-      inputBindings:
-        - parameter: id
-          targets:
-            - resource: workload
-              container: pacsoi
-              env: SOURCES
-              valueTemplate: https://pacsoi-kvasir.faqir.org/faqir-management/slices/{{value}}-ActivePatients/query
       routeBindings:
         distributions:
           weight-distribution:
@@ -64,9 +64,9 @@ deploymentFunctions:
               container: pacsoi
               port: http
               internalPath: /w-dist
-          oxford-distribution:
+          bariatric-score-distribution:
             csv:
               resource: workload
               container: pacsoi
               port: http
-              internalPath: /o-dist
+              internalPath: /b-dist

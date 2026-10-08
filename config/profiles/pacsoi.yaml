@@ -3,29 +3,263 @@ profiles:
     serviceProfile:
       title: PACSOI service
       description: | 
-        Computes an aggregate monthly weight distribution for patients after a bariatric procedure 
-        and monthly oxford score distribution for patients after a knee procedure.
+        Discovers patient pod sources, queries the patient data needed by the
+        aggregation pipeline, and computes weight and bariatric questionnaire
+        score distributions.
+      parameters:
+        activePatientsEndpoint:
+          predicate: active-patients-endpoint
+          type: xsd:anyURI
+          required: true
+          title: Active patients endpoint
+          description: HTTP endpoint polled for active patient IDs and pod URLs.
+        sparqlQuery:
+          predicate: sparql-query
+          type: xsd:string
+          required: true
+          title: SPARQL query
+          description: SPARQL query executed by a query function.
+        patientPodSources:
+          predicate: patient-pod-sources
+          type: dcat:Dataset
+          required: true
+          title: Patient pod sources
+          description: Patient pod source bindings consumed by the downstream queries.
+        patientIdentities:
+          predicate: patient-identities
+          type: dcat:Dataset
+          required: true
+          title: Patient identities
+          description: Canonical and pseudonymous patient identity bindings.
+        bariatricProcedures:
+          predicate: bariatric-procedures
+          type: dcat:Dataset
+          required: true
+          title: Bariatric procedures
+          description: Bariatric procedure observations used as weight baselines.
+        weightObservations:
+          predicate: weight-observations
+          type: dcat:Dataset
+          required: true
+          title: Weight observations
+          description: Patient weight observations used by the weight aggregation.
+        bariatricQuestionnaireResponses:
+          predicate: bariatric-questionnaire-responses
+          type: dcat:Dataset
+          required: true
+          title: Bariatric questionnaire responses
+          description: Completed OWLQOL and WRSM questionnaire answer bindings.
       outputs:
+        patientPodSources:
+          predicate: patient-pod-sources
+          title: Discovered patient pod sources
+          description: Patient pod bindings discovered from the active-patient API.
+          datasetProfileRef:
+            dataset: patient-pod-sources
+        patientIdentities:
+          predicate: patient-identities
+          title: Patient identity bindings
+          description: Resolved canonical and pseudonymous patient identifiers.
+          datasetProfileRef:
+            dataset: patient-identities
+        bariatricProcedures:
+          predicate: bariatric-procedures
+          title: Bariatric procedure observations
+          description: Bariatric procedures queried from the discovered patient pods.
+          datasetProfileRef:
+            dataset: bariatric-procedures
+        weightObservations:
+          predicate: weight-observations
+          title: Weight observations
+          description: Weight observations queried from the discovered patient pods.
+          datasetProfileRef:
+            dataset: weight-observations
+        bariatricQuestionnaireResponses:
+          predicate: bariatric-questionnaire-responses
+          title: Bariatric questionnaire responses
+          description: Questionnaire answers queried from the five bariatric follow-up slices.
+          datasetProfileRef:
+            dataset: bariatric-questionnaire-responses
         weightDistribution:
           predicate: weight-distribution
           title: Weight distribution
           datasetProfileRef:
             dataset: weight-distribution
-        oxfordDistribution:
-          predicate: oxford-distribution
-          title: Oxford distribution
+        bariatricScoreDistribution:
+          predicate: bariatric-score-distribution
+          title: Bariatric questionnaire score distribution
           datasetProfileRef:
-            dataset: oxford-distribution
+            dataset: bariatric-score-distribution
       functions:
+        querySources:
+          name: Discover patient pod sources
+          description: Polls the active-patient API and discovers the patient pods used by the pipeline.
+          expects: [activePatientsEndpoint]
+          returns: [patientPodSources]
+        queryPatients:
+          name: Query patient identities
+          description: Queries patient identity data from the discovered patient pods.
+          expects: [patientPodSources, sparqlQuery]
+          returns: [patientIdentities]
+        queryProcedures:
+          name: Query bariatric procedures
+          description: Queries bariatric procedures from the discovered patient pods.
+          expects: [patientPodSources, sparqlQuery]
+          returns: [bariatricProcedures]
+        queryWeights:
+          name: Query weight observations
+          description: Queries weight observations from the discovered patient pods.
+          expects: [patientPodSources, sparqlQuery]
+          returns: [weightObservations]
+        queryBariatricResponses:
+          name: Query bariatric questionnaire responses
+          description: Queries completed OWLQOL and WRSM responses from the five follow-up slices.
+          expects: [patientPodSources, sparqlQuery]
+          returns: [bariatricQuestionnaireResponses]
         calculateWeightDistribution:
           name: Calculate weight distribution
-          expects: []
+          description: Aggregates patient weights by calendar month relative to bariatric procedures.
+          expects: [patientIdentities, bariatricProcedures, weightObservations]
           returns: [weightDistribution]
-        calculateOxfordDistribution:
-          name: Calculate oxford distribution
-          expects: []
-          returns: [oxfordDistribution]
+        calculateBariatricScoreDistribution:
+          name: Calculate bariatric questionnaire score distribution
+          description: Aggregates OWLQOL and WRSM scores across the five bariatric follow-up points.
+          expects: [patientIdentities, bariatricQuestionnaireResponses]
+          returns: [bariatricScoreDistribution]
+      composition:
+        - from:
+            term: https://pacsoi-services.faqir.org/hcps/active_patients
+          to:
+            function: querySources
+            parameter: activePatientsEndpoint
+        - from:
+            term: |-
+              PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+              PREFIX sphn: <https://sphn.ch/>
+              PREFIX saref: <https://saref.etsi.org/core/>
+              PREFIX fhir: <http://hl7.org/fhir/>
+              SELECT ?patient ?idValue ?issuer WHERE {
+                ?patient a foaf:Person ;
+                  sphn:hasIdentifier ?identifier .
+                ?identifier saref:hasValue ?idValue ;
+                  fhir:issuer ?issuer .
+              }
+          to:
+            function: queryPatients
+            parameter: sparqlQuery
+        - from:
+            term: |-
+              PREFIX sphn: <https://sphn.ch/>
+              PREFIX prov: <http://www.w3.org/ns/prov#>
+              SELECT ?patient ?timestamp WHERE {
+                ?patient sphn:hasIntervention ?proc .
+                ?proc a sphn:MedicalProcedure ;
+                  prov:startedAtTime ?timestamp .
+              }
+          to:
+            function: queryProcedures
+            parameter: sparqlQuery
+        - from:
+            term: |-
+              PREFIX saref: <https://saref.etsi.org/core/>
+              PREFIX sosa: <http://www.w3.org/ns/sosa/>
+              SELECT ?value ?timestamp ?patient WHERE {
+                ?obs a sosa:Observation ;
+                  sosa:hasFeatureOfInterest ?patient ;
+                  sosa:hasResult ?weightValue .
+                ?weightValue a saref:PropertyValue ;
+                  saref:hasValue ?value ;
+                  saref:hasTimestamp ?timestamp .
+              }
+          to:
+            function: queryWeights
+            parameter: sparqlQuery
+        - from:
+            term: |-
+              PREFIX dcterms: <http://purl.org/dc/terms/>
+              PREFIX qo: <https://ns.faqir.org/q-o#>
+              SELECT ?res ?patient ?questionnaire ?value ?question WHERE {
+                ?res a qo:QuestionnaireResponse ;
+                  qo:questionnaireResponseBySubject ?patient ;
+                  qo:questionnaireResponseToQuestionnaire ?questionnaire ;
+                  dcterms:hasPart ?answer .
+                ?answer a qo:Answer ;
+                  qo:answerValue ?value ;
+                  qo:answerToQuestion ?question .
+              }
+          to:
+            function: queryBariatricResponses
+            parameter: sparqlQuery
+        - from:
+            function: querySources
+            output: patientPodSources
+          to:
+            function: queryPatients
+            parameter: patientPodSources
+        - from:
+            function: querySources
+            output: patientPodSources
+          to:
+            function: queryProcedures
+            parameter: patientPodSources
+        - from:
+            function: querySources
+            output: patientPodSources
+          to:
+            function: queryWeights
+            parameter: patientPodSources
+        - from:
+            function: querySources
+            output: patientPodSources
+          to:
+            function: queryBariatricResponses
+            parameter: patientPodSources
+        - from:
+            function: queryPatients
+            output: patientIdentities
+          to:
+            function: calculateWeightDistribution
+            parameter: patientIdentities
+        - from:
+            function: queryProcedures
+            output: bariatricProcedures
+          to:
+            function: calculateWeightDistribution
+            parameter: bariatricProcedures
+        - from:
+            function: queryWeights
+            output: weightObservations
+          to:
+            function: calculateWeightDistribution
+            parameter: weightObservations
+        - from:
+            function: queryPatients
+            output: patientIdentities
+          to:
+            function: calculateBariatricScoreDistribution
+            parameter: patientIdentities
+        - from:
+            function: queryBariatricResponses
+            output: bariatricQuestionnaireResponses
+          to:
+            function: calculateBariatricScoreDistribution
+            parameter: bariatricQuestionnaireResponses
     datasetProfiles:
+      patient-pod-sources:
+        title: Patient pod sources
+        description: Patient pod bindings discovered from the active-patient API.
+      patient-identities:
+        title: Patient identities
+        description: Canonical and pseudonymous patient identity bindings.
+      bariatric-procedures:
+        title: Bariatric procedures
+        description: Bariatric procedure observations used as weight baselines.
+      weight-observations:
+        title: Weight observations
+        description: Patient weight observations consumed by the weight aggregation.
+      bariatric-questionnaire-responses:
+        title: Bariatric questionnaire responses
+        description: Completed OWLQOL and WRSM questionnaire answer bindings.
       weight-distribution:
         title: Weight distribution
         description: Monthly aggregate patient weights relative to the procedure date.
@@ -35,12 +269,12 @@ profiles:
             path: /w-dist
             urlType: downloadURL
             mediaType: text/csv
-      oxford-distribution:
-        title: Oxford distribution
-        description: Monthly aggregate patient oxford scores relative to the procedure date.
+      bariatric-score-distribution:
+        title: Bariatric questionnaire score distribution
+        description: Aggregate OWLQOL and WRSM scores and evolution across five bariatric follow-up points.
         distributions:
           csv:
-            title: Oxford distribution CSV
-            path: /o-dist
+            title: Bariatric questionnaire score distribution CSV
+            path: /b-dist
             urlType: downloadURL
             mediaType: text/csv

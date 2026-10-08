@@ -2,7 +2,7 @@
         containers-build containers-load containers-all \
         kind-generate-egress-key-pair kind-generate-ingress-key kind-generate-aggregator-key-pair kind-generate-keys \
         kind-start-traefik \
-        kind-deploy deploy kind-undeploy undeploy slices-deploy slices-deploy-tunnel slices-undeploy slices-configure-proxy \
+		kind-deploy kind-reload-definitions deploy kind-undeploy undeploy slices-deploy slices-reload-definitions slices-deploy-tunnel slices-undeploy slices-configure-proxy \
 			  configure-etc-hosts clean-etc-hosts configure-coredns \
 				kind-dashboard \
         docker-clean deploy integration-test unit-test
@@ -43,6 +43,23 @@ kind-deploy:
 	$(MAKE) configure-etc-hosts HOSTS="aggregator.local wsl.local"
 	$(MAKE) deploy CONFIG=$(CONFIG_FILE)
 
+kind-reload-definitions:
+	@echo "📄 Reloading Profiles in Kind..."
+	@helm template aggregator-platform ./aggregator-platform \
+		-f $(CONFIG_DIR)/$(CONFIG_FILE) \
+		$(DEFINITION_VALUES_FLAGS) \
+		--namespace aggregator-platform \
+		--show-only templates/profiles.yaml \
+		| kubectl --context kind-aggregator apply -f -
+	@echo "📄 Reloading DeploymentFunctions in Kind..."
+	@helm template aggregator-platform ./aggregator-platform \
+		-f $(CONFIG_DIR)/$(CONFIG_FILE) \
+		$(DEFINITION_VALUES_FLAGS) \
+		--namespace aggregator-platform \
+		--show-only templates/deployment-functions.yaml \
+		| kubectl --context kind-aggregator apply -f -
+	@echo "✅ Kind deployment definitions reloaded without restarting the platform."
+
 slices-deploy:
 	@echo "📄 Deploying aggregator application to Slices..."
 	@kubectl --context $(SLICES_CONTEXT) apply -f ./aggregator-platform/crds
@@ -55,6 +72,23 @@ slices-deploy:
 		deployment/aggregator-server \
 		-n aggregator-platform --timeout=120s
 	@echo "✅ Aggregator application successfully deployed to Slices!"
+
+slices-reload-definitions:
+	@echo "📄 Reloading Profiles on Slices..."
+	@helm template aggregator-platform ./aggregator-platform \
+		-f $(CONFIG_DIR)/slices.yaml \
+		$(DEFINITION_VALUES_FLAGS) \
+		--namespace aggregator-platform \
+		--show-only templates/profiles.yaml \
+		| kubectl --context $(SLICES_CONTEXT) apply -f -
+	@echo "📄 Reloading DeploymentFunctions on Slices..."
+	@helm template aggregator-platform ./aggregator-platform \
+		-f $(CONFIG_DIR)/slices.yaml \
+		$(DEFINITION_VALUES_FLAGS) \
+		--namespace aggregator-platform \
+		--show-only templates/deployment-functions.yaml \
+		| kubectl --context $(SLICES_CONTEXT) apply -f -
+	@echo "✅ Slices deployment definitions reloaded without restarting the platform."
 
 slices-configure-proxy:
 	@./slices/configure-proxy.sh

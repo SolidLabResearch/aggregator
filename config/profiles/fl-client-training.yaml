@@ -62,16 +62,16 @@ profiles:
           title: Client weights
           datasetProfileRef:
             dataset: client-weights
-        trainingMetrics:
-          predicate: training-metrics
-          title: Training metrics
+        metrics:
+          predicate: metrics
+          title: Local round metrics
           datasetProfileRef:
-            dataset: training-metrics
-        evaluationMetrics:
-          predicate: evaluation-metrics
-          title: Evaluation metrics
+            dataset: metrics
+        metricsHistory:
+          predicate: metrics-history
+          title: Metrics history
           datasetProfileRef:
-            dataset: evaluation-metrics
+            dataset: metrics-history
       functions:
         prepareData:
           name: Prepare hospital data
@@ -87,7 +87,7 @@ profiles:
             - roundId
             - replyUrl
             - globalWeights
-          returns: [clientWeights, trainingMetrics]
+          returns: [clientWeights, metrics, metricsHistory]
         evaluate:
           name: Evaluate aggregated model
           expects:
@@ -97,7 +97,7 @@ profiles:
             - roundId
             - replyUrl
             - globalWeights
-          returns: [evaluationMetrics]
+          returns: [metrics]
       endpoints:
         session-start:
           title: Start client session
@@ -169,21 +169,23 @@ profiles:
             urlType: downloadURL
             mediaType: application/octet-stream
             accessRoles: [training-results-reader]
-      training-metrics:
-        title: Client training metrics
+      metrics:
+        title: Local round metrics
+        description: Local training and evaluation metrics for the latest round.
         distributions:
           json:
-            title: Training metrics
+            title: Local round metrics
             path: /metrics
             urlType: accessURL
             mediaType: application/json
             accessRoles: [training-results-reader]
-      evaluation-metrics:
-        title: Client evaluation metrics
+      metrics-history:
+        title: Client metrics history
+        description: Per-epoch metrics for every stored local training round.
         distributions:
           json:
-            title: Evaluation metrics
-            path: /evaluation-metrics
+            title: Metrics history
+            path: /metrics/history
             urlType: accessURL
             mediaType: application/json
             accessRoles: [training-results-reader]

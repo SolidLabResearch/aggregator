@@ -25,6 +25,8 @@ WORKDIR /app
 
 # Only install production deps
 COPY package*.json ./
+RUN node --input-type=commonjs -e \
+    "if (require('./package.json').type !== 'module') throw new Error('package.json must declare type=module')"
 RUN npm install --omit=dev
 
 # Copy built files

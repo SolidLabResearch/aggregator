@@ -43,9 +43,8 @@ func CompileProfile(profile *Profile, urls URLs) ([]byte, error) {
 		writeIRIs(&out, aggr+"supportsEndpoint", keyedIRIs(document, "endpoint", service.Endpoints))
 		if len(service.Composition) > 0 {
 			writeSubject(&out, "", aggr+"composition", iri(document+"#composition"), true)
-		} else {
-			finishSubject(&out)
 		}
+		finishSubject(&out)
 
 		for _, name := range sortedKeys(service.AccessRoles) {
 			role := service.AccessRoles[name]
@@ -212,13 +211,19 @@ func compileComposition(out *strings.Builder, document string, mappings []Compos
 	for index, mapping := range mappings {
 		mappingIRI := fmt.Sprintf("%s#composition-mapping-%d", document, index)
 		startResource(out, mappingIRI, "https://fno.io/vocabulary/composition/0.1.0/Mapping")
-		writeSubject(out, "", "https://fno.io/vocabulary/composition/0.1.0/mapFrom", iri(mappingIRI+"-from"), true)
+		if mapping.From.Term != "" {
+			writeSubject(out, "", "https://fno.io/vocabulary/composition/0.1.0/mapFromTerm", literal(mapping.From.Term), true)
+		} else {
+			writeSubject(out, "", "https://fno.io/vocabulary/composition/0.1.0/mapFrom", iri(mappingIRI+"-from"), true)
+		}
 		writeSubject(out, "", "https://fno.io/vocabulary/composition/0.1.0/mapTo", iri(mappingIRI+"-to"), true)
 		finishSubject(out)
-		startResource(out, mappingIRI+"-from", "https://fno.io/vocabulary/composition/0.1.0/MappingPoint")
-		writeSubject(out, "", "https://fno.io/vocabulary/composition/0.1.0/constituentFunction", iri(fragment(document, "function", mapping.From.Function)), true)
-		writeSubject(out, "", "https://fno.io/vocabulary/composition/0.1.0/functionOutput", iri(fragment(document, "output", mapping.From.Output)), true)
-		finishSubject(out)
+		if mapping.From.Term == "" {
+			startResource(out, mappingIRI+"-from", "https://fno.io/vocabulary/composition/0.1.0/MappingPoint")
+			writeSubject(out, "", "https://fno.io/vocabulary/composition/0.1.0/constituentFunction", iri(fragment(document, "function", mapping.From.Function)), true)
+			writeSubject(out, "", "https://fno.io/vocabulary/composition/0.1.0/functionOutput", iri(fragment(document, "output", mapping.From.Output)), true)
+			finishSubject(out)
+		}
 		startResource(out, mappingIRI+"-to", "https://fno.io/vocabulary/composition/0.1.0/MappingPoint")
 		writeSubject(out, "", "https://fno.io/vocabulary/composition/0.1.0/constituentFunction", iri(fragment(document, "function", mapping.To.Function)), true)
 		writeSubject(out, "", "https://fno.io/vocabulary/composition/0.1.0/functionParameter", iri(fragment(document, "parameter", mapping.To.Parameter)), true)

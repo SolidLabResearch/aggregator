@@ -117,6 +117,36 @@ not automatically exposed as a dataset. Every function output exposed as a
 dataset must reference a `DatasetProfile`, and every distribution in that
 profile must have a route binding.
 
+## Function composition
+
+Service functions can be connected with FnO Composition mappings. A mapping
+normally connects one function output to a parameter expected by another:
+
+```yaml
+composition:
+  - from:
+      function: queryPatients
+      output: patientIdentities
+    to:
+      function: calculateDistribution
+      parameter: patientIdentities
+```
+
+A composition can also bind a constant RDF literal to a function parameter.
+Use `from.term`; the published profile represents it with `fnoc:mapFromTerm`:
+
+```yaml
+composition:
+  - from:
+      term: SELECT ?s ?p ?o WHERE { ?s ?p ?o }
+    to:
+      function: queryPatients
+      parameter: sparqlQuery
+```
+
+Exactly one source form is allowed: either `function` with `output`, or `term`.
+The target function must declare the selected parameter in `expects`.
+
 Endpoint semantics also determine their UMA authorization actions. An
 operation with `executes` requires the ODRL `execute` action, while an operation
 with `updates` requires ODRL `modify`; an operation containing both requires

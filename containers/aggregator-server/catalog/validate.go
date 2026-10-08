@@ -53,11 +53,17 @@ func ValidateProfile(profile *Profile) error {
 		}
 	}
 	for index, mapping := range service.Composition {
-		from, ok := service.Functions[mapping.From.Function]
-		if !ok {
-			errors = append(errors, fmt.Sprintf("composition[%d] references unknown source function %q", index, mapping.From.Function))
-		} else if !includes(from.Returns, mapping.From.Output) {
-			errors = append(errors, fmt.Sprintf("composition[%d] source function %q does not return %q", index, mapping.From.Function, mapping.From.Output))
+		hasTerm := mapping.From.Term != ""
+		hasFunctionOutput := mapping.From.Function != "" || mapping.From.Output != ""
+		if hasTerm == hasFunctionOutput {
+			errors = append(errors, fmt.Sprintf("composition[%d] source must define exactly one of term or function/output", index))
+		} else if hasFunctionOutput {
+			from, ok := service.Functions[mapping.From.Function]
+			if !ok {
+				errors = append(errors, fmt.Sprintf("composition[%d] references unknown source function %q", index, mapping.From.Function))
+			} else if !includes(from.Returns, mapping.From.Output) {
+				errors = append(errors, fmt.Sprintf("composition[%d] source function %q does not return %q", index, mapping.From.Function, mapping.From.Output))
+			}
 		}
 		to, ok := service.Functions[mapping.To.Function]
 		if !ok {

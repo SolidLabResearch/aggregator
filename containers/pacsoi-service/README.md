@@ -5,7 +5,7 @@ from Kvasir slice endpoints and exposes two anonymous, population-level CSV
 distributions:
 
 - weights by calendar month relative to a bariatric procedure; and
-- Oxford Knee Scores by calendar month relative to a knee procedure.
+- OWLQOL and WRSM scores at five bariatric follow-up points.
 
 The implementation from commit `25598a3`, before the patient identity and
 removal changes, is preserved as the separately buildable
@@ -14,11 +14,11 @@ removal changes, is preserved as the separately buildable
 ## How it works
 
 ```text
-doctor HCP slice
+HCP active-patients HTTP API
       |
-      | discovers patient pod URLs
+      | periodic `{ id, pod_id }` snapshots
       v
-patient / procedure / weight / Oxford slice queries
+patient / procedure / weight / bariatric questionnaire slice queries
       |
       | incremental SPARQL bindings
       v
@@ -26,14 +26,16 @@ identifier resolution and out-of-order event buffers
       |
       +--> WeightDistribution ----> GET /w-dist
       |
-      +--> OxfordScoreDistribution -> GET /o-dist
+      +--> BariatricScoreDistribution -> GET /b-dist
 ```
 
-At startup, `src/index.ts` validates configuration, creates five dynamic source
+At startup, `src/index.ts` validates configuration, creates four dynamic source
 iterators, starts the incremental queries, and starts Fastify on port 3000.
-`src/query.ts` first watches the doctor's HCP slice. For each patient pod it
-discovers, it attaches the patient, procedure, measurement, and questionnaire
-slices to their iterators.
+`src/query.ts` polls the HCP active-patients endpoint and reconciles each
+successful snapshot with the previous one. For every discovered patient pod it
+attaches the patient, procedure, measurement, and questionnaire slices to their
+iterators. Patients missing from a later snapshot have their sources and
+in-memory contributions removed.
 
 The patient query maps canonical patient URIs and pseudo identifiers to internal
 records. A record may contain multiple patient URIs. When two records contain
@@ -41,7 +43,7 @@ the same identifier value from the same issuer, they are merged under a new
 record ID. Procedure and observation streams can use either form. Since the
 streams are independent, their events may arrive in any order. The distribution
 classes buffer procedures, weights, and questionnaire answers until the patient
-mapping and relevant procedure date are known.
+mapping is known. Weight observations also wait for a bariatric procedure date.
 
 Each observation is assigned to a relative **calendar month**:
 
@@ -56,36 +58,58 @@ For each month the output contains the population mean, population standard
 deviation (division by `N`), linearly interpolated 25th and 75th percentiles,
 and number of observations or completed questionnaires.
 
-### Oxford score calculation
+### Bariatric questionnaire score calculation
 
-An Oxford response is counted only when all 12 expected question codes are
-present. Text answers are mapped to values 0 through 4 using `VALUE_MAP` in
-`src/oxford-dist.ts`, then inverted and summed (`4 - value`). The resulting
-Oxford Knee Score ranges from 0 to 48, with a higher score representing a better
-outcome. Unexpected questions, unknown answer text, and duplicate answers throw
-an error so data/schema drift is visible in the logs.
+A combined response is counted only when all 17 OWLQOL items and all 20 WRSM
+presence items are present. A WRSM bother answer is additionally required for
+every symptom marked present.
+
+- OWLQOL responses range from 0 to 6. They are reversed and transformed to a
+  0-100 score: `(102 - raw sum) / 102 * 100`. Higher is better.
+- Unsuffixed `WRSM1` through `WRSM20` are yes/no symptom-presence answers used
+  to calculate the total bother score; no separate presence score is exposed.
+- WRSM bother is the sum of the 0-6 bother ratings for symptoms marked present.
+  The source model uses `WRSM1a` and `WRSM2a`, followed by `WRSM3b` through
+  `WRSM20b`. An absent symptom contributes zero and does not require a bother
+  answer. Lower WRSM scores are better.
+
+The questionnaire URI assigns each response to `preop`, `6w`, `3m`, `6m`, or
+`1y`. For each point and score, the service calculates the average, median,
+population standard deviation, and linearly interpolated 25th and 75th
+percentiles. Those ordered averages form the population evolution curves.
 
 ## Configuration
 
-All variables except the proxy are required.
+The poll interval and proxy are optional; all other variables are required.
 
 | Variable | Meaning | Example |
 | --- | --- | --- |
-| `SOURCES` | Doctor HCP GraphQL slice query endpoint | `http://doctor-pod/slices/PatientSlice/query` |
+| `ACTIVE_PATIENTS_URL` | Endpoint returning an array of `{ id, pod_id }` objects | `https://pacsoi-services.faqir.org/hcps/active_patients` |
+| `ACTIVE_PATIENTS_POLL_INTERVAL_MS` | Delay between successful polls (default: 60000 ms) | `60000` |
+| `LOG_LEVEL` | Set to `debug` to include per-attempt proxy dispatch details | `info` |
+| `POD_BASE_URL` | Kvasir base URL used to expand relative `pod_id` values | `https://pacsoi-kvasir.faqir.org` |
 | `PATIENT_SLICE` | Patient demographics/identifier slice name | `PatientSlice` |
 | `BAR_PROCEDURE_SLICE` | Bariatric procedure slice name | `BariatricProcedureSlice` |
-| `KNEE_PROCEDURE_SLICE` | Knee procedure slice name | `KneeProcedureSlice` |
 | `WEIGHT_SLICE` | Weight observation slice name | `WeightObservationsSlice` |
-| `OXFORD_SLICE` | Completed Oxford response slice name | `OxfordResponseSlice` |
+| `QUESTIONNAIRE_PREOP_SLICE` | Completed preoperative response slice | `PreopBariatricResponseSlice` |
+| `QUESTIONNAIRE_POSTOP6W_SLICE` | Completed 6-week response slice | `Postop6wBariatricResponseSlice` |
+| `QUESTIONNAIRE_POSTOP3M_SLICE` | Completed 3-month response slice | `Postop3mBariatricResponseSlice` |
+| `QUESTIONNAIRE_POSTOP6M_SLICE` | Completed 6-month response slice | `Postop6mBariatricResponseSlice` |
+| `QUESTIONNAIRE_POSTOP1Y_SLICE` | Completed 1-year response slice | `Postop1yBariatricResponseSlice` |
 
-Slice names may be supplied with or without a leading slash. Discovered patient
-URLs are built as `<pod>/slices/<slice-name>/query`.
+Slice names may be supplied with or without a leading slash. A relative
+`pod_id` is resolved to `<POD_BASE_URL>/<pod_id>`; an absolute `pod_id` is used
+as-is. Patient slice URLs are then built as
+`<pod-url>/slices/<slice-name>/query`.
 
-When `EGRESS_UMA_URL` is configured, outbound requests are sent to `<proxy>/fetch` as a
-JSON request envelope. Without a proxy they are fetched directly. Failed fetches
-retry indefinitely with exponential backoff, beginning at one second and capped
-at five minutes. A pod or authorization problem therefore does not terminate the
-process; look for repeated `[FETCH] Attempt ... failed` messages.
+When `EGRESS_UMA_URL` is configured, outbound requests are sent to `<proxy>/fetch`
+as a JSON request envelope. Active-patient polls request the proxy's `oauth`
+mode, which sends the user's Bearer token immediately without attempting UMA.
+Patient-pod slice requests use the default `auto` mode. Without a proxy, requests
+are fetched directly. Failed fetches retry indefinitely with exponential
+backoff, beginning at one second and capped at five minutes. A pod or
+authorization problem therefore does not terminate the process; look for
+repeated `[FETCH] Attempt ... failed` messages.
 
 ## HTTP API
 
@@ -100,11 +124,11 @@ month,avg_weight,stdev,q25,q75,count
 1,99.00,0.00,99.00,99.00,1
 ```
 
-### `GET /o-dist`
+### `GET /b-dist`
 
 ```csv
-month,avg_score,stdev,q25,q75,count
-3,36.50,1.50,35.75,37.25,2
+timepoint,owlqol_avg,owlqol_median,owlqol_stddev,owlqol_q25,owlqol_q75,wrsm_bother_avg,wrsm_bother_median,wrsm_bother_stddev,wrsm_bother_q25,wrsm_bother_q75,count
+preop,54.90,54.90,0.00,54.90,54.90,6.00,6.00,0.00,6.00,6.00,1
 ```
 
 There is currently no health endpoint. A successful TCP connection or either
@@ -119,12 +143,13 @@ HTTP process is running but not that source data was received.
 | `src/query.ts` | Incremental query setup, binding validation, source discovery, UMA proxy fetch and retries |
 | `src/schemas.ts` | GraphQL-LD schemas, JSON-LD contexts, and SPARQL `SELECT` queries |
 | `src/weight-dist.ts` | Identifier resolution, out-of-order buffers, weight buckets, statistics, and CSV |
-| `src/oxford-dist.ts` | Questionnaire validation/scoring, buffers, score buckets, statistics, and CSV |
+| `src/bariatric-scores.ts` | OWLQOL/WRSM answer validation and score calculation |
+| `src/bariatric-dist.ts` | Identity resolution, response buffers, follow-up buckets, statistics, and CSV |
 | `Dockerfile` | Two-stage Node.js 22 production image |
 
 The SPARQL variable names in `src/schemas.ts` and the binding names read in
-`src/query.ts` must change together. Likewise, Oxford question codes and answer
-labels must match the source questionnaire exactly.
+`src/query.ts` must change together. Questionnaire IDs, question codes, and
+numeric answer ranges must match the source questionnaire exactly.
 
 ## Debugging guide
 
@@ -132,18 +157,20 @@ Logs use a component prefix. Follow them in this order when an output is empty:
 
 1. `[MAIN]` confirms startup. A missing required environment variable terminates
    the process immediately with its name.
-2. `[querySources]` should log a binding containing `pod`. If it does not, check
-   `SOURCES`, the HCP schema/query, and doctor-to-patient relationships.
-3. `[FETCH]` shows every target, whether direct or proxied access is used, HTTP
-   status failures, and retry delays. Repeated retries usually mean connectivity,
-   authorization, an incorrect slice name, or an incompatible GraphQL schema.
+2. `[querySources]` reports every active-patient poll and every added, removed,
+   or moved patient. If it does not, check `ACTIVE_PATIENTS_URL`, the returned
+   JSON shape, and proxy access.
+3. `[FETCH f-N]` identifies one logical request across all retry attempts. Its
+   lifecycle logs include the pod, slice, status, duration, and recovery state.
+   Repeated identical failures are sampled at attempts 1, 2, 4, 8, and so on;
+   set `LOG_LEVEL=debug` to include each direct or proxied dispatch.
 4. `[queryPatients]` should register canonical and pseudo identifiers. Without
-   these, procedure/observation events remain buffered. Detail-stream deletions
-   are ignored because an identifier update must not deactivate the patient.
+   these, procedure/observation events remain buffered. Identifier deletions
+   unlink only that identifier; they do not deactivate the complete patient.
 5. `[queryProcedures]` should establish the baseline procedure. When identity
    resolution merges records with different procedures, the earliest is used
    and a warning is logged.
-6. `[queryWeights]` and `[queryOxfordResponses]` confirm source bindings. The
+6. `[queryWeights]` and `[queryBariatricResponses]` confirm source bindings. The
    distribution logs then say whether data was buffered or assigned to a month.
 7. `[getStats]` and `[toCSV]` report how many populated month rows were emitted.
 
@@ -152,14 +179,18 @@ Logs use a component prefix. Follow them in this order when an output is empty:
 - State is process-local and not persisted. More than one replica would produce
   independent snapshots, so the deployment intentionally uses one replica.
 - Fetch retries have no attempt limit and no per-request timeout.
-- Removing the doctor-to-patient relation from the HCP source query removes the
-  discovered pod sources and the patient's complete in-memory projection from
-  both distributions. Patient-detail or pseudo-identifier deletion events do
-  not remove the patient.
-- Only one procedure is retained per internal record. Later procedures on an
-  already-resolved record are skipped. If records with different procedures are
-  merged, the earliest timestamp wins and existing results are re-bucketed.
-  A future version may support multiple procedures.
+- A patient missing from a successful active-patient poll has its discovered pod
+  sources and complete in-memory projection removed from both distributions.
+  Each pod owns a dedicated patient query so canonical patient URIs discovered
+  in its data can be removed even when the active-patient API uses an unrelated
+  identity. Failed or malformed polls retain the last successful source set.
+  Patient-slice pseudo-identifier deletion events unlink that identifier without
+  removing the complete patient. The procedure, weight, and questionnaire
+  slices expose addition subscriptions only; their data is removed as part of
+  whole-patient cleanup when the active-patient API removes that pod.
+- All procedure bindings are retained per internal record; the earliest is the
+  effective baseline. Adding an earlier procedure re-buckets existing weights
+  against the new baseline.
 - Buffered data has no expiry or size limit. Missing patient/procedure events can
   therefore grow memory usage over a long run.
 - Data is held at observation level: `count` is the number of weights or completed

@@ -41,7 +41,7 @@ Use the volume-specific cloud-init file:
 
 ```bash
 slices bi --site-id be-gent1-bi-vm1 create volume-worker4 \
-  --image image_be-gent1-bi-vm1_4jcfp572q99mtv3649rzpgbd0 \
+  --image image_be-gent1-bi-vm1_4jcfp572q99mtv3649rzpgbd0t \
   --flavor xlarge \
   --user-data slices/cluster/worker-volume.yaml \
   -d "89d"
@@ -69,13 +69,13 @@ label. Replace `<talos-node-name>` with the name of the new storage node from
 the previous command:
 
 ```bash
-kubectl label node <talos-node-name> storage=local
+kubectl --context admin@aggregator-cluster label node <talos-node-name> storage=local
 ```
 
 For example, if the new node is named `talos-c4s-38g`:
 
 ```bash
-kubectl label node talos-c4s-38g storage=local
+kubectl --context admin@aggregator-cluster label node talos-c4s-38g storage=local
 ```
 
 Confirm both readiness and the label:

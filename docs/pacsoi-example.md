@@ -1,8 +1,8 @@
 # PACSOI example
 
 This example deploys the PACSOI service in `containers/pacsoi-service`. The
-service watches patient weight and procedure slices and exposes a monthly weight
-distribution as CSV.
+service watches patient weight, procedure, and bariatric questionnaire slices.
+It exposes weight and OWLQOL/WRSM score distributions as CSV.
 
 ## Prerequisites
 
@@ -11,21 +11,26 @@ You need:
 - a running Aggregator Platform with the PACSOI definition files enabled;
 - a Kvasir Solid Server (KSS) and UMA server configured as described in
   [KSS setup](kss-setup.md);
-- a doctor pod containing a slice that lists patient pod URLs; and
-- patient pods containing weight-observation and procedure slices.
+- access through the egress proxy to the HCP active-patients API; and
+- patient pods containing weight-observation, procedure, and bariatric
+  questionnaire slices.
 
 The example below uses:
 
 | Setting | Value |
 | --- | --- |
 | Aggregator host | `https://aggregator.local:5443` |
-| FAQIR management ID | `hospital-1` |
-| Generated source slice | `https://pacsoi-kvasir.faqir.org/faqir-management/slices/hospital-1-ActivePatients/query` |
+| Active-patients endpoint | `https://pacsoi-services.faqir.org/hcps/active_patients` |
+| Active-patients poll interval | `60000` ms |
+| Kvasir pod base URL | `https://pacsoi-kvasir.faqir.org` |
 | Patient slice name | `PatientSlice` |
 | Weight slice name | `WeightObservationsSlice` |
-| Oxford slice name | `OxfordResponseSlice` |
 | Bariatric Procedure slice name | `BariatricProcedureSlice` |
-| Knee Procedure slice name | `KneeProcedureSlice` |
+| Preoperative questionnaire slice | `PreopBariatricResponseSlice` |
+| 6-week questionnaire slice | `Postop6wBariatricResponseSlice` |
+| 3-month questionnaire slice | `Postop3mBariatricResponseSlice` |
+| 6-month questionnaire slice | `Postop6mBariatricResponseSlice` |
+| 1-year questionnaire slice | `Postop1yBariatricResponseSlice` |
 
 The Aggregator's egress UMA proxy must be authorized to read the source and
 patient slices.
@@ -41,28 +46,28 @@ The PACSOI configuration consists of:
 
 The slice names are deployment settings rather than service input parameters.
 If your Kvasir deployment uses different names, change the `PATIENT_SLICE`,
-`WEIGHT_SLICE`, `OXFORD_SLICE`, `BAR_PROCEDURE_SLICE`, and
-`KNEE_PROCEDURE_SLICE` values in
+`WEIGHT_SLICE`, `BAR_PROCEDURE_SLICE`, and the five `QUESTIONNAIRE_*_SLICE`
+values in
 [`config/deployment-functions/pacsoi.yaml`](../config/deployment-functions/pacsoi.yaml),
 under `orchestration.resources[].manifest.spec.template.spec.containers[].env`.
 
-The same file constructs `SOURCES` from the service's `id` input. To use a
-different Kvasir host, path, or slice naming convention, change the
-`valueTemplate` on the `SOURCES` input binding:
+The same file configures the active-patients API and polling interval. Change
+these environment values to use another endpoint or interval:
 
 ```yaml
-inputBindings:
-  - parameter: id
-    targets:
-      - resource: workload
-        container: pacsoi
-        env: SOURCES
-        valueTemplate: https://pacsoi-kvasir.faqir.org/faqir-management/slices/{{value}}-ActivePatients/query
+env:
+  - name: ACTIVE_PATIENTS_URL
+    value: "https://pacsoi-services.faqir.org/hcps/active_patients"
+  - name: ACTIVE_PATIENTS_POLL_INTERVAL_MS
+    value: "60000"
+  - name: POD_BASE_URL
+    value: "https://pacsoi-kvasir.faqir.org"
 ```
 
-At deployment time, every `{{value}}` placeholder is replaced with the supplied
-`id`. For example, `hospital-1` produces
-`https://pacsoi-kvasir.faqir.org/faqir-management/slices/hospital-1-ActivePatients/query`.
+The endpoint must return a JSON array containing a non-empty `id` and `pod_id`
+for every active patient. Relative pod identifiers are resolved below
+`POD_BASE_URL`; absolute pod URLs remain supported. Authorization is handled by
+the egress proxy.
 
 ### Update contexts, slice definitions, and queries
 
@@ -79,12 +84,10 @@ Use this map to find the definitions to update:
 
 | Slice | JSON-LD context | GraphQL-LD slice schema | SPARQL query |
 | --- | --- | --- | --- |
-| Active patients/HCP | `HCP_SLICE_CONTEXT` | `HCP_SLICE_SCHEMA` | `HCP_QUERY` |
 | Patient details | `PATIENT_SLICE_CONTEXT` | `PATIENT_SLICE_SCHEMA` | `PATIENT_QUERY` |
 | Weight values | `WEIGHT_SLICE_CONTEXT` | `WEIGHT_SLICE_SCHEMA` | `WEIGHT_QUERY` |
 | Bariatric procedures | `BAR_PROCEDURE_SLICE_CONTEXT` | `BAR_PROCEDURE_SLICE_SCHEMA` | `PROCEDURE_QUERY` |
-| Knee procedures | `KNEE_PROCEDURE_SLICE_CONTEXT` | `KNEE_PROCEDURE_SLICE_SCHEMA` | `PROCEDURE_QUERY` |
-| Oxford responses | `OXFORD_SLICE_CONTEXT` | `OXFORD_SLICE_SCHEMA` | `OXFORD_QUERY` |
+| Bariatric questionnaire responses | `QUESTIONNAIRE_SLICE_CONTEXT` | five `QUESTIONNAIRE_*_SLICE_SCHEMA` definitions | `QUESTIONNAIRE_QUERY` |
 
 When changing a slice model, keep all three layers aligned:
 
@@ -96,9 +99,8 @@ When changing a slice model, keep all three layers aligned:
    [`containers/pacsoi-service/src/query.ts`](../containers/pacsoi-service/src/query.ts),
    so preserve those binding names or update `query.ts` at the same time.
 
-`PROCEDURE_QUERY` is shared by the bariatric and knee procedure slices. A
-change to it affects both; if the models diverge, define separate queries and
-wire each one into `query.ts`.
+`QUESTIONNAIRE_QUERY` is shared by all five follow-up slices. The questionnaire
+URI in each binding assigns the response to its follow-up point.
 
 The standard deployment commands load both files automatically:
 
@@ -157,12 +159,9 @@ POST https://aggregator.local:5443/doc-aggregator/services
 Content-Type: text/turtle
 
 @prefix aggr: <https://w3id.org/aggregator#> .
-@prefix pacsoi: <https://aggregator.local:5443/deployments/pacsoi#> .
-
 <https://aggregator.local:5443/doc-aggregator/services/pacsoi>
   a aggr:ServiceRequest ;
-  aggr:deploymentFunction <https://aggregator.local:5443/deployments/pacsoi> ;
-  pacsoi:id "hospital-1" .
+  aggr:deploymentFunction <https://aggregator.local:5443/deployments/pacsoi> .
 ```
 
 The equivalent CLI command is:
@@ -170,8 +169,7 @@ The equivalent CLI command is:
 ```bash
 agg create-service \
   --name pacsoi \
-  --deployment-function pacsoi \
-  --param id=hospital-1
+  --deployment-function pacsoi
 ```
 
 ## Retrieve the result
@@ -186,11 +184,12 @@ Accept: text/turtle
 
 The output enpoints will be at:
 - `https://aggregator.local:5443/doc-aggregator/services/pacsoi/w-dist` for the weight distribution; and
-- `https://aggregator.local:5443/doc-aggregator/services/pacsoi/o-dist` for the oxford distribution.
+- `https://aggregator.local:5443/doc-aggregator/services/pacsoi/b-dist` for the bariatric questionnaire score distribution.
 
 With the CLI, discover and fetch the distribution without constructing its URL:
 
 ```bash
 agg list-outputs --svc pacsoi
 agg get-output weight-distribution/csv --svc pacsoi
+agg get-output bariatric-score-distribution/csv --svc pacsoi
 ```

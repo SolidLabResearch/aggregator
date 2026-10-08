@@ -1,12 +1,18 @@
 type WeightObservation = {
+  id: string;
   value: number;
+  timestamp: Date;
+};
+
+type PatientProcedure = {
+  id: string;
   timestamp: Date;
 };
 
 type PatientData = {
   patientIDs: Set<string>;
   identifiers: Set<string>;
-  procedureTs: Date | undefined;
+  procedures: PatientProcedure[];
   observations: WeightObservation[];
 };
 
@@ -33,7 +39,7 @@ export class WeightDistribution {
   private issuedIdentifiers = new Map<string, string>();
   private patients = new Map<string, PatientData>();
   private monthly = new Map<number, number[]>();
-  private procedureBuffer = new Map<string, Date>();
+  private procedureBuffer = new Map<string, PatientProcedure[]>();
   private observationsBuffer = new Map<string, WeightObservation[]>();
 
   // ================================
@@ -48,7 +54,7 @@ export class WeightDistribution {
       this.patients.set(recordID, {
         patientIDs: new Set([patientID]),
         identifiers: new Set([patientID]),
-        procedureTs: undefined,
+        procedures: [],
         observations: []
       });
       this.identifiers.set(patientID, recordID);
@@ -77,35 +83,32 @@ export class WeightDistribution {
     this.flushObservations(recordID);
   }
 
-  /** Records the first procedure observed for a patient, buffering if unknown. */
-  addPatientProcedure(identifier: string, timestamp: Date) {
+  /** Records a procedure and re-buckets observations when the earliest one changes. */
+  addPatientProcedure(identifier: string, procedureID: string, timestamp: Date) {
     console.log(`[addPatientProcedure] Recieved procedure for ID ${identifier} at ${timestamp.toISOString()}`);
-    const patientID = this.identifiers.get(identifier);
-    if (!patientID) {
+    const recordID = this.identifiers.get(identifier);
+    if (!recordID) {
       console.log(`[addPatientProcedure] No data yet for ID ${identifier}. Buffering procedure at ${timestamp.toISOString()}`);
-      const buffer = this.procedureBuffer.get(identifier);
-      if (!buffer) this.procedureBuffer.set(identifier, timestamp);
-      else
-        console.warn(`[addPatientProcedure] ID ${identifier} already has a procedure. Skipping procedure at ${timestamp.toISOString()}`);
-      return
+      const buffer = this.procedureBuffer.get(identifier) ?? [];
+      buffer.push({ id: procedureID, timestamp });
+      this.procedureBuffer.set(identifier, buffer);
+      return;
     }
 
-    const data = this.patients.get(patientID);
+    const data = this.patients.get(recordID);
     if (!data) {
-      console.warn(`[addPatientProcedure] Patient ${patientID} has identifiers but no data. Skipping...`);
-      return
-    } else if (!data.procedureTs) {
-      data.procedureTs = timestamp;
-      console.log(`[addPatientProcedure] Set Procedure for patient ${patientID} at ${timestamp.toISOString()}`);
-      this.flushObservations(patientID);
-    } else {
-      console.warn(`[addPatientProcedure] Patient ${patientID} already has a procedure. Skipping procedure at ${timestamp.toISOString()}`);
+      console.warn(`[addPatientProcedure] Patient ${recordID} has identifiers but no data. Skipping...`);
+      return;
     }
+
+    this.replaceProcedureState(data, () => data.procedures.push({ id: procedureID, timestamp }));
+    console.log(`[addPatientProcedure] Added procedure ${procedureID} for patient ${recordID}`);
+    this.flushObservations(recordID);
   }
 
   /** Adds a weight to its calendar-month bucket, buffering if prerequisites are missing. */
-  addWeightObservation(identifier: string, value: number, timestamp: Date) {
-    const observation = { value, timestamp };
+  addWeightObservation(identifier: string, observationID: string, value: number, timestamp: Date) {
+    const observation = { id: observationID, value, timestamp };
 
     const bufferObservation = (reason: string) => {
       console.log(
@@ -135,23 +138,69 @@ export class WeightDistribution {
       return;
     }
 
-    if (!data.procedureTs) {
-      bufferObservation(`No procedure yet for patient ${patientID}`);
+    data.observations.push(observation);
+    const procedure = this.effectiveProcedure(data);
+    if (!procedure) {
+      console.log(`[addWeightObservation] No procedure yet for patient ${patientID}; retaining observation`);
       return;
     }
 
-    const month = this.monthsSince(data.procedureTs, timestamp);
-
-    data.observations.push(observation);
-
-    const monthlyData = this.monthly.get(month) ?? [];
-    monthlyData.push(value);
-    this.monthly.set(month, monthlyData);
+    this.addObservationContribution(procedure.timestamp, observation);
+    const month = this.monthsSince(procedure.timestamp, timestamp);
 
     console.log(
       `[addWeightObservation] Added observation ${value} at ${timestamp.toISOString()} ` +
         `for patient ${patientID}, month ${month}`
     );
+  }
+
+  removeWeightObservation(identifier: string, observationID: string): void {
+    const recordID = this.identifiers.get(identifier) ?? this.findRecordByObservation(observationID);
+    if (!recordID) {
+      const buffer = this.observationsBuffer.get(identifier);
+      if (!buffer) return;
+      const index = buffer.findIndex(observation => observation.id === observationID);
+      if (index !== -1) buffer.splice(index, 1);
+      if (buffer.length === 0) this.observationsBuffer.delete(identifier);
+      return;
+    }
+
+    const data = this.patients.get(recordID);
+    if (!data) return;
+    const index = data.observations.findIndex(observation => observation.id === observationID);
+    if (index === -1) return;
+    const [observation] = data.observations.splice(index, 1);
+    const procedure = this.effectiveProcedure(data);
+    if (procedure) this.removeObservationContribution(procedure.timestamp, observation);
+  }
+
+  removePatientProcedure(identifier: string, procedureID: string): void {
+    const recordID = this.identifiers.get(identifier) ?? this.findRecordByProcedure(procedureID);
+    if (!recordID) {
+      const buffer = this.procedureBuffer.get(identifier);
+      if (!buffer) return;
+      const index = buffer.findIndex(procedure => procedure.id === procedureID);
+      if (index !== -1) buffer.splice(index, 1);
+      if (buffer.length === 0) this.procedureBuffer.delete(identifier);
+      return;
+    }
+
+    const data = this.patients.get(recordID);
+    if (!data) return;
+    this.replaceProcedureState(data, () => {
+      const index = data.procedures.findIndex(procedure => procedure.id === procedureID);
+      if (index !== -1) data.procedures.splice(index, 1);
+    });
+  }
+
+  removePatientIdentifier(patientID: string, identifier: string, issuer: string): void {
+    const recordID = this.identifiers.get(patientID);
+    const patient = recordID ? this.patients.get(recordID) : undefined;
+    if (!recordID || !patient || identifier === patientID) return;
+    patient.identifiers.delete(identifier);
+    if (this.identifiers.get(identifier) === recordID) this.identifiers.delete(identifier);
+    const identityKey = JSON.stringify([issuer, identifier]);
+    if (this.issuedIdentifiers.get(identityKey) === recordID) this.issuedIdentifiers.delete(identityKey);
   }
 
   flushProcedures(patientID: string) {
@@ -161,25 +210,21 @@ export class WeightDistribution {
       return;
     }
 
-    if (data.procedureTs) {
+    if (this.effectiveProcedure(data)) {
       console.log(`[flushProcedures] Patient ${patientID} already has a procedure. Skipping...`);
-      return;
     }
 
+    const buffered: PatientProcedure[] = [];
     for (const identifier of data.identifiers) {
       const buffer = this.procedureBuffer.get(identifier);
       if (buffer) {
-        console.log(`[flushProcedures] Set Procedure for patient ${patientID} at ${buffer.toISOString()}`);
-        data.procedureTs = buffer;
-        this.flushObservations(patientID);
-        break;
-      }
-    }
-
-    if (data.procedureTs) {
-      for (const identifier of data.identifiers) {
+        buffered.push(...buffer);
         this.procedureBuffer.delete(identifier);
       }
+    }
+    if (buffered.length > 0) {
+      this.replaceProcedureState(data, () => data.procedures.push(...buffered));
+      this.flushObservations(patientID);
     }
   }
 
@@ -189,16 +234,16 @@ export class WeightDistribution {
       console.warn(`[flushObservations] Patient ${patientID} has no data. Skipping...`);
       return
     }
-    if (!data.procedureTs) {
+    if (!this.effectiveProcedure(data)) {
       console.log(`[flushObservations] Patient ${patientID} has no procedure yet. Skipping...`);
-      return
+      return;
     }
 
     for (const identifier of data.identifiers) {
       const buffer = this.observationsBuffer.get(identifier);
       if (buffer) {
         for (const obs of buffer) {
-          this.addWeightObservation(identifier, obs.value, obs.timestamp);
+          this.addWeightObservation(identifier, obs.id, obs.value, obs.timestamp);
         }
         this.observationsBuffer.delete(identifier);
       }
@@ -233,18 +278,7 @@ export class WeightDistribution {
       if (owner === recordID) this.issuedIdentifiers.delete(key);
     }
 
-    if (patient.procedureTs) {
-      // Remove observations already included in the global month buckets.
-      for (const obs of patient.observations) {
-        const month = this.monthsSince(patient.procedureTs, obs.timestamp);
-        const bucket = this.monthly.get(month);
-        if (!bucket) continue;
-
-        const idx = bucket.indexOf(obs.value);
-        if (idx !== -1) bucket.splice(idx, 1);
-        if (bucket.length === 0) this.monthly.delete(month);
-      }
-    }
+    this.removeWeightContributions(patient);
 
     // This must also happen when no procedure was seen; otherwise re-adding the
     // patient leaves a stale record without an identifier mapping.
@@ -304,21 +338,12 @@ export class WeightDistribution {
     const first = this.patients.get(firstID)!;
     const second = this.patients.get(secondID)!;
     const recordID = `record-${this.nextRecordID++}`;
-    const procedures = [first.procedureTs, second.procedureTs].filter((d): d is Date => !!d);
-    const procedureTs = procedures.length
-      ? new Date(Math.min(...procedures.map(date => date.getTime())))
-      : undefined;
-
-    if (first.procedureTs && second.procedureTs && first.procedureTs.getTime() !== second.procedureTs.getTime()) {
-      console.warn(`[mergeRecords] ${firstID} and ${secondID} have different procedures; using earliest ${procedureTs!.toISOString()}`);
-    }
-
     this.removeWeightContributions(first);
     this.removeWeightContributions(second);
     const merged: PatientData = {
       patientIDs: new Set([...first.patientIDs, ...second.patientIDs]),
       identifiers: new Set([...first.identifiers, ...second.identifiers]),
-      procedureTs,
+      procedures: [...first.procedures, ...second.procedures],
       observations: [...first.observations, ...second.observations],
     };
     this.patients.delete(firstID);
@@ -328,28 +353,68 @@ export class WeightDistribution {
     for (const [key, owner] of this.issuedIdentifiers) {
       if (owner === firstID || owner === secondID) this.issuedIdentifiers.set(key, recordID);
     }
-    if (procedureTs) {
-      for (const obs of merged.observations) {
-        const month = this.monthsSince(procedureTs, obs.timestamp);
-        const bucket = this.monthly.get(month) ?? [];
-        bucket.push(obs.value);
-        this.monthly.set(month, bucket);
-      }
-    }
+    this.addWeightContributions(merged);
     console.log(`[mergeRecords] Merged ${firstID} and ${secondID} into ${recordID}`);
     return recordID;
   }
 
   private removeWeightContributions(patient: PatientData) {
-    if (!patient.procedureTs) return;
+    const procedure = this.effectiveProcedure(patient);
+    if (!procedure) return;
     for (const obs of patient.observations) {
-      const month = this.monthsSince(patient.procedureTs, obs.timestamp);
-      const bucket = this.monthly.get(month);
-      if (!bucket) continue;
-      const index = bucket.indexOf(obs.value);
-      if (index !== -1) bucket.splice(index, 1);
-      if (!bucket.length) this.monthly.delete(month);
+      this.removeObservationContribution(procedure.timestamp, obs);
     }
+  }
+
+  private addWeightContributions(patient: PatientData): void {
+    const procedure = this.effectiveProcedure(patient);
+    if (!procedure) return;
+    for (const observation of patient.observations) {
+      this.addObservationContribution(procedure.timestamp, observation);
+    }
+  }
+
+  private findRecordByObservation(observationID: string): string | undefined {
+    for (const [recordID, patient] of this.patients) {
+      if (patient.observations.some(observation => observation.id === observationID)) return recordID;
+    }
+    return undefined;
+  }
+
+  private findRecordByProcedure(procedureID: string): string | undefined {
+    for (const [recordID, patient] of this.patients) {
+      if (patient.procedures.some(procedure => procedure.id === procedureID)) return recordID;
+    }
+    return undefined;
+  }
+
+  private effectiveProcedure(patient: PatientData): PatientProcedure | undefined {
+    return patient.procedures.reduce<PatientProcedure | undefined>(
+      (earliest, procedure) => !earliest || procedure.timestamp < earliest.timestamp ? procedure : earliest,
+      undefined,
+    );
+  }
+
+  private replaceProcedureState(patient: PatientData, change: () => void): void {
+    this.removeWeightContributions(patient);
+    change();
+    this.addWeightContributions(patient);
+  }
+
+  private addObservationContribution(procedure: Date, observation: WeightObservation): void {
+    const month = this.monthsSince(procedure, observation.timestamp);
+    const bucket = this.monthly.get(month) ?? [];
+    bucket.push(observation.value);
+    this.monthly.set(month, bucket);
+  }
+
+  private removeObservationContribution(procedure: Date, observation: WeightObservation): void {
+    const month = this.monthsSince(procedure, observation.timestamp);
+    const bucket = this.monthly.get(month);
+    if (!bucket) return;
+    const index = bucket.indexOf(observation.value);
+    if (index !== -1) bucket.splice(index, 1);
+    if (bucket.length === 0) this.monthly.delete(month);
   }
 
   /** Calendar-month difference; day and time within a month are intentionally ignored. */

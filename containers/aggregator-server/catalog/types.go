@@ -74,8 +74,9 @@ type CompositionMapping struct {
 }
 
 type CompositionSource struct {
-	Function string `json:"function"`
-	Output   string `json:"output"`
+	Function string `json:"function,omitempty"`
+	Output   string `json:"output,omitempty"`
+	Term     string `json:"term,omitempty"`
 }
 
 type CompositionTarget struct {

@@ -73,6 +73,14 @@ the container images, and installs Traefik. `kind-deploy` adds local host
 entries and installs the chart with `config/local.yaml` plus all definition
 files.
 
+After changing a file in `config/profiles/` or
+`config/deployment-functions/`, reload only those definitions without
+upgrading the Helm release or restarting the platform:
+
+```bash
+make kind-reload-definitions
+```
+
 Verify the deployment:
 
 ```bash

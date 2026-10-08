@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 
 	"egress-uma/model"
 
@@ -89,6 +90,7 @@ func handleFetchRequest(w http.ResponseWriter, r *http.Request) {
 		TargetHeaders map[string]interface{} `json:"headers"`
 		TargetBody    string                 `json:"body"`
 		TargetBodyB64 string                 `json:"bodyBase64"`
+		AuthMode      string                 `json:"authMode"`
 	}
 
 	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
@@ -107,9 +109,19 @@ func handleFetchRequest(w http.ResponseWriter, r *http.Request) {
 		payload.TargetMethod = http.MethodGet
 	}
 
+	authMode := strings.ToLower(strings.TrimSpace(payload.AuthMode))
+	if authMode == "" {
+		authMode = "auto"
+	}
+	if authMode != "auto" && authMode != "oauth" {
+		http.Error(w, "authMode must be either auto or oauth", http.StatusBadRequest)
+		return
+	}
+
 	logrus.WithFields(logrus.Fields{
 		"target_url":    payload.TargetURL,
 		"target_method": payload.TargetMethod,
+		"auth_mode":     authMode,
 	}).Info("Preparing outbound request")
 
 	if payload.TargetBody != "" && payload.TargetBodyB64 != "" {
@@ -142,11 +154,15 @@ func handleFetchRequest(w http.ResponseWriter, r *http.Request) {
 	// Log outbound request headers
 	model.LogHeaders("Outbound request headers", outReq.Header)
 
-	// Send request using UMA proxy
-	resp, err := RequestWithUMA(model.HttpClient, outReq)
+	var resp *http.Response
+	if authMode == "oauth" {
+		resp, err = RequestWithOAuth(model.HttpClient, outReq)
+	} else {
+		resp, err = RequestWithUMA(model.HttpClient, outReq)
+	}
 	if err != nil {
-		logrus.WithError(err).Error("UMA fetch failed")
-		http.Error(w, "UMA fetch failed: "+err.Error(), http.StatusBadGateway)
+		logrus.WithError(err).WithField("auth_mode", authMode).Error("Authenticated fetch failed")
+		http.Error(w, "Authenticated fetch failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()

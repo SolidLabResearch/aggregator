@@ -67,11 +67,16 @@ profiles:
           title: Aggregated global model weights
           datasetProfileRef:
             dataset: aggregated-global-weights
-        aggregatedEvaluationMetrics:
-          predicate: aggregated-evaluation-metrics
-          title: Aggregated evaluation metrics
+        metrics:
+          predicate: metrics
+          title: Latest federated round metrics
           datasetProfileRef:
-            dataset: aggregated-evaluation-metrics
+            dataset: metrics
+        metricsHistory:
+          predicate: metrics-history
+          title: Federated metrics history
+          datasetProfileRef:
+            dataset: metrics-history
       functions:
         startSession:
           name: Start federated training session
@@ -85,14 +90,18 @@ profiles:
           name: Accept client evaluation result
           expects: [sessionId, roundId, clientId, clientEvaluationMetrics]
           returns: []
-        getEvaluationMetrics:
-          name: Get aggregated evaluation metrics
+        getMetrics:
+          name: Get latest federated round metrics
           expects: []
-          returns: [aggregatedEvaluationMetrics]
+          returns: [metrics]
         getGlobalWeights:
           name: Get aggregated global model weights
           expects: []
           returns: [aggregatedGlobalWeights]
+        getMetricsHistory:
+          name: Get federated metrics history
+          expects: []
+          returns: [metricsHistory]
       endpoints:
         session-start:
           title: Start federated training session
@@ -147,13 +156,23 @@ profiles:
             urlType: downloadURL
             mediaType: application/octet-stream
             accessRoles: [researcher]
-      aggregated-evaluation-metrics:
-        title: Aggregated evaluation metrics
-        description: Most recent weighted evaluation loss and accuracy.
+      metrics:
+        title: Latest federated round metrics
+        description: Client training, aggregated evaluation, and server metrics for the latest round.
         distributions:
           json:
-            title: Aggregated evaluation metrics
-            path: /evaluation-metrics
+            title: Latest federated round metrics
+            path: /metrics
+            urlType: accessURL
+            mediaType: application/json
+            accessRoles: [researcher]
+      metrics-history:
+        title: Federated metrics history
+        description: Per-round server, client-training, and aggregated evaluation metrics for the latest session.
+        distributions:
+          json:
+            title: Federated metrics history
+            path: /metrics/history
             urlType: accessURL
             mediaType: application/json
             accessRoles: [researcher]

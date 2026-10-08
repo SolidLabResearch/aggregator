@@ -31,6 +31,34 @@ type authenticateChallenge struct {
 	Ticket string
 }
 
+// RequestWithOAuth sends the request with the aggregator user's OAuth access
+// token immediately. It deliberately does not attempt UMA or challenge-based
+// fallback.
+func RequestWithOAuth(client *http.Client, r *http.Request) (*http.Response, error) {
+	logrus.WithFields(logrus.Fields{
+		"method": r.Method,
+		"url":    r.URL.String(),
+	}).Info("Starting OAuth request flow")
+
+	var bodyBytes []byte
+	if r.Body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(r.Body)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	dest := &url.URL{
+		Scheme:   requestScheme(r),
+		Host:     requestHost(r),
+		Path:     r.URL.Path,
+		RawQuery: r.URL.RawQuery,
+	}
+
+	return requestWithBearer(client, r, dest, bodyBytes)
+}
+
 // RequestWithUMA performs the UMA flow for a request to an external URL
 func RequestWithUMA(client *http.Client, r *http.Request) (*http.Response, error) {
 	logrus.WithFields(logrus.Fields{
@@ -152,18 +180,28 @@ func RequestWithUMA(client *http.Client, r *http.Request) (*http.Response, error
 		logrus.WithError(err).Error("UMA token request failed")
 		return nil, err
 	}
-	defer umaResp.Body.Close()
 
 	logrus.WithField("status", umaResp.StatusCode).Info("UMA token response received")
 
 	if umaResp.StatusCode < 200 || umaResp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(umaResp.Body)
+		bodyBytes, readErr := io.ReadAll(umaResp.Body)
+		if readErr != nil {
+			umaResp.Body.Close()
+			return nil, readErr
+		}
+		umaResp.Body.Close()
+		umaResp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		logrus.WithFields(logrus.Fields{
 			"status": umaResp.StatusCode,
 			"body":   string(bodyBytes),
 		}).Error("UMA token request returned error")
-		return nil, errors.New(string(bodyBytes))
+
+		// An HTTP denial from the authorization server is a valid upstream
+		// response, not a proxy transport failure. Return it intact so /fetch can
+		// preserve its status, headers, and body for the calling service.
+		return umaResp, nil
 	}
+	defer umaResp.Body.Close()
 
 	var rpt TokenResponse
 	if err := json.NewDecoder(umaResp.Body).Decode(&rpt); err != nil {

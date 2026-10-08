@@ -1,37 +1,47 @@
 import { QuerySourceIterator } from '@incremunica/user-tools';
 import { WeightDistribution } from "./weight-dist.js";
-import { queryOxfordResponses, queryPatients, queryProcedures, querySources, queryWeights } from "./query.js";
+import { queryBariatricResponses, queryProcedures, querySources, queryWeights } from "./query.js";
 import Fastify from "fastify";
 import { Mutex } from "async-mutex";
-import { OxfordScoreDistribution } from './oxford-dist.js';
+import { BariatricScoreDistribution } from './bariatric-dist.js';
+import * as Schemas from "./schemas.js";
 
 /**
  * Application entry point.
  *
  * The service maintains two independent in-memory projections (weight and
- * Oxford scores). Incremental SPARQL streams update those projections while
- * Fastify exposes consistent CSV snapshots. Separate mutexes ensure a request
- * cannot read a projection halfway through an update.
+ * bariatric questionnaire scores). Incremental SPARQL streams update those
+ * projections while Fastify exposes consistent CSV snapshots. Separate mutexes
+ * ensure a request cannot read a projection halfway through an update.
  */
 async function main() {
   console.log('[MAIN] Starting application');
 
-  const patientSourceIterator = new QuerySourceIterator({ distinct: true });
-
   const barProcedureSourceIterator = new QuerySourceIterator({ distinct: true });
-  const kneeProcedureSourceIterator = new QuerySourceIterator({ distinct: true });
 
   const weightSourceIterator = new QuerySourceIterator({ distinct: true });
-  const oxfordSourceIterator = new QuerySourceIterator({ distinct: true });
+  const questionnaireSourceIterator = new QuerySourceIterator({ distinct: true });
 
   const weightMutex = new Mutex();
   const weightDist = new WeightDistribution();
-  const oxfordMutex = new Mutex();
-  const oxfordDist = new OxfordScoreDistribution();
+  const bariatricMutex = new Mutex();
+  const bariatricDist = new BariatricScoreDistribution();
 
-  const SOURCES = process.env.SOURCES;
-  if (!SOURCES) {
-    throw new Error("Environment variable SOURCES must be set");
+  const ACTIVE_PATIENTS_URL = process.env.ACTIVE_PATIENTS_URL;
+  if (!ACTIVE_PATIENTS_URL) {
+    throw new Error("Environment variable ACTIVE_PATIENTS_URL must be set");
+  }
+
+  const POD_BASE_URL = process.env.POD_BASE_URL;
+  if (!POD_BASE_URL) {
+    throw new Error("Environment variable POD_BASE_URL must be set");
+  }
+
+  const ACTIVE_PATIENTS_POLL_INTERVAL_MS = Number(
+    process.env.ACTIVE_PATIENTS_POLL_INTERVAL_MS ?? "60000",
+  );
+  if (!Number.isFinite(ACTIVE_PATIENTS_POLL_INTERVAL_MS) || ACTIVE_PATIENTS_POLL_INTERVAL_MS <= 0) {
+    throw new Error("Environment variable ACTIVE_PATIENTS_POLL_INTERVAL_MS must be a positive number");
   }
 
   const PATIENT_SLICE = process.env.PATIENT_SLICE;
@@ -44,47 +54,47 @@ async function main() {
     throw new Error("Environment variable BAR_PROCEDURE_SLICE must be set");
   }
 
-  const KNEE_PROCEDURE_SLICE = process.env.KNEE_PROCEDURE_SLICE;
-  if (!KNEE_PROCEDURE_SLICE) {
-    throw new Error("Environment variable KNEE_PROCEDURE_SLICE must be set");
-  }
-
   const WEIGHT_SLICE = process.env.WEIGHT_SLICE;
   if (!WEIGHT_SLICE) {
     throw new Error("Environment variable WEIGHT_SLICE must be set");
   }
 
-  const OXFORD_SLICE = process.env.OXFORD_SLICE;
-  if (!OXFORD_SLICE) {
-    throw new Error("Environment variable OXFORD_SLICE must be set");
-  }
+  const questionnaireSliceDefinitions = [
+    ["QUESTIONNAIRE_PREOP_SLICE", Schemas.QUESTIONNAIRE_PREOP_SLICE_SCHEMA],
+    ["QUESTIONNAIRE_POSTOP6W_SLICE", Schemas.QUESTIONNAIRE_POSTOP6W_SLICE_SCHEMA],
+    ["QUESTIONNAIRE_POSTOP3M_SLICE", Schemas.QUESTIONNAIRE_POSTOP3M_SLICE_SCHEMA],
+    ["QUESTIONNAIRE_POSTOP6M_SLICE", Schemas.QUESTIONNAIRE_POSTOP6M_SLICE_SCHEMA],
+    ["QUESTIONNAIRE_POSTOP1Y_SLICE", Schemas.QUESTIONNAIRE_POSTOP1Y_SLICE_SCHEMA],
+  ] as const;
+  const questionnaireSlices = questionnaireSliceDefinitions.map(([name, schema]) => {
+    const value = process.env[name];
+    if (!value) throw new Error(`Environment variable ${name} must be set`);
+    return { slice: value.startsWith("/") ? value.slice(1) : value, schema };
+  });
 
-  querySources(
-    SOURCES,
+  void querySources(
+    ACTIVE_PATIENTS_URL,
+    POD_BASE_URL,
     PATIENT_SLICE,
-    patientSourceIterator,
     BAR_PROCEDURE_SLICE.startsWith("/") ? BAR_PROCEDURE_SLICE.slice(1) : BAR_PROCEDURE_SLICE,
     barProcedureSourceIterator,
-    KNEE_PROCEDURE_SLICE.startsWith("/") ? KNEE_PROCEDURE_SLICE.slice(1) : KNEE_PROCEDURE_SLICE,
-    kneeProcedureSourceIterator,
     WEIGHT_SLICE.startsWith("/") ? WEIGHT_SLICE.slice(1) : WEIGHT_SLICE,
     weightSourceIterator,
-    OXFORD_SLICE.startsWith("/") ? OXFORD_SLICE.slice(1) : OXFORD_SLICE,
-    oxfordSourceIterator,
+    questionnaireSlices,
+    questionnaireSourceIterator,
     weightMutex,
     weightDist,
-    oxfordMutex,
-    oxfordDist,
+    bariatricMutex,
+    bariatricDist,
+    ACTIVE_PATIENTS_POLL_INTERVAL_MS,
   );
 
-  queryPatients(patientSourceIterator, weightMutex, weightDist, oxfordMutex, oxfordDist);
   queryProcedures(barProcedureSourceIterator, weightDist, weightMutex);
-  queryProcedures(kneeProcedureSourceIterator, oxfordDist, oxfordMutex);
   queryWeights(weightSourceIterator, weightDist, weightMutex);
-  queryOxfordResponses(oxfordSourceIterator, oxfordDist, oxfordMutex);
+  queryBariatricResponses(questionnaireSourceIterator, bariatricDist, bariatricMutex);
 
-  // The query functions attach long-lived stream handlers and return after
-  // setup. They deliberately run for the lifetime of this process.
+  // The incremental queries attach long-lived stream handlers; the source
+  // poller runs in the background. Both deliberately live with this process.
   const app = Fastify();
 
   app.get("/w-dist", async (request, reply) => {
@@ -96,12 +106,12 @@ async function main() {
       .send(csv);
   });
 
-  app.get("/o-dist", async (request, reply) => {
-    const csv = await oxfordMutex.runExclusive(() => oxfordDist.toCSV());
+  app.get("/b-dist", async (request, reply) => {
+    const csv = await bariatricMutex.runExclusive(() => bariatricDist.toCSV());
 
     reply
       .header("Content-Type", "text/csv")
-      .header("Content-Disposition", "attachment; filename=dist.csv")
+      .header("Content-Disposition", "attachment; filename=bariatric-scores.csv")
       .send(csv);
   });
 

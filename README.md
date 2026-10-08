@@ -85,8 +85,10 @@ make containers-all CONTAINER=fetch
 make deploy CONFIG=my-values.yaml
 make undeploy
 make kind-deploy
+make kind-reload-definitions
 make kind-undeploy
 make slices-deploy
+make slices-reload-definitions
 make slices-undeploy
 
 # Tests

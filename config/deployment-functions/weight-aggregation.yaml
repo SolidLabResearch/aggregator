@@ -69,12 +69,18 @@ deploymentFunctions:
               container: weight-aggregation
               port: http
               internalPath: /weights
-          aggregated-evaluation-metrics:
+          metrics:
             json:
               resource: workload
               container: weight-aggregation
               port: http
-              internalPath: /evaluation-metrics
+              internalPath: /metrics
+          metrics-history:
+            json:
+              resource: workload
+              container: weight-aggregation
+              port: http
+              internalPath: /metrics/history
       resources:
         - id: storage
           manifest:

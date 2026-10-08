@@ -81,6 +81,52 @@ func TestCompileProfileUsesDocumentScopedURIs(t *testing.T) {
 	}
 }
 
+func TestCompileProfileCompositionConstantTerm(t *testing.T) {
+	profile := fetchProfile()
+	profile.Spec.ServiceProfile.Parameters["query"] = Parameter{
+		Predicate: "sparql-query", Type: "xsd:string", Required: true,
+	}
+	function := profile.Spec.ServiceProfile.Functions["fetch"]
+	function.Expects = append(function.Expects, "query")
+	profile.Spec.ServiceProfile.Functions["fetch"] = function
+	profile.Spec.ServiceProfile.Composition = []CompositionMapping{{
+		From: CompositionSource{Term: "SELECT * WHERE { ?s ?p ?o }"},
+		To:   CompositionTarget{Function: "fetch", Parameter: "query"},
+	}}
+
+	rdf, err := CompileProfile(&profile, URLs{Server: "https://aggregator.example"})
+	if err != nil {
+		t.Fatalf("CompileProfile: %v", err)
+	}
+	text := string(rdf)
+	assertValidTurtle(t, text)
+	if !strings.Contains(text, "<https://fno.io/vocabulary/composition/0.1.0/mapFromTerm> \"SELECT * WHERE { ?s ?p ?o }\"") {
+		t.Fatalf("compiled profile does not contain the constant term mapping:\n%s", text)
+	}
+	if strings.Contains(text, "#composition-mapping-0-from") {
+		t.Fatalf("constant term mapping unexpectedly contains a source mapping point:\n%s", text)
+	}
+}
+
+func TestValidationRejectsInvalidCompositionConstantSources(t *testing.T) {
+	profile := fetchProfile()
+	profile.Spec.ServiceProfile.Composition = []CompositionMapping{
+		{
+			From: CompositionSource{},
+			To:   CompositionTarget{Function: "fetch", Parameter: "source"},
+		},
+		{
+			From: CompositionSource{Function: "fetch", Output: "content", Term: "constant"},
+			To:   CompositionTarget{Function: "fetch", Parameter: "source"},
+		},
+	}
+
+	err := ValidateProfile(&profile)
+	if err == nil || strings.Count(err.Error(), "source must define exactly one") != 2 {
+		t.Fatalf("expected two invalid composition source errors, got %v", err)
+	}
+}
+
 func TestValidationRejectsUnknownAccessRole(t *testing.T) {
 	profile := fetchProfile()
 	dataset := profile.Spec.DatasetProfiles["fetched-content"]

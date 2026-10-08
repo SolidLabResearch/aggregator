@@ -5,34 +5,6 @@
  * context expands its compact field names into RDF predicates. The SELECT
  * variable names are an internal API: query.ts reads these exact binding names.
  */
-export const HCP_SLICE_CONTEXT = {
-    "kss": "https://kvasir.discover.ilabt.imec.be/vocab#",
-    "faqir": "https://faqir.org/",
-    "rdfs": "http://www.w3.org/2000/01/rdf-schema#"
-};
-export const HCP_SLICE_SCHEMA = `
-type Query {
-  patients: [faqir_patient!]!
-}
-
-type faqir_patient {
-  faqir_podId: String!
-  faqir_pt_hcp: [ID!]
-}
-
-type Subscription {
-  onPatientToHCPRelationAdded: faqir_patient!
-    @trigger(type: INSERT, predicate: ["https://faqir.org/pt_hcp"], object: [])
-}`;
-// Keep ?patient in the projection: querySources uses it to clean both
-// distributions when the doctor-to-patient relation is deleted.
-export const HCP_QUERY = `
-PREFIX faqir: <https://faqir.org/>
-SELECT ?patient ?pod WHERE {
-  ?patient faqir:podId ?pod ;
-    faqir:pt_hcp ?doctor .
-}`;
-
 export const PATIENT_SLICE_CONTEXT = {
   "brbdr": "https://www.sciensano.be/en/",
   "dcterms": "http://purl.org/dc/terms/",
@@ -104,13 +76,10 @@ export const PATIENT_QUERY = `
   PREFIX saref: <https://saref.etsi.org/core/>
   PREFIX fhir: <http://hl7.org/fhir/>
   SELECT ?patient ?idValue ?issuer WHERE {
-    ?patient a foaf:Person .
-
-    OPTIONAL {
-      ?patient sphn:hasIdentifier ?identifier .
-      ?identifier saref:hasValue ?idValue ;
-        fhir:issuer ?issuer .
-    }
+    ?patient a foaf:Person ;
+      sphn:hasIdentifier ?identifier .
+    ?identifier saref:hasValue ?idValue ;
+      fhir:issuer ?issuer .
   }
 `;
 
@@ -156,7 +125,8 @@ type WeightObservation @class(iri: "sosa:Observation") {
 
 type WeightValue @class(iri: "saref:PropertyValue") {
   id: ID!
-  saref_isValueOfProperty: ID! @filter(if: "it=='http://snomed.info/id/27113001'")
+  saref_isValueOfProperty: ID!
+    @filter(if: "it=='http://snomed.info/id/27113001'")
   saref_hasValue: Float!
   saref_hasTimestamp: DateTime!
   prov_hadPrimarySource: ID
@@ -173,14 +143,14 @@ type prov_Activity {
 }
 
 type Subscription {
-    onWeightObservationAdded: WeightObservation!
+  onObservationAdded: WeightObservation!
 }`;
 
 export const WEIGHT_QUERY = `
   PREFIX saref: <https://saref.etsi.org/core/>
   PREFIX sosa: <http://www.w3.org/ns/sosa/>
-  SELECT ?value ?timestamp ?patient WHERE {
-    ?obs a sosa:Observation ;
+  SELECT ?observation ?value ?timestamp ?patient WHERE {
+    ?observation a sosa:Observation ;
       sosa:hasFeatureOfInterest ?patient ;
       sosa:hasResult ?weightValue .
     ?weightValue a saref:PropertyValue ;
@@ -234,60 +204,16 @@ type Subscription {
   onbariatricProcedureAdded: sphn_MedicalProcedure!
 }`;
 
-export const KNEE_PROCEDURE_SLICE_CONTEXT = {
-    "brbdr": "https://www.sciensano.be/en/",
-    "dcterms": "http://purl.org/dc/terms/",
-    "ePPO": "https://bioportal.bioontology.org/ontologies/E-PPO",
-    "faqir": "https://data.faqir.org/",
-    "fhir": "http://hl7.org/fhir/",
-    "foaf": "http://xmlns.com/foaf/0.1/",
-    "kss": "https://kvasir.discover.ilabt.imec.be/vocab#",
-    "moveup": "https://moveup.care/",
-    "omop": "https://www.ohdsi.org/data-standardization/",
-    "openEHR": "http://openehr.org/",
-    "owl": "http://www.w3.org/2002/07/owl#",
-    "phro": "https://ns.faqir.org/phr-o#",
-    "prov": "http://www.w3.org/ns/prov#",
-    "qo": "https://ns.faqir.org/q-o#",
-    "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
-    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
-    "rml": "http://w3id.org/rml/",
-    "saref": "https://saref.etsi.org/core/",
-    "schema": "http://schema.org/",
-    "snomed": "http://snomed.info/sct/",
-    "sosa": "http://www.w3.org/ns/sosa/",
-    "sphn": "https://sphn.ch/",
-    "s4ehaw": "https://saref.etsi.org/saref4ehaw",
-    "tmp": "https://www2.telemonitoring-prescription.com/openapi#",
-    "ucum": "https://unitsofmeasure.org/"
-};
-export const KNEE_PROCEDURE_SLICE_SCHEMA = `
-type Query {
-    kneeProcedures: [sphn_MedicalProcedure!]
-}
-
-type sphn_MedicalProcedure  {
-    id: ID!
-    prov_type: ID! @filter(if: "it=in=('snomed:444463001', 'snomed:443682009', 'snomed:443681002', 'snomed:726419008', 'snomed:726418000', 'snomed:735261001', 'snomed:735262008')")
-    prov_startedAtTime: DateTime!
-    prov_endedAtTime: DateTime
-    subject: ID!
-        @predicate(iri: "sphn:hasIntervention", reverse: true)
-}
-
-type Subscription {
-  onKneeProcedureAdded: sphn_MedicalProcedure!
-}`;
 export const PROCEDURE_QUERY = `
 PREFIX sphn: <https://sphn.ch/>
 PREFIX prov: <http://www.w3.org/ns/prov#>
-SELECT ?patient ?timestamp WHERE {
-  ?patient sphn:hasIntervention ?proc .
-  ?proc a sphn:MedicalProcedure ;
+SELECT ?patient ?procedure ?timestamp WHERE {
+  ?patient sphn:hasIntervention ?procedure .
+  ?procedure a sphn:MedicalProcedure ;
     prov:startedAtTime ?timestamp .
 }`;
 
-export const OXFORD_SLICE_CONTEXT = {
+export const QUESTIONNAIRE_SLICE_CONTEXT = {
   "brbdr": "https://www.sciensano.be/en/",
   "dcterms": "http://purl.org/dc/terms/",
   "ePPO": "https://bioportal.bioontology.org/ontologies/E-PPO",
@@ -314,18 +240,20 @@ export const OXFORD_SLICE_CONTEXT = {
   "tmp": "https://www2.telemonitoring-prescription.com/openapi#",
   "ucum": "https://unitsofmeasure.org/"
 };
-export const OXFORD_SLICE_SCHEMA = `
+
+export const QUESTIONNAIRE_PREOP_SLICE_SCHEMA = `
 type Query {
-  completedOxfordResponses: [CompletedOxfordResponse!]!
+  completedPreopBariatricResponses: [CompletedPreopBariatricResponse!]!
 }
 
-type CompletedOxfordResponse @class(iri: "qo:QuestionnaireResponse") {
+type CompletedPreopBariatricResponse @class(iri: "qo:QuestionnaireResponse") {
   id: ID!
   prov_atTime: DateTime!
-  qo_questionnaireResponseToQuestionnaire: qo_Questionnaire!
+  qo_questionnaireResponseToQuestionnaire: ID!
+    @filter(if: "it=='https://moveup.care/Questionnaire/cX2u2njqWR8ErehW4'") #combined preop
   qo_questionnaireResponseBySubject: ID!
   dcterms_hasPart: [qo_Answer!]!
-  fhir_status: String! @filter(if: "it=='completed'")
+  fhir_status: [fhir_EventStatus!]
 }
 
 type qo_Answer {
@@ -334,25 +262,169 @@ type qo_Answer {
   qo_answerToQuestion: ID!
 }
 
-type qo_Questionnaire {
+type fhir_EventStatus {
   id: ID!
-  rdfs_label: String! @filter(if: "it=='oxford'")
+  saref_hasValue: ID!
+    @filter(
+      if: "it=='http://hl7.org/fhir/questionnaire-answers-status#completed'"
+    )
+  saref_hasTimestamp: DateTime!
 }
 
 type Subscription {
-  onCompletedOxfordResponseAdded: CompletedOxfordResponse!
+  onCompletedPreopBariatricResponseAdded: CompletedPreopBariatricResponse!
 }`;
 
-export const OXFORD_QUERY = `
-PREFIX moveUp: <http://moveup.care/>
-PREFIX prov: <http://www.w3.org/ns/prov#>
+export const QUESTIONNAIRE_POSTOP6W_SLICE_SCHEMA = `
+type Query {
+  completedPostop6wBariatricResponses: [CompletedPostop6wBariatricResponse!]!
+}
+
+type CompletedPostop6wBariatricResponse
+  @class(iri: "qo:QuestionnaireResponse") {
+  id: ID!
+  prov_atTime: DateTime!
+  qo_questionnaireResponseToQuestionnaire: ID!
+    @filter(if: "it=='https://moveup.care/Questionnaire/5fsdff4wqtzLEPqaQ'") #combined Postop6w
+  qo_questionnaireResponseBySubject: ID!
+  dcterms_hasPart: [qo_Answer!]!
+  fhir_status: [fhir_EventStatus!]
+}
+
+type qo_Answer {
+  id: ID!
+  qo_answerValue: [BoxedLiteral]
+  qo_answerToQuestion: ID!
+}
+
+type fhir_EventStatus {
+  id: ID!
+  saref_hasValue: ID!
+    @filter(
+      if: "it=='http://hl7.org/fhir/questionnaire-answers-status#completed'"
+    )
+  saref_hasTimestamp: DateTime!
+}
+
+type Subscription {
+  onCompletedPostop6wBariatricResponseAdded: CompletedPostop6wBariatricResponse!
+}`;
+
+export const QUESTIONNAIRE_POSTOP3M_SLICE_SCHEMA = `
+type Query {
+  completedPostop3mBariatricResponses: [CompletedPostop3mBariatricResponse!]!
+}
+
+type CompletedPostop3mBariatricResponse
+  @class(iri: "qo:QuestionnaireResponse") {
+  id: ID!
+  prov_atTime: DateTime!
+  qo_questionnaireResponseToQuestionnaire: ID!
+    @filter(if: "it=='https://moveup.care/Questionnaire/TpYG3bjxPT4QCwg9A'") #combined Postop3m
+  qo_questionnaireResponseBySubject: ID!
+  dcterms_hasPart: [qo_Answer!]!
+  fhir_status: [fhir_EventStatus!]
+}
+
+type qo_Answer {
+  id: ID!
+  qo_answerValue: [BoxedLiteral]
+  qo_answerToQuestion: ID!
+}
+
+type fhir_EventStatus {
+  id: ID!
+  saref_hasValue: ID!
+    @filter(
+      if: "it=='http://hl7.org/fhir/questionnaire-answers-status#completed'"
+    )
+  saref_hasTimestamp: DateTime!
+}
+
+type Subscription {
+  onCompletedPostop3mBariatricResponseAdded: CompletedPostop3mBariatricResponse!
+}`;
+
+export const QUESTIONNAIRE_POSTOP6M_SLICE_SCHEMA = `
+type Query {
+  completedPostop6mBariatricResponses: [CompletedPostop6mBariatricResponse!]!
+}
+
+type CompletedPostop6mBariatricResponse
+  @class(iri: "qo:QuestionnaireResponse") {
+  id: ID!
+  prov_atTime: DateTime!
+  qo_questionnaireResponseToQuestionnaire: ID!
+    @filter(if: "it=='https://moveup.care/Questionnaire/5cdZ4Qd7uWgSQ29B8'") #combined Postop6m
+  qo_questionnaireResponseBySubject: ID!
+  dcterms_hasPart: [qo_Answer!]!
+  fhir_status: [fhir_EventStatus!]
+}
+
+type qo_Answer {
+  id: ID!
+  qo_answerValue: [BoxedLiteral]
+  qo_answerToQuestion: ID!
+}
+
+type fhir_EventStatus {
+  id: ID!
+  saref_hasValue: ID!
+    @filter(
+      if: "it=='http://hl7.org/fhir/questionnaire-answers-status#completed'"
+    )
+  saref_hasTimestamp: DateTime!
+}
+
+type Subscription {
+  onCompletedPostop6mBariatricResponseAdded: CompletedPostop6mBariatricResponse!
+}`;
+
+export const QUESTIONNAIRE_POSTOP1Y_SLICE_SCHEMA = `
+type Query {
+  completedPostop1yBariatricResponses: [CompletedPostop1yBariatricResponse!]!
+}
+
+type CompletedPostop1yBariatricResponse
+  @class(iri: "qo:QuestionnaireResponse") {
+  id: ID!
+  prov_atTime: DateTime!
+  qo_questionnaireResponseToQuestionnaire: ID!
+    @filter(if: "it=='https://moveup.care/Questionnaire/MDZj8qTHYXaEf3zDX'") #combined Postop1y
+  qo_questionnaireResponseBySubject: ID!
+  dcterms_hasPart: [qo_Answer!]!
+  fhir_status: [fhir_EventStatus!]
+}
+
+type qo_Answer {
+  id: ID!
+  qo_answerValue: [BoxedLiteral]
+  qo_answerToQuestion: ID!
+}
+
+type fhir_EventStatus {
+  id: ID!
+  saref_hasValue: ID!
+    @filter(
+      if: "it=='http://hl7.org/fhir/questionnaire-answers-status#completed'"
+    )
+  saref_hasTimestamp: DateTime!
+}
+
+type Subscription {
+  onCompletedPostop1yBariatricResponseAdded: CompletedPostop1yBariatricResponse!
+}`;
+
+export const QUESTIONNAIRE_QUERY = `
 PREFIX dcterms: <http://purl.org/dc/terms/>
 PREFIX qo: <https://ns.faqir.org/q-o#>
-SELECT ?res ?timestamp ?patient ?question ?value WHERE {
-    ?res a qo:QuestionnaireResponse ;
-        prov:atTime ?timestamp ;
-        qo:questionnaireResponseBySubject ?patient ;
-        dcterms:hasPart ?answer .
-    ?answer qo:answerValue ?value ;
-        qo:answerToQuestion ?question
-}`;
+SELECT ?res ?patient ?questionnaire ?value ?question WHERE {
+  ?res a qo:QuestionnaireResponse ;
+    qo:questionnaireResponseBySubject ?patient ;
+    qo:questionnaireResponseToQuestionnaire ?questionnaire ;
+    dcterms:hasPart ?answer .
+  ?answer a qo:Answer ;
+    qo:answerValue ?value ;
+    qo:answerToQuestion ?question .
+}
+`;

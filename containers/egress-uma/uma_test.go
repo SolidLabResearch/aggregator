@@ -131,6 +131,109 @@ func TestRequestWithUMA_RejectsBearerChallengeFromDifferentIssuer(t *testing.T) 
 	}
 }
 
+func TestRequestWithOAuth_SendsBearerTokenOnFirstRequest(t *testing.T) {
+	oldAggregatorID, oldHTTPClient := AggregatorID, model.HttpClient
+	t.Cleanup(func() {
+		AggregatorID, model.HttpClient = oldAggregatorID, oldHTTPClient
+	})
+	AggregatorID = "aggregator-1"
+	model.HttpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host != "token-service:8080" {
+			t.Fatalf("unexpected token client request to %s", req.URL)
+		}
+		return response(http.StatusOK, `{"access_token":"aggregator-token"}`, nil), nil
+	})}
+
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		if got := req.Header.Get("Authorization"); got != "Bearer aggregator-token" {
+			t.Fatalf("expected aggregator bearer token, got %q", got)
+		}
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			t.Fatalf("failed to read request body: %v", err)
+		}
+		if got := string(body); got != "payload" {
+			t.Fatalf("expected request body to be preserved, got %q", got)
+		}
+		return response(http.StatusOK, "ok", nil), nil
+	})}
+
+	req := httptest.NewRequest(http.MethodPost, "https://resource.example/data", strings.NewReader("payload"))
+	req.Header.Set("Authorization", "Bearer caller-supplied-token")
+	resp, err := RequestWithOAuth(client, req)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	defer resp.Body.Close()
+	if requests != 1 {
+		t.Fatalf("expected one authenticated request, got %d", requests)
+	}
+}
+
+func TestHandleFetchRequestRejectsUnknownAuthMode(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/fetch",
+		strings.NewReader(`{"url":"https://resource.example/data","authMode":"unknown"}`),
+	)
+
+	handleFetchRequest(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, recorder.Code)
+	}
+}
+
+func TestHandleFetchRequestPreservesUMATokenDenial(t *testing.T) {
+	oldAggregatorID, oldHTTPClient := AggregatorID, model.HttpClient
+	t.Cleanup(func() {
+		AggregatorID, model.HttpClient = oldAggregatorID, oldHTTPClient
+	})
+	AggregatorID = "aggregator-1"
+
+	model.HttpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.URL.Host == "resource.example":
+			header := make(http.Header)
+			header.Set("WWW-Authenticate", `UMA as_uri="https://auth.example", ticket="ticket-1"`)
+			return response(http.StatusUnauthorized, "unauthorized", header), nil
+		case req.URL.Host == "auth.example" && req.URL.Path == "/.well-known/uma2-configuration":
+			return response(http.StatusOK, `{"token_endpoint":"https://auth.example/token"}`, nil), nil
+		case req.URL.Host == "token-service:8080":
+			return response(http.StatusOK, `{"access_token":"claim-token"}`, nil), nil
+		case req.URL.Host == "auth.example" && req.URL.Path == "/token":
+			header := make(http.Header)
+			header.Set("Content-Type", "application/json")
+			return response(http.StatusForbidden, `{"status":403,"message":"Request denied"}`, header), nil
+		default:
+			t.Fatalf("unexpected request to %s", req.URL)
+			return nil, nil
+		}
+	})}
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/fetch",
+		strings.NewReader(`{"url":"https://resource.example/data","authMode":"auto"}`),
+	)
+
+	handleFetchRequest(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d", http.StatusForbidden, recorder.Code)
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("expected application/json content type, got %q", got)
+	}
+	if got := strings.TrimSpace(recorder.Body.String()); got != `{"status":403,"message":"Request denied"}` {
+		t.Fatalf("unexpected response body %q", got)
+	}
+}
+
 func TestParseAuthenticateChallenge(t *testing.T) {
 	tests := []struct {
 		header string

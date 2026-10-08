@@ -91,14 +91,14 @@ deploymentFunctions:
               container: model-training
               port: training
               internalPath: /weights
-          training-metrics:
+          metrics:
             json:
               <<: *training-distribution
               internalPath: /metrics
-          evaluation-metrics:
+          metrics-history:
             json:
               <<: *training-distribution
-              internalPath: /evaluation-metrics
+              internalPath: /metrics/history
       resources:
         - id: storage
           manifest:
