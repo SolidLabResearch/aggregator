@@ -7,10 +7,6 @@ distributions:
 - weights by calendar month relative to a bariatric procedure; and
 - OWLQOL and WRSM scores at five bariatric follow-up points.
 
-The implementation from commit `25598a3`, before the patient identity and
-removal changes, is preserved as the separately buildable
-[`pacsoi-service-legacy`](../pacsoi-service-legacy/README.md) fallback.
-
 ## How it works
 
 ```text
