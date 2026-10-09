@@ -58,6 +58,8 @@ these environment values to use another endpoint or interval:
 env:
   - name: ACTIVE_PATIENTS_URL
     value: "https://pacsoi-services.faqir.org/hcps/active_patients"
+  - name: TEAM_ACTIVE_PATIENTS_URL
+    value: "https://pacsoi-services.faqir.org/hcps/teams/active_patients"
   - name: ACTIVE_PATIENTS_POLL_INTERVAL_MS
     value: "60000"
   - name: POD_BASE_URL
@@ -67,7 +69,18 @@ env:
 The endpoint must return a JSON array containing a non-empty `id` and `pod_id`
 for every active patient. Relative pod identifiers are resolved below
 `POD_BASE_URL`; absolute pod URLs remain supported. Authorization is handled by
-the egress proxy.
+the egress proxy in OAuth mode.
+
+The deployment function also accepts an optional `team` URI. When supplied,
+the service fetches pods from `TEAM_ACTIVE_PATIENTS_URL` and sends the
+URL-encoded URI in its `team_uri` query parameter. For example:
+
+```bash
+agg create-service \
+  --name pacsoi \
+  --deployment-function pacsoi \
+  --param team=https://ns.faqir.org/teams/1
+```
 
 ### Update contexts, slice definitions, and queries
 

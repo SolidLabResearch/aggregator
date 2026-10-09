@@ -15,6 +15,23 @@ export interface ActivePatient {
   pod_id: string;
 }
 
+/** Selects the configured team endpoint when a team URI is configured. */
+export function activePatientsURL(
+  endpoint: string,
+  teamEndpoint: string | undefined,
+  teamURI?: string,
+): string {
+  if (!teamURI) return endpoint;
+  if (!teamEndpoint) {
+    throw new Error("Environment variable TEAM_ACTIVE_PATIENTS_URL must be set when TEAM_URI is set");
+  }
+
+  const url = new URL(teamEndpoint);
+  url.hash = "";
+  url.searchParams.set("team_uri", teamURI);
+  return url.toString();
+}
+
 type DynamicQuerySource = Parameters<QuerySourceIterator["addSource"]>[0];
 
 interface PatientSourceBundle {
@@ -54,7 +71,7 @@ export class PatientSourceOwnership {
   }
 }
 
-/** Validates the response returned by GET /hcps/active_patients. */
+/** Validates the response returned by an HCP active-patients endpoint. */
 export function parseActivePatients(payload: unknown): ActivePatient[] {
   if (!Array.isArray(payload)) {
     throw new Error("Active-patient response must be an array");

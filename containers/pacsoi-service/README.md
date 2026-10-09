@@ -80,12 +80,15 @@ percentiles. Those ordered averages form the population evolution curves.
 
 ## Configuration
 
-The poll interval and proxy are optional; all other variables are required.
+The team, poll interval, and proxy are optional. The team endpoint is required
+only when a team is configured; all other variables are required.
 
 | Variable | Meaning | Example |
 | --- | --- | --- |
 | `ACTIVE_PATIENTS_URL` | Endpoint returning an array of `{ id, pod_id }` objects | `https://pacsoi-services.faqir.org/hcps/active_patients` |
+| `TEAM_ACTIVE_PATIENTS_URL` | Endpoint used instead when `TEAM_URI` is set | `https://pacsoi-services.faqir.org/hcps/teams/active_patients` |
 | `ACTIVE_PATIENTS_POLL_INTERVAL_MS` | Delay between successful polls (default: 60000 ms) | `60000` |
+| `TEAM_URI` | Team URI used to scope active-patient discovery | `https://ns.faqir.org/teams/1` |
 | `LOG_LEVEL` | Set to `debug` to include per-attempt proxy dispatch details | `info` |
 | `POD_BASE_URL` | Kvasir base URL used to expand relative `pod_id` values | `https://pacsoi-kvasir.faqir.org` |
 | `PATIENT_SLICE` | Patient demographics/identifier slice name | `PatientSlice` |
@@ -101,6 +104,10 @@ Slice names may be supplied with or without a leading slash. A relative
 `pod_id` is resolved to `<POD_BASE_URL>/<pod_id>`; an absolute `pod_id` is used
 as-is. Patient slice URLs are then built as
 `<pod-url>/slices/<slice-name>/query`.
+
+When `TEAM_URI` is set, patient pods are fetched from
+`TEAM_ACTIVE_PATIENTS_URL` with the URL-encoded URI added as its `team_uri`
+query parameter. When it is unset, `ACTIVE_PATIENTS_URL` is used as-is.
 
 When `EGRESS_UMA_URL` is configured, outbound requests are sent to `<proxy>/fetch`
 as a JSON request envelope. Active-patient polls request the proxy's `oauth`

@@ -1,6 +1,6 @@
 import { QuerySourceIterator } from '@incremunica/user-tools';
 import { WeightDistribution } from "./weight-dist.js";
-import { queryBariatricResponses, queryProcedures, querySources, queryWeights } from "./query.js";
+import { activePatientsURL, queryBariatricResponses, queryProcedures, querySources, queryWeights } from "./query.js";
 import Fastify from "fastify";
 import { Mutex } from "async-mutex";
 import { BariatricScoreDistribution } from './bariatric-dist.js';
@@ -31,6 +31,11 @@ async function main() {
   if (!ACTIVE_PATIENTS_URL) {
     throw new Error("Environment variable ACTIVE_PATIENTS_URL must be set");
   }
+  const activePatientsEndpoint = activePatientsURL(
+    ACTIVE_PATIENTS_URL,
+    process.env.TEAM_ACTIVE_PATIENTS_URL,
+    process.env.TEAM_URI,
+  );
 
   const POD_BASE_URL = process.env.POD_BASE_URL;
   if (!POD_BASE_URL) {
@@ -73,7 +78,7 @@ async function main() {
   });
 
   void querySources(
-    ACTIVE_PATIENTS_URL,
+    activePatientsEndpoint,
     POD_BASE_URL,
     PATIENT_SLICE,
     BAR_PROCEDURE_SLICE.startsWith("/") ? BAR_PROCEDURE_SLICE.slice(1) : BAR_PROCEDURE_SLICE,

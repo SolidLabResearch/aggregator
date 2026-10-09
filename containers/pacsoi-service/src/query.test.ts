@@ -1,12 +1,41 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  activePatientsURL,
   describeFetchTarget,
   parseActivePatients,
   PatientSourceOwnership,
   resolvePodURL,
   shouldLogFetchFailure,
 } from "./query.js";
+
+test("activePatientsURL selects and URL-encodes the team endpoint", () => {
+  assert.equal(
+    activePatientsURL(
+      "https://pacsoi-services.faqir.org/hcps/active_patients",
+      "https://pacsoi-services.faqir.org/hcps/teams/active_patients",
+      "https://ns.faqir.org/teams/1",
+    ),
+    "https://pacsoi-services.faqir.org/hcps/teams/active_patients?team_uri=https%3A%2F%2Fns.faqir.org%2Fteams%2F1",
+  );
+});
+
+test("activePatientsURL preserves the unscoped endpoint when no team is set", () => {
+  const endpoint = "https://pacsoi-services.faqir.org/hcps/active_patients";
+  assert.equal(activePatientsURL(endpoint, undefined), endpoint);
+  assert.equal(activePatientsURL(endpoint, undefined, ""), endpoint);
+});
+
+test("activePatientsURL uses the independently configured team endpoint", () => {
+  assert.equal(
+    activePatientsURL(
+      "https://hcp.example/active",
+      "https://teams.example/patients?tenant=pacsoi",
+      "https://ns.faqir.org/teams/1",
+    ),
+    "https://teams.example/patients?tenant=pacsoi&team_uri=https%3A%2F%2Fns.faqir.org%2Fteams%2F1",
+  );
+});
 
 test("parseActivePatients validates, normalizes, and deduplicates the API response", () => {
   assert.deepEqual(

@@ -3,7 +3,13 @@ deploymentFunctions:
     function:
       title: Deploy PACSOI service
       description: Deploys the PACSOI weight and bariatric questionnaire score distribution workload.
-      expects: []
+      expects:
+        - name: team
+          predicate: team
+          type: xsd:anyURI
+          required: false
+          title: Team
+          description: Optional team URI used to scope active-patient discovery.
       returns:
         name: deployedService
         predicate: service
@@ -11,6 +17,12 @@ deploymentFunctions:
     profileRef:
       name: pacsoi
     orchestration:
+      inputBindings:
+        - parameter: team
+          targets:
+            - resource: workload
+              container: pacsoi
+              env: TEAM_URI
       resources:
         - id: workload
           manifest:
@@ -33,6 +45,8 @@ deploymentFunctions:
                       env:
                         - name: ACTIVE_PATIENTS_URL
                           value: "https://pacsoi-services.faqir.org/hcps/active_patients"
+                        - name: TEAM_ACTIVE_PATIENTS_URL
+                          value: "https://pacsoi-services.faqir.org/hcps/teams/active_patients"
                         - name: ACTIVE_PATIENTS_POLL_INTERVAL_MS
                           value: "60000"
                         - name: POD_BASE_URL
