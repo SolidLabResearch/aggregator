@@ -12,7 +12,7 @@
 # ------------------------
 
 CONFIG_DIR  ?= ./config
-CONFIG_FILE ?= local.yaml
+CONFIG_FILE ?= faqir.yaml
 CONFIG      ?= $(CONFIG_FILE)
 PROFILE_DIR := $(CONFIG_DIR)/profiles
 DEPLOYMENT_FUNCTION_DIR := $(CONFIG_DIR)/deployment-functions
