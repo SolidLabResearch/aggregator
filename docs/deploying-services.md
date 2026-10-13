@@ -32,6 +32,18 @@ are fragments of the deployment URL; for example:
   fno:required true .
 ```
 
+Optional parameters (`fno:required false`) may declare an `fno:default`, which
+is used when the request omits the parameter:
+
+```turtle
+<https://<host>/deployments/prepare-data#poll-interval>
+  a fno:Parameter ;
+  fno:predicate <https://<host>/deployments/prepare-data#poll-interval> ;
+  fno:type xsd:integer ;
+  fno:required false ;
+  fno:default "30"^^xsd:integer .
+```
+
 Use the exact deployment and predicate IRIs returned by the catalog.
 
 ## Create a service

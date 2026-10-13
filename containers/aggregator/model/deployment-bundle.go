@@ -38,10 +38,11 @@ type BundledDeploymentSignature struct {
 }
 
 type BundledDeploymentParameter struct {
-	Name      string `json:"name"`
-	Predicate string `json:"predicate"`
-	Type      string `json:"type"`
-	Required  bool   `json:"required"`
+	Name      string  `json:"name"`
+	Predicate string  `json:"predicate"`
+	Type      string  `json:"type"`
+	Required  bool    `json:"required"`
+	Default   *string `json:"default,omitempty"`
 }
 
 type BundledDeploymentOutput struct {

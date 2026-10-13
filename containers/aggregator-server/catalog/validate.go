@@ -147,6 +147,9 @@ func ValidateBundle(bundle *Bundle) error {
 		if _, exists := parameters[parameter.Name]; exists {
 			errors = append(errors, fmt.Sprintf("duplicate input name %q", parameter.Name))
 		}
+		if parameter.Required && parameter.Default != nil {
+			errors = append(errors, fmt.Sprintf("required input %q cannot define a default", parameter.Name))
+		}
 		parameters[parameter.Name] = parameter
 	}
 

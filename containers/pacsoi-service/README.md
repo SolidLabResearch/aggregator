@@ -76,7 +76,7 @@ percentiles. Those ordered averages form the population evolution curves.
 
 ## Configuration
 
-The team, poll interval, and proxy are optional. The team endpoint is required
+The team, poll interval, k-anonymity threshold, and proxy are optional. The team endpoint is required
 only when a team is configured; all other variables are required.
 
 | Variable | Meaning | Example |
@@ -85,6 +85,7 @@ only when a team is configured; all other variables are required.
 | `TEAM_ACTIVE_PATIENTS_URL` | Endpoint used instead when `TEAM_URI` is set | `https://pacsoi-services.faqir.org/hcps/teams/active_patients` |
 | `ACTIVE_PATIENTS_POLL_INTERVAL_MS` | Delay between successful polls (default: 60000 ms) | `60000` |
 | `TEAM_URI` | Team URI used to scope active-patient discovery | `https://ns.faqir.org/teams/1` |
+| `K_ANONYMITY` | Minimum number of distinct patients a distribution needs before it is served (default: 0) | `5` |
 | `LOG_LEVEL` | Set to `debug` to include per-attempt proxy dispatch details | `info` |
 | `POD_BASE_URL` | Kvasir base URL used to expand relative `pod_id` values | `https://pacsoi-kvasir.faqir.org` |
 | `PATIENT_SLICE` | Patient demographics/identifier slice name | `PatientSlice` |
@@ -114,10 +115,54 @@ backoff, beginning at one second and capped at five minutes. A pod or
 authorization problem therefore does not terminate the process; look for
 repeated `[FETCH] Attempt ... failed` messages.
 
+### Setting the team and k-anonymity through the Aggregator
+
+When deployed through the Aggregator, `TEAM_URI` and `K_ANONYMITY` are not
+edited in the manifest. They come from the optional `team` and `k-anonymity`
+inputs of the `pacsoi` deployment function
+([`config/deployment-functions/pacsoi.yaml`](../../config/deployment-functions/pacsoi.yaml)).
+Both inputs can be left out independently:
+
+```http
+POST https://aggregator.local:5443/doc-aggregator/services
+Content-Type: text/turtle
+
+@prefix aggr: <https://w3id.org/aggregator#> .
+@prefix pacsoi: <https://aggregator.local:5443/deployments/pacsoi#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+<https://aggregator.local:5443/doc-aggregator/services/pacsoi>
+  a aggr:ServiceRequest ;
+  aggr:deploymentFunction <https://aggregator.local:5443/deployments/pacsoi> ;
+  pacsoi:team <https://ns.faqir.org/teams/1> ;
+  pacsoi:k-anonymity "5"^^xsd:integer .
+```
+
+or with the CLI:
+
+```bash
+agg create-service \
+  --name pacsoi \
+  --deployment-function pacsoi \
+  --param team=https://ns.faqir.org/teams/1 \
+  --param k-anonymity=5
+```
+
+See [the PACSOI example](../../docs/pacsoi-example.md) for the full deployment
+walkthrough.
+
 ## HTTP API
 
 Both endpoints return a point-in-time snapshot under the corresponding mutex.
 An empty projection returns only its header row.
+
+When fewer than `K_ANONYMITY` distinct patients contribute to a distribution
+(a weight for `/w-dist`, a completed score for `/b-dist`), the endpoint returns
+`403 Forbidden` with a JSON body instead of the CSV. The actual patient count is
+not disclosed:
+
+```json
+{"error":"Forbidden","message":"Distribution withheld: fewer than 5 patients contribute (k-anonymity)","kAnonymity":5}
+```
 
 ### `GET /w-dist`
 

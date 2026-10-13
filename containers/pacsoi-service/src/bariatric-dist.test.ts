@@ -126,3 +126,18 @@ test("answer deletion still works after its pseudo identifier is unlinked", () =
   );
   assert.deepEqual(dist.getStats(), {});
 });
+
+test("patient count only includes patients with a completed score", () => {
+  const dist = new BariatricScoreDistribution();
+  dist.addPatientIdentifier("patient-1");
+  dist.addPatientIdentifier("patient-2");
+  addResponse(dist, "patient-1", "preop-1", "preop", 0, 2);
+  addResponse(dist, "patient-1", "six-weeks-1", "6w", 0, 1);
+  assert.equal(dist.patientCount(), 1);
+
+  addResponse(dist, "patient-2", "preop-2", "preop", 6, 6);
+  assert.equal(dist.patientCount(), 2);
+
+  dist.removePatient("patient-2");
+  assert.equal(dist.patientCount(), 1);
+});

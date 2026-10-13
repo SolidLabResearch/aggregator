@@ -112,30 +112,67 @@ func TestApplyResolvedInputBindingsTemplatesTargetEnvironment(t *testing.T) {
 	}
 }
 
-func TestApplyResolvedInputBindingsSetsMissingValueToEmptyString(t *testing.T) {
-	deployment := &appsv1.Deployment{
-		Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
-			Containers: []corev1.Container{{
-				Name: "prepare-data",
-				Env:  []corev1.EnvVar{{Name: "POLL_INTERVAL", Value: "existing-default"}},
-			}},
-		}}},
+func TestApplyResolvedInputBindingsMissingValue(t *testing.T) {
+	tests := []struct {
+		name         string
+		defaultValue *string
+		template     string
+		want         string
+	}{
+		{name: "keeps manifest value without default", want: "existing-default"},
+		{name: "uses default", defaultValue: ptr("60"), want: "60"},
+		{name: "uses empty default", defaultValue: ptr(""), want: ""},
+		{name: "templates default", defaultValue: ptr("60"), template: "{{value}}s", want: "60s"},
 	}
-	bindings := []model.ResolvedInputBinding{{
-		Parameter: "pollInterval",
-		Predicate: "https://aggregator.example/deployments/prepare-data#poll-interval",
-		Targets: []model.ResolvedEnvironmentTarget{{
-			Resource: "workload", Container: "prepare-data", Env: "POLL_INTERVAL",
-		}},
-	}}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			deployment := &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name: "prepare-data",
+						Env:  []corev1.EnvVar{{Name: "POLL_INTERVAL", Value: "existing-default"}},
+					}},
+				}}},
+			}
+			bindings := []model.ResolvedInputBinding{{
+				Parameter: "pollInterval",
+				Predicate: "https://aggregator.example/deployments/prepare-data#poll-interval",
+				Default:   test.defaultValue,
+				Targets: []model.ResolvedEnvironmentTarget{{
+					Resource: "workload", Container: "prepare-data", Env: "POLL_INTERVAL",
+					ValueTemplate: test.template,
+				}},
+			}}
 
-	if err := applyResolvedInputBindings(deployment, "workload", bindings, map[string]rdfgo.ITerm{}); err != nil {
+			if err := applyResolvedInputBindings(deployment, "workload", bindings, map[string]rdfgo.ITerm{}); err != nil {
+				t.Fatalf("applyResolvedInputBindings: %v", err)
+			}
+			if got := deployment.Spec.Template.Spec.Containers[0].Env; len(got) != 1 || got[0].Name != "POLL_INTERVAL" || got[0].Value != test.want {
+				t.Fatalf("unexpected environment: %#v", got)
+			}
+		})
+	}
+}
+
+func TestApplyResolvedInputBindingsProvidedValueOverridesDefault(t *testing.T) {
+	deployment := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+		Containers: []corev1.Container{{Name: "prepare-data"}},
+	}}}}
+	predicate := "https://aggregator.example/deployments/prepare-data#poll-interval"
+	bindings := []model.ResolvedInputBinding{{
+		Parameter: "pollInterval", Predicate: predicate, Default: ptr("60"),
+		Targets: []model.ResolvedEnvironmentTarget{{Resource: "workload", Container: "prepare-data", Env: "POLL_INTERVAL"}},
+	}}
+	values := map[string]rdfgo.ITerm{predicate: rdfgo.NewLiteral("5", "", nil)}
+	if err := applyResolvedInputBindings(deployment, "workload", bindings, values); err != nil {
 		t.Fatalf("applyResolvedInputBindings: %v", err)
 	}
-	if got := deployment.Spec.Template.Spec.Containers[0].Env; len(got) != 1 || got[0].Name != "POLL_INTERVAL" || got[0].Value != "" {
+	if got := deployment.Spec.Template.Spec.Containers[0].Env; len(got) != 1 || got[0].Value != "5" {
 		t.Fatalf("unexpected environment: %#v", got)
 	}
 }
+
+func ptr[T any](value T) *T { return &value }
 
 func TestBuildUMAEnvUsesDedicatedProxyVariable(t *testing.T) {
 	oldID, oldNamespace := model.ID, model.Namespace

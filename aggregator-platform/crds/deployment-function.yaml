@@ -43,11 +43,15 @@ spec:
                           predicate: {type: string, minLength: 1}
                           type: {type: string, minLength: 1}
                           required: {type: boolean}
+                          default: {type: string}
                           title: {type: string}
                           description: {type: string}
                           extraProperties:
                             type: object
                             additionalProperties: {type: string}
+                        x-kubernetes-validations:
+                          - rule: "!(self.required && has(self.default))"
+                            message: a required parameter cannot define a default.
                     returns:
                       type: object
                       required: [name, predicate]

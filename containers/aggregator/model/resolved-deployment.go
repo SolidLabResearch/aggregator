@@ -20,6 +20,7 @@ type ResolvedParameter struct {
 	Predicate string
 	Type      string
 	Required  bool
+	Default   *string
 }
 
 type ResolvedEndpoint struct {
@@ -60,7 +61,10 @@ type ResolvedResource struct {
 type ResolvedInputBinding struct {
 	Parameter string
 	Predicate string
-	Targets   []ResolvedEnvironmentTarget
+	// Default is used when the request omits the parameter. When nil, the
+	// targets are left untouched so manifest values are preserved.
+	Default *string
+	Targets []ResolvedEnvironmentTarget
 }
 
 type ResolvedEnvironmentTarget struct {

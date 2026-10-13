@@ -186,6 +186,15 @@ export class BariatricScoreDistribution {
     this.patients.delete(recordID);
   }
 
+  /** Number of distinct patients contributing at least one completed score. */
+  patientCount(): number {
+    let count = 0;
+    for (const patient of this.patients.values()) {
+      if (patient.scores.size > 0) count++;
+    }
+    return count;
+  }
+
   getStats(): Partial<Record<BariatricTimepoint, BariatricDistributionStats>> {
     const result: Partial<Record<BariatricTimepoint, BariatricDistributionStats>> = {};
     for (const timepoint of BARIATRIC_TIMEPOINTS) {

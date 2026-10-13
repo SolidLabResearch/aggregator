@@ -10,6 +10,13 @@ deploymentFunctions:
           required: false
           title: Team
           description: Optional team URI used to scope active-patient discovery.
+        - name: k-anonymity
+          predicate: k-anonymity
+          type: xsd:integer
+          required: false
+          default: "0"
+          title: K-Anonymity
+          description: The minimum number of patients required to be present in a distribution for it to be considered valid.
       returns:
         name: deployedService
         predicate: service
@@ -23,6 +30,11 @@ deploymentFunctions:
             - resource: workload
               container: pacsoi
               env: TEAM_URI
+        - parameter: k-anonymity
+          targets:
+            - resource: workload
+              container: pacsoi
+              env: K_ANONYMITY
       resources:
         - id: workload
           manifest:

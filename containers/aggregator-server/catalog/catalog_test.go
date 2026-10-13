@@ -164,6 +164,44 @@ func TestCompileDeploymentAddsConformanceOnlyForProfiledService(t *testing.T) {
 	}
 }
 
+func TestCompileDeploymentWritesParameterDefaults(t *testing.T) {
+	definition := fetchDeployment("fetch-unprofiled", false)
+	definition.Spec.Function.Expects = append(definition.Spec.Function.Expects,
+		DeploymentParameter{Name: "interval", Predicate: "interval", Type: "xsd:integer", Default: ptr("30")},
+		DeploymentParameter{Name: "mode", Predicate: "mode", Type: "xsd:string", Default: ptr("")},
+	)
+	definition.Spec.Orchestration.InputBindings = append(definition.Spec.Orchestration.InputBindings,
+		InputBinding{Parameter: "interval", Targets: []EnvironmentBinding{{Resource: "workload", Container: "fetch", Env: "INTERVAL"}}},
+		InputBinding{Parameter: "mode", Targets: []EnvironmentBinding{{Resource: "workload", Container: "fetch", Env: "MODE"}}},
+	)
+	rdf, err := CompileDeploymentFunction(&definition, nil, URLs{Server: "https://aggregator.example"})
+	if err != nil {
+		t.Fatalf("CompileDeploymentFunction: %v", err)
+	}
+	text := string(rdf)
+	assertValidTurtle(t, text)
+	for _, expected := range []string{
+		`<https://w3id.org/function/ontology#default> "30"^^<http://www.w3.org/2001/XMLSchema#integer>`,
+		`<https://w3id.org/function/ontology#default> ""`,
+	} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("compiled deployment does not contain %s:\n%s", expected, text)
+		}
+	}
+	if strings.Count(text, "ontology#default>") != 2 {
+		t.Fatalf("expected exactly two fno:default triples:\n%s", text)
+	}
+}
+
+func TestValidationRejectsDefaultOnRequiredParameter(t *testing.T) {
+	definition := fetchDeployment("fetch-unprofiled", false)
+	definition.Spec.Function.Expects[0].Default = ptr("https://example.org")
+	err := ValidateBundle(&Bundle{DeploymentFunction: definition})
+	if err == nil || !strings.Contains(err.Error(), "cannot define a default") {
+		t.Fatalf("expected default on required parameter error, got %v", err)
+	}
+}
+
 func TestInternalEndpointIsNotRegisteredOnPublicMux(t *testing.T) {
 	registry := NewRegistry(URLs{Server: "https://aggregator.example"})
 	mux := http.NewServeMux()

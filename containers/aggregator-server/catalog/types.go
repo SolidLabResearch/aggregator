@@ -152,6 +152,7 @@ type DeploymentParameter struct {
 	Predicate       string            `json:"predicate"`
 	Type            string            `json:"type"`
 	Required        bool              `json:"required"`
+	Default         *string           `json:"default,omitempty"`
 	Title           string            `json:"title,omitempty"`
 	Description     string            `json:"description,omitempty"`
 	ExtraProperties map[string]string `json:"extraProperties,omitempty"`

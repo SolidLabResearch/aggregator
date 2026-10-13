@@ -1,7 +1,7 @@
 import { QuerySourceIterator } from '@incremunica/user-tools';
 import { WeightDistribution } from "./weight-dist.js";
 import { activePatientsURL, queryBariatricResponses, queryProcedures, querySources, queryWeights } from "./query.js";
-import Fastify from "fastify";
+import Fastify, { type FastifyReply } from "fastify";
 import { Mutex } from "async-mutex";
 import { BariatricScoreDistribution } from './bariatric-dist.js';
 import * as Schemas from "./schemas.js";
@@ -47,6 +47,11 @@ async function main() {
   );
   if (!Number.isFinite(ACTIVE_PATIENTS_POLL_INTERVAL_MS) || ACTIVE_PATIENTS_POLL_INTERVAL_MS <= 0) {
     throw new Error("Environment variable ACTIVE_PATIENTS_POLL_INTERVAL_MS must be a positive number");
+  }
+
+  const K_ANONYMITY = Number(process.env.K_ANONYMITY || "0");
+  if (!Number.isInteger(K_ANONYMITY) || K_ANONYMITY < 0) {
+    throw new Error("Environment variable K_ANONYMITY must be a non-negative integer");
   }
 
   const PATIENT_SLICE = process.env.PATIENT_SLICE;
@@ -102,8 +107,20 @@ async function main() {
   // poller runs in the background. Both deliberately live with this process.
   const app = Fastify();
 
+  // Distributions backed by fewer than K_ANONYMITY patients are withheld
+  // entirely. The actual patient count is not disclosed in the response.
+  const insufficientPatients = (reply: FastifyReply) =>
+    reply.code(403).send({
+      error: "Forbidden",
+      message: `Distribution withheld: fewer than ${K_ANONYMITY} patients contribute (k-anonymity)`,
+      kAnonymity: K_ANONYMITY,
+    });
+
   app.get("/w-dist", async (request, reply) => {
-    const csv = await weightMutex.runExclusive(() => weightDist.toCSV());
+    const csv = await weightMutex.runExclusive(() =>
+      weightDist.patientCount() < K_ANONYMITY ? undefined : weightDist.toCSV(),
+    );
+    if (csv === undefined) return insufficientPatients(reply);
 
     reply
       .header("Content-Type", "text/csv")
@@ -112,7 +129,10 @@ async function main() {
   });
 
   app.get("/b-dist", async (request, reply) => {
-    const csv = await bariatricMutex.runExclusive(() => bariatricDist.toCSV());
+    const csv = await bariatricMutex.runExclusive(() =>
+      bariatricDist.patientCount() < K_ANONYMITY ? undefined : bariatricDist.toCSV(),
+    );
+    if (csv === undefined) return insufficientPatients(reply);
 
     reply
       .header("Content-Type", "text/csv")

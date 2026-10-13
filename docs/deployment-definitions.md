@@ -117,6 +117,31 @@ not automatically exposed as a dataset. Every function output exposed as a
 dataset must reference a `DatasetProfile`, and every distribution in that
 profile must have a route binding.
 
+## Optional parameters and defaults
+
+Each entry in `function.expects` is bound to container environment variables
+through `orchestration.inputBindings`. When a request omits a parameter with
+`required: false`, the platform:
+
+- uses the parameter's `default`, if one is declared, as the value (including
+  when it is substituted into a `valueTemplate`); or
+- leaves the bound environment variables untouched when there is no default,
+  so any `env` value already present in the embedded manifest still applies.
+
+```yaml
+expects:
+  - name: pollInterval
+    predicate: poll-interval
+    type: xsd:integer
+    required: false
+    default: "30"
+```
+
+Defaults are always strings, because they are written to environment
+variables. A required parameter cannot declare a default. The compiled
+deployment document publishes the default with `fno:default`. The literal is
+typed with the parameter's XSD `fno:type`; a non-XSD type is published as an IRI.
+
 ## Function composition
 
 Service functions can be connected with FnO Composition mappings. A mapping

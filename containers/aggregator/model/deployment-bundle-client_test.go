@@ -129,6 +129,30 @@ func TestResolveAcceptsMultipleResources(t *testing.T) {
 	}
 }
 
+func TestResolveCarriesParameterDefaults(t *testing.T) {
+	bundle := testDeploymentBundle()
+	interval := "30"
+	spec := &bundle.DeploymentFunction.Spec
+	spec.Function.Expects = append(spec.Function.Expects,
+		BundledDeploymentParameter{Name: "interval", Predicate: "interval", Type: "xsd:integer", Default: &interval})
+	spec.Orchestration.InputBindings = append(spec.Orchestration.InputBindings,
+		BundledInputBinding{Parameter: "interval", Targets: []BundledEnvironmentBinding{{Resource: "workload", Container: "fetch", Env: "INTERVAL"}}})
+
+	definition, err := ResolveDeploymentBundle("https://aggregator.example/deployments/fetch", bundle)
+	if err != nil {
+		t.Fatalf("ResolveDeploymentBundle: %v", err)
+	}
+	if definition.Parameters[0].Default != nil || definition.InputBindings[0].Default != nil {
+		t.Fatalf("parameter without default unexpectedly has one: %#v", definition.InputBindings[0])
+	}
+	if got := definition.Parameters[1].Default; got == nil || *got != "30" {
+		t.Fatalf("unexpected parameter default: %v", got)
+	}
+	if got := definition.InputBindings[1].Default; got == nil || *got != "30" {
+		t.Fatalf("unexpected input binding default: %v", got)
+	}
+}
+
 func TestResolveOperationalEndpoint(t *testing.T) {
 	bundle := testDeploymentBundle()
 	bundle.Profile.Spec.ServiceProfile.Endpoints = map[string]BundledEndpoint{

@@ -74,10 +74,14 @@ func decodeK8sObject(
 
 func applyResolvedInputBindings(obj interface{}, resourceID string, bindings []model.ResolvedInputBinding, values map[string]rdfgo.ITerm) error {
 	for _, binding := range bindings {
-		term, ok := values[binding.Predicate]
-		value := ""
-		if ok {
+		var value string
+		if term, ok := values[binding.Predicate]; ok {
 			value = strings.Trim(term.GetValue(), "<>")
+		} else if binding.Default != nil {
+			value = *binding.Default
+		} else {
+			// Leave the manifest untouched so its own env values apply.
+			continue
 		}
 		for _, target := range binding.Targets {
 			if target.Resource != resourceID {

@@ -151,6 +151,9 @@ func CompileDeploymentFunction(definition *DeploymentFunction, profile *Profile,
 		writeSubject(&out, "", fno+"predicate", iri(predicateURI(document, parameter.Predicate, definition.Spec.Prefixes)), true)
 		writeSubject(&out, "", fno+"type", iri(expand(parameter.Type, definition.Spec.Prefixes)), true)
 		writeSubject(&out, "", fno+"required", strconv.FormatBool(parameter.Required), true)
+		if parameter.Default != nil {
+			writeSubject(&out, "", fno+"default", typedValue(*parameter.Default, expand(parameter.Type, definition.Spec.Prefixes)), true)
+		}
 		finishSubject(&out)
 	}
 	output := definition.Spec.Function.Returns
@@ -303,6 +306,20 @@ func rdfValue(value string, prefixes map[string]string) string {
 		}
 	}
 	return literal(value)
+}
+
+// typedValue renders a value according to its fno:type: XSD datatypes become
+// typed literals, any other type is treated as a class whose instance is an IRI.
+func typedValue(value, datatype string) string {
+	const xsd = "http://www.w3.org/2001/XMLSchema#"
+	switch {
+	case datatype == xsd+"string":
+		return literal(value)
+	case strings.HasPrefix(datatype, xsd):
+		return literal(value) + "^^" + iri(datatype)
+	default:
+		return iri(value)
+	}
 }
 func writeIRIs(out *strings.Builder, predicate string, values []string) {
 	if len(values) == 0 {

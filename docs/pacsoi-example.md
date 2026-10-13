@@ -71,16 +71,15 @@ for every active patient. Relative pod identifiers are resolved below
 `POD_BASE_URL`; absolute pod URLs remain supported. Authorization is handled by
 the egress proxy in OAuth mode.
 
-The deployment function also accepts an optional `team` URI. When supplied,
-the service fetches pods from `TEAM_ACTIVE_PATIENTS_URL` and sends the
-URL-encoded URI in its `team_uri` query parameter. For example:
+The deployment function also accepts two optional inputs, which are set per
+service request (see [Deploy PACSOI](#deploy-pacsoi)):
 
-```bash
-agg create-service \
-  --name pacsoi \
-  --deployment-function pacsoi \
-  --param team=https://ns.faqir.org/teams/1
-```
+- `team`: when supplied, the service fetches pods from
+  `TEAM_ACTIVE_PATIENTS_URL` and sends the URL-encoded URI in its `team_uri`
+  query parameter.
+- `k-anonymity`: the minimum number of distinct patients a distribution needs
+  before it is served (default `0`). Below that threshold the distribution
+  endpoint returns `403 Forbidden` instead of the CSV.
 
 ### Update contexts, slice definitions, and queries
 
@@ -185,6 +184,41 @@ agg create-service \
   --deployment-function pacsoi
 ```
 
+### Optional: scope to a team and set k-anonymity
+
+Add the optional inputs as extra triples on the request. Each predicate is the
+deployment document IRI followed by `#` and the input's predicate name. This
+request limits patient discovery to team `https://ns.faqir.org/teams/1` and
+withholds each distribution until at least 5 patients contribute to it:
+
+```http
+POST https://aggregator.local:5443/doc-aggregator/services
+Content-Type: text/turtle
+
+@prefix aggr: <https://w3id.org/aggregator#> .
+@prefix pacsoi: <https://aggregator.local:5443/deployments/pacsoi#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+<https://aggregator.local:5443/doc-aggregator/services/pacsoi>
+  a aggr:ServiceRequest ;
+  aggr:deploymentFunction <https://aggregator.local:5443/deployments/pacsoi> ;
+  pacsoi:team <https://ns.faqir.org/teams/1> ;
+  pacsoi:k-anonymity "5"^^xsd:integer .
+```
+
+The equivalent CLI command is:
+
+```bash
+agg create-service \
+  --name pacsoi \
+  --deployment-function pacsoi \
+  --param team=https://ns.faqir.org/teams/1 \
+  --param k-anonymity=5
+```
+
+Either input can be left out independently. Without `team`, all active
+patients from `ACTIVE_PATIENTS_URL` are used; without `k-anonymity`, the
+distributions are served regardless of patient count.
+
 ## Retrieve the result
 
 Inspect the service description and follow its advertised
@@ -206,3 +240,14 @@ agg list-outputs --svc pacsoi
 agg get-output weight-distribution/csv --svc pacsoi
 agg get-output bariatric-score-distribution/csv --svc pacsoi
 ```
+
+If the service was created with `k-anonymity` and too few patients contribute
+to a distribution, its endpoint returns `403 Forbidden` with a JSON body such
+as:
+
+```json
+{"error":"Forbidden","message":"Distribution withheld: fewer than 5 patients contribute (k-anonymity)","kAnonymity":5}
+```
+
+The distribution becomes available automatically once enough patient data has
+been received.

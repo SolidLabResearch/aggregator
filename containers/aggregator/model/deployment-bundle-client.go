@@ -65,6 +65,7 @@ func ResolveDeploymentBundle(uri string, bundle *DeploymentBundle) (*ResolvedDep
 		resolved.Parameters = append(resolved.Parameters, ResolvedParameter{
 			Name: parameter.Name, Predicate: expandBundleValue(parameter.Predicate, uri, prefixes),
 			Type: expandBundleValue(parameter.Type, uri, prefixes), Required: parameter.Required,
+			Default: parameter.Default,
 		})
 	}
 	manifests := map[string]map[string]any{}
@@ -87,6 +88,7 @@ func ResolveDeploymentBundle(uri string, bundle *DeploymentBundle) (*ResolvedDep
 		resolvedBinding := ResolvedInputBinding{
 			Parameter: binding.Parameter,
 			Predicate: expandBundleValue(parameters[binding.Parameter].Predicate, uri, prefixes),
+			Default:   parameters[binding.Parameter].Default,
 		}
 		for _, target := range binding.Targets {
 			manifest, ok := manifests[target.Resource]

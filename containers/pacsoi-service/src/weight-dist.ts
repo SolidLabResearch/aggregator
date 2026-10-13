@@ -290,6 +290,15 @@ export class WeightDistribution {
   // Stats
   // ================================
 
+  /** Number of distinct patients contributing at least one weight to the distribution. */
+  patientCount(): number {
+    let count = 0;
+    for (const patient of this.patients.values()) {
+      if (patient.observations.length > 0 && this.effectiveProcedure(patient)) count++;
+    }
+    return count;
+  }
+
   /** Returns population statistics for every non-empty month bucket. */
   getStats(): Record<number, DistributionStats> {
     const result: Record<number, DistributionStats> = {};
