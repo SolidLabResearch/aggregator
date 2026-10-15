@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Agent } from "undici";
 import {
   cancelledResponse,
   classifyFailure,
@@ -178,6 +179,21 @@ test("umaProxyFetch retries transient failures and buffers the body", async () =
   assert.ok(calls[0].signal, "the egress request carries an abort signal");
   assert.equal(response.url, SLICE_URL);
   assert.deepEqual(await response.json(), { data: { ok: true } });
+});
+
+test("umaProxyFetch lifts the idle timeouts for event streams only", async () => {
+  const dispatchers: unknown[] = [];
+  const fetchImpl = (async (_url: string, init: RequestInit & { dispatcher?: unknown }) => {
+    dispatchers.push(init.dispatcher);
+    return new Response('{"data":[]}', { status: 200 });
+  }) as unknown as typeof fetch;
+  const umaFetch = createUmaProxyFetch({ policy: FAST, fetchImpl, egressUrl: () => "http://egress/", random: () => 0 });
+
+  await quiet(() => umaFetch(SLICE_URL, { method: "POST", body: "{}", headers: { Accept: "text/event-stream" } }));
+  await quiet(() => umaFetch(SLICE_URL, { method: "POST", body: "{}" }));
+
+  assert.ok(dispatchers[0] instanceof Agent, "event streams use the no-idle-timeout dispatcher");
+  assert.equal(dispatchers[1], undefined, "other requests keep fetch's default timeouts");
 });
 
 test("umaProxyFetch retries a body that breaks mid-transfer", async () => {

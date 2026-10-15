@@ -21,6 +21,16 @@
  *    do not retry in lockstep.
  */
 
+import { Agent } from "undici";
+
+/**
+ * Event streams stay open, and quiet, for as long as nothing changes. Node's
+ * fetch ends a request after 300 s without headers or body data, which cut
+ * every subscription after five minutes, so streams use a dispatcher without
+ * those idle timeouts. Connecting is still bounded by the default timeout.
+ */
+const streamDispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
+
 export interface FetchPolicy {
   /** First retry ceiling; doubles on every attempt. */
   baseDelayMs: number;
@@ -705,11 +715,14 @@ export function createUmaProxyFetch(options: UmaProxyFetchOptions = {}): UmaProx
       target: targetDescription.pod ? undefined : targetDescription.target,
     });
 
+    // `dispatcher` is an undici extension that RequestInit does not declare.
+    const dispatch = isStream ? ({ dispatcher: streamDispatcher } as RequestInit) : {};
+
     const send = (): Promise<Response> => {
       const egress = egressUrl()?.replace(/\/+$/, "");
       if (!egress) {
         fetchLog("debug", requestID, "dispatch", { via: "direct" });
-        return fetchImpl(input, { ...init, signal });
+        return fetchImpl(input, { ...init, ...dispatch, signal });
       }
       fetchLog("debug", requestID, "dispatch", { via: "egress-uma" });
       const bodyHeaders = headerRecord(init?.headers);
@@ -731,6 +744,7 @@ export function createUmaProxyFetch(options: UmaProxyFetchOptions = {}): UmaProx
           body: init?.body ? init.body.toString() : "",
           authMode,
         }),
+        ...dispatch,
         // Closing this connection also cancels egress-uma's upstream request.
         signal,
       });

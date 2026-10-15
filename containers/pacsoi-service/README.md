@@ -68,9 +68,9 @@ every symptom marked present.
 - Unsuffixed `WRSM1` through `WRSM20` are yes/no symptom-presence answers used
   to calculate the total bother score; no separate presence score is exposed.
 - WRSM bother is the sum of the 0-6 bother ratings for symptoms marked present.
-  The source model uses `WRSM1a` and `WRSM2a`, followed by `WRSM3b` through
-  `WRSM20b`. An absent symptom contributes zero and does not require a bother
-  answer. Lower WRSM scores are better.
+  The bother answer for item N may be named `WRSMNa` or `WRSMNb`; both are
+  accepted for every item. An absent symptom contributes zero and does not
+  require a bother answer. Lower WRSM scores are better.
 
 The questionnaire URI assigns each response to `preop`, `6w`, `3m`, `6m`, or
 `1y`. For each point and score, the service calculates the average, median,

@@ -76,7 +76,6 @@ export class BariatricScoreBuffer {
       const value = this.parseIntegerInRange(code, rawValue, 0, 1);
       this.addUnique(this.wrsmPresenceAnswers, item, value);
     } else {
-      this.validateBotherSuffix(item, suffix, question);
       const value = this.parseIntegerInRange(code, rawValue, 0, 6);
       this.addUnique(this.wrsmBotherAnswers, item, value);
     }
@@ -108,7 +107,6 @@ export class BariatricScoreBuffer {
 
     const suffix = wrsmMatch[2];
     const isBother = suffix !== undefined;
-    if (suffix) this.validateBotherSuffix(item, suffix, question);
     const value = this.parseIntegerInRange(code, rawValue, 0, isBother ? 6 : 1);
     return isBother
       ? this.removeExact(this.wrsmBotherAnswers, item, value)
@@ -196,15 +194,6 @@ export class BariatricScoreBuffer {
     }
     answers.delete(key);
     return true;
-  }
-
-  private validateBotherSuffix(item: number, suffix: string, question: string): void {
-    const expected = item <= 2 ? "a" : "b";
-    if (suffix !== expected) {
-      throw new Error(
-        `Unexpected WRSM bother question: ${question}; expected WRSM${item}${expected}`,
-      );
-    }
   }
 
   private mergeAnswers<K>(target: Map<K, number>, source: Map<K, number>): void {

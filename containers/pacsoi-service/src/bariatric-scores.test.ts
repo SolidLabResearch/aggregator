@@ -72,11 +72,20 @@ test("uses unsuffixed WRSM answers for presence and the modeled suffix for bothe
   assert.equal(response.complete(), false);
 });
 
-test("rejects suffixes that do not match the WRSM source model", () => {
-  const response = new BariatricScoreBuffer("response-wrong-suffix");
-  assert.throws(() => response.addAnswer("WRSM1b", "2"), /expected WRSM1a/);
-  assert.throws(() => response.addAnswer("WRSM2b", "2"), /expected WRSM2a/);
-  assert.throws(() => response.addAnswer("WRSM3a", "2"), /expected WRSM3b/);
+test("accepts either bother suffix for any WRSM item", () => {
+  const response = new BariatricScoreBuffer("response-any-suffix");
+  for (const question of OWLQOL_QUESTIONS) response.addAnswer(question, "0");
+  for (let item = 1; item <= 20; item++) {
+    response.addAnswer(`WRSM${item}`, item <= 3 || item === 6 ? "1" : "0");
+  }
+  response.addAnswer("WRSM1b", "1");
+  response.addAnswer("WRSM2a", "2");
+  response.addAnswer("WRSM3a", "3");
+  response.addAnswer("WRSM6b", "4");
+
+  assert.equal(response.getScores().wrsmBother, 10);
+  assert.equal(response.removeAnswer("WRSM6b", "4"), true);
+  assert.equal(response.complete(), false);
 });
 
 test("rejects a non-zero bother score for an absent symptom", () => {

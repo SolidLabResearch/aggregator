@@ -50,6 +50,15 @@ program
   });
 
 program
+  .command("delete")
+  .description("Delete the active aggregator, or the one given with --agg")
+  .option("--agg <id>", "Aggregator ID or URL to delete instead of active")
+  .action(async (opts) => {
+    const { main } = await import("./delete-aggregator.js");
+    await main({ agg: opts.agg });
+  });
+
+program
   .command("get-active")
   .description("Show the active aggregator")
   .action(() => {
