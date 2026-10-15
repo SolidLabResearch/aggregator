@@ -88,8 +88,10 @@ export class WeightDistribution {
     console.log(`[addPatientProcedure] Recieved procedure for ID ${identifier} at ${timestamp.toISOString()}`);
     const recordID = this.identifiers.get(identifier);
     if (!recordID) {
-      console.log(`[addPatientProcedure] No data yet for ID ${identifier}. Buffering procedure at ${timestamp.toISOString()}`);
       const buffer = this.procedureBuffer.get(identifier) ?? [];
+      // Re-added sources replay their data; procedures are unique by ID.
+      if (buffer.some(procedure => procedure.id === procedureID)) return;
+      console.log(`[addPatientProcedure] No data yet for ID ${identifier}. Buffering procedure at ${timestamp.toISOString()}`);
       buffer.push({ id: procedureID, timestamp });
       this.procedureBuffer.set(identifier, buffer);
       return;
@@ -100,6 +102,7 @@ export class WeightDistribution {
       console.warn(`[addPatientProcedure] Patient ${recordID} has identifiers but no data. Skipping...`);
       return;
     }
+    if (data.procedures.some(procedure => procedure.id === procedureID)) return;
 
     this.replaceProcedureState(data, () => data.procedures.push({ id: procedureID, timestamp }));
     console.log(`[addPatientProcedure] Added procedure ${procedureID} for patient ${recordID}`);
@@ -119,7 +122,8 @@ export class WeightDistribution {
         this.observationsBuffer.set(identifier, []);
       }
 
-      this.observationsBuffer.get(identifier)!.push(observation);
+      const buffer = this.observationsBuffer.get(identifier)!;
+      if (!buffer.some(buffered => buffered.id === observationID)) buffer.push(observation);
     };
 
     const patientID = this.identifiers.get(identifier);
@@ -138,6 +142,8 @@ export class WeightDistribution {
       return;
     }
 
+    // Re-added sources replay their data; observations are unique by ID.
+    if (data.observations.some(existing => existing.id === observationID)) return;
     data.observations.push(observation);
     const procedure = this.effectiveProcedure(data);
     if (!procedure) {
@@ -248,6 +254,25 @@ export class WeightDistribution {
         this.observationsBuffer.delete(identifier);
       }
     }
+  }
+
+  /**
+   * Drops a patient's procedures and weights, including buffered ones, but
+   * keeps the patient's identity. Used when the weight sources are suspended;
+   * re-added sources replay the data from scratch.
+   */
+  clearPatientData(patientID: string): void {
+    const recordID = this.identifiers.get(patientID);
+    const patient = recordID ? this.patients.get(recordID) : undefined;
+    if (!patient) return;
+    this.removeWeightContributions(patient);
+    patient.procedures = [];
+    patient.observations = [];
+    for (const identifier of patient.identifiers) {
+      this.procedureBuffer.delete(identifier);
+      this.observationsBuffer.delete(identifier);
+    }
+    console.log(`[clearPatientData] Cleared weight data of ${recordID}`);
   }
 
   /** Removes a patient and that patient's contribution from every aggregate. */

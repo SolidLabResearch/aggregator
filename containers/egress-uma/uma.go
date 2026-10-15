@@ -87,7 +87,7 @@ func RequestWithUMA(client *http.Client, r *http.Request) (*http.Response, error
 	logrus.WithField("target_url", dest.String()).Info("Preparing initial request")
 
 	// --- Initial request (no UMA ticket)
-	ticketlessReq, err := http.NewRequest(r.Method, dest.String(), bytes.NewReader(bodyBytes))
+	ticketlessReq, err := http.NewRequestWithContext(r.Context(), r.Method, dest.String(), bytes.NewReader(bodyBytes))
 	if err != nil {
 		logrus.WithError(err).Error("Failed to create initial request")
 		return nil, err
@@ -165,7 +165,7 @@ func RequestWithUMA(client *http.Client, r *http.Request) (*http.Response, error
 
 	logrus.WithField("endpoint", tokenEndpoint).Info("Requesting UMA token")
 
-	umaReq, err := http.NewRequest("POST", tokenEndpoint, bytes.NewReader(umaBody))
+	umaReq, err := http.NewRequestWithContext(r.Context(), "POST", tokenEndpoint, bytes.NewReader(umaBody))
 	if err != nil {
 		logrus.WithError(err).Error("Failed to create UMA token request")
 		return nil, err
@@ -212,7 +212,7 @@ func RequestWithUMA(client *http.Client, r *http.Request) (*http.Response, error
 	logrus.Debug("Successfully decoded UMA token")
 
 	// --- Final request with UMA token
-	ticketedReq, err := http.NewRequest(r.Method, dest.String(), bytes.NewReader(bodyBytes))
+	ticketedReq, err := http.NewRequestWithContext(r.Context(), r.Method, dest.String(), bytes.NewReader(bodyBytes))
 	if err != nil {
 		logrus.WithError(err).Error("Failed to create ticketed request")
 		return nil, err
@@ -241,7 +241,7 @@ func requestWithBearer(client *http.Client, original *http.Request, dest *url.UR
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest(original.Method, dest.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(original.Context(), original.Method, dest.String(), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

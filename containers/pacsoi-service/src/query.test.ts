@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   activePatientsURL,
-  describeFetchTarget,
+  escalate,
   parseActivePatients,
   PatientSourceOwnership,
   resolvePodURL,
-  shouldLogFetchFailure,
 } from "./query.js";
+import { describeFetchTarget, shouldLogFetchFailure } from "./fetch.js";
 
 test("activePatientsURL selects and URL-encodes the team endpoint", () => {
   assert.equal(
@@ -106,4 +106,13 @@ test("unchanged fetch failures are sampled at powers of two", () => {
     [true, true, false, true, false, true],
   );
   assert.equal(shouldLogFetchFailure(3, true), true);
+});
+
+test("escalate suspends the whole patient for the patient slice or both data groups", () => {
+  const none = new Set<"patient" | "weight" | "bariatric">();
+  assert.equal(escalate("patient", none), "patient");
+  assert.equal(escalate("weight", none), "weight");
+  assert.equal(escalate("bariatric", none), "bariatric");
+  assert.equal(escalate("weight", new Set(["bariatric"])), "patient");
+  assert.equal(escalate("bariatric", new Set(["weight"])), "patient");
 });

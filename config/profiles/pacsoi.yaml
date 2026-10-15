@@ -5,7 +5,8 @@ profiles:
       description: | 
         Discovers patient pod sources, queries the patient data needed by the
         aggregation pipeline, and computes weight and bariatric questionnaire
-        score distributions.
+        score distributions and population metrics about the active-patient
+        sources.
       parameters:
         activePatientsEndpoint:
           predicate: active-patients-endpoint
@@ -90,6 +91,12 @@ profiles:
           title: Bariatric questionnaire score distribution
           datasetProfileRef:
             dataset: bariatric-score-distribution
+        populationMetrics:
+          predicate: population-metrics
+          title: Population metrics
+          description: Number of active patients and, per source group, how many are connected, unauthorized or failed.
+          datasetProfileRef:
+            dataset: population-metrics
       functions:
         querySources:
           name: Discover patient pod sources
@@ -126,6 +133,14 @@ profiles:
           description: Aggregates OWLQOL and WRSM scores across the five bariatric follow-up points.
           expects: [patientIdentities, bariatricQuestionnaireResponses]
           returns: [bariatricScoreDistribution]
+        calculatePopulationMetrics:
+          name: Calculate population metrics
+          description: >-
+            Counts the active patients from the last active-patient poll and, for the
+            patient, weight and bariatric source groups, how many patients are connected,
+            connecting, unauthorized, failed or stopped.
+          expects: [patientPodSources, patientIdentities, bariatricProcedures, weightObservations, bariatricQuestionnaireResponses]
+          returns: [populationMetrics]
       composition:
         - from:
             term: https://pacsoi-services.faqir.org/hcps/active_patients
@@ -244,6 +259,36 @@ profiles:
           to:
             function: calculateBariatricScoreDistribution
             parameter: bariatricQuestionnaireResponses
+        - from:
+            function: querySources
+            output: patientPodSources
+          to:
+            function: calculatePopulationMetrics
+            parameter: patientPodSources
+        - from:
+            function: queryPatients
+            output: patientIdentities
+          to:
+            function: calculatePopulationMetrics
+            parameter: patientIdentities
+        - from:
+            function: queryProcedures
+            output: bariatricProcedures
+          to:
+            function: calculatePopulationMetrics
+            parameter: bariatricProcedures
+        - from:
+            function: queryWeights
+            output: weightObservations
+          to:
+            function: calculatePopulationMetrics
+            parameter: weightObservations
+        - from:
+            function: queryBariatricResponses
+            output: bariatricQuestionnaireResponses
+          to:
+            function: calculatePopulationMetrics
+            parameter: bariatricQuestionnaireResponses
     datasetProfiles:
       patient-pod-sources:
         title: Patient pod sources
@@ -278,3 +323,15 @@ profiles:
             path: /b-dist
             urlType: downloadURL
             mediaType: text/csv
+      population-metrics:
+        title: Population metrics
+        description: >-
+          Counts without identifiers or health data: active patients and, per source
+          group, how many are ok, connecting, unauthorized, failed or stopped.
+          Withheld when fewer than the k-anonymity threshold of patients are active.
+        distributions:
+          json:
+            title: Population metrics JSON
+            path: /population
+            urlType: accessURL
+            mediaType: application/json

@@ -176,7 +176,11 @@ export class BariatricScoreBuffer {
   }
 
   private addUnique<K>(answers: Map<K, number>, key: K, value: number): void {
-    if (answers.has(key)) {
+    const existing = answers.get(key);
+    // A replayed answer (for example after a source is re-added) is a no-op;
+    // only a conflicting value is an error.
+    if (existing === value) return;
+    if (existing !== undefined) {
       throw new Error(`Response ${this.id} already has answer for ${String(key)}`);
     }
     answers.set(key, value);

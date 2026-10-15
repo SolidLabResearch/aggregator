@@ -141,3 +141,22 @@ test("patient count only includes patients with a completed score", () => {
   dist.removePatient("patient-2");
   assert.equal(dist.patientCount(), 1);
 });
+
+test("clearPatientData drops scores but keeps the identity", () => {
+  const dist = new BariatricScoreDistribution();
+  dist.addPatientIdentifier("patient-1", "pseudo-1", "issuer");
+  dist.addPatientIdentifier("patient-2");
+  addResponse(dist, "pseudo-1", "response-1", "preop", 3, 2);
+  addResponse(dist, "patient-2", "response-2", "preop", 4, 1);
+  assert.equal(dist.getStats().preop?.count, 2);
+
+  dist.clearPatientData("patient-1");
+  assert.equal(dist.getStats().preop?.count, 1);
+  assert.equal(dist.patientCount(), 1);
+
+  // Replayed answers land on the same record and are scored once.
+  addResponse(dist, "pseudo-1", "response-1", "preop", 3, 2);
+  addResponse(dist, "pseudo-1", "response-1", "preop", 3, 2);
+  assert.equal(dist.getStats().preop?.count, 2);
+  assert.equal(dist.patientCount(), 2);
+});

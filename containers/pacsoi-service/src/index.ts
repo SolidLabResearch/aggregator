@@ -5,6 +5,7 @@ import Fastify, { type FastifyReply } from "fastify";
 import { Mutex } from "async-mutex";
 import { BariatricScoreDistribution } from './bariatric-dist.js';
 import * as Schemas from "./schemas.js";
+import { PopulationStatus } from "./population.js";
 
 /**
  * Application entry point.
@@ -26,6 +27,7 @@ async function main() {
   const weightDist = new WeightDistribution();
   const bariatricMutex = new Mutex();
   const bariatricDist = new BariatricScoreDistribution();
+  const population = new PopulationStatus();
 
   const ACTIVE_PATIENTS_URL = process.env.ACTIVE_PATIENTS_URL;
   if (!ACTIVE_PATIENTS_URL) {
@@ -47,6 +49,13 @@ async function main() {
   );
   if (!Number.isFinite(ACTIVE_PATIENTS_POLL_INTERVAL_MS) || ACTIVE_PATIENTS_POLL_INTERVAL_MS <= 0) {
     throw new Error("Environment variable ACTIVE_PATIENTS_POLL_INTERVAL_MS must be a positive number");
+  }
+
+  const PATIENT_SOURCE_ADD_INTERVAL_MS = Number(
+    process.env.PATIENT_SOURCE_ADD_INTERVAL_MS ?? "250",
+  );
+  if (!Number.isFinite(PATIENT_SOURCE_ADD_INTERVAL_MS) || PATIENT_SOURCE_ADD_INTERVAL_MS < 0) {
+    throw new Error("Environment variable PATIENT_SOURCE_ADD_INTERVAL_MS must be a non-negative number");
   }
 
   const K_ANONYMITY = Number(process.env.K_ANONYMITY || "0");
@@ -97,6 +106,8 @@ async function main() {
     bariatricMutex,
     bariatricDist,
     ACTIVE_PATIENTS_POLL_INTERVAL_MS,
+    PATIENT_SOURCE_ADD_INTERVAL_MS,
+    population,
   );
 
   queryProcedures(barProcedureSourceIterator, weightDist, weightMutex);
@@ -107,13 +118,16 @@ async function main() {
   // poller runs in the background. Both deliberately live with this process.
   const app = Fastify();
 
-  // Distributions backed by fewer than K_ANONYMITY patients are withheld
-  // entirely. The actual patient count is not disclosed in the response.
-  const insufficientPatients = (reply: FastifyReply) =>
-    reply.code(403).send({
-      error: "Forbidden",
-      message: `Distribution withheld: fewer than ${K_ANONYMITY} patients contribute (k-anonymity)`,
-      kAnonymity: K_ANONYMITY,
+  // Outputs backed by fewer than K_ANONYMITY patients are withheld entirely.
+  // The actual patient count is not disclosed in the response.
+  const insufficientPatients = (
+    reply: FastifyReply,
+    message = `Distribution withheld: fewer than ${K_ANONYMITY} patients contribute`,
+  ) =>
+    reply.code(422).send({
+      error: "Unprocessable Content",
+      message,
+      required: K_ANONYMITY,
     });
 
   app.get("/w-dist", async (request, reply) => {
@@ -138,6 +152,17 @@ async function main() {
       .header("Content-Type", "text/csv")
       .header("Content-Disposition", "attachment; filename=bariatric-scores.csv")
       .send(csv);
+  });
+
+  // Active-patient count and, per source group, how many patients are
+  // connected, unauthorized, or failed. Withheld like the distributions when
+  // fewer than K_ANONYMITY patients are active.
+  app.get("/population", async (request, reply) => {
+    const snapshot = population.snapshot();
+    if (snapshot.activePatients < K_ANONYMITY) {
+      return insufficientPatients(reply, `Population metrics withheld: fewer than ${K_ANONYMITY} patients are active`);
+    }
+    return snapshot;
   });
 
   const port = 3000;

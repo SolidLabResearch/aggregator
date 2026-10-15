@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"egress-uma/model"
 	"io"
 	"net/http"
@@ -8,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -234,6 +237,68 @@ func TestHandleFetchRequestPreservesUMATokenDenial(t *testing.T) {
 	}
 }
 
+func TestHandleFetchRequestForwardsRetryAfter(t *testing.T) {
+	oldHTTPClient := model.HttpClient
+	t.Cleanup(func() { model.HttpClient = oldHTTPClient })
+
+	model.HttpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		header := make(http.Header)
+		header.Set("Retry-After", "17")
+		return response(http.StatusServiceUnavailable, "busy", header), nil
+	})}
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/fetch",
+		strings.NewReader(`{"url":"https://resource.example/data","authMode":"auto"}`),
+	)
+	handleFetchRequest(recorder, req)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status %d, got %d", http.StatusServiceUnavailable, recorder.Code)
+	}
+	if got := recorder.Header().Get("Retry-After"); got != "17" {
+		t.Fatalf("expected Retry-After to be forwarded, got %q", got)
+	}
+}
+
+func TestHandleFetchRequestCancelsUpstreamWhenCallerDisconnects(t *testing.T) {
+	oldAggregatorID, oldHTTPClient := AggregatorID, model.HttpClient
+	t.Cleanup(func() {
+		AggregatorID, model.HttpClient = oldAggregatorID, oldHTTPClient
+	})
+	AggregatorID = "aggregator-1"
+
+	upstreamCtx := make(chan context.Context, 1)
+	model.HttpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "token-service:8080":
+			return response(http.StatusOK, `{"access_token":"token"}`, nil), nil
+		default:
+			upstreamCtx <- req.Context()
+			return response(http.StatusOK, "ok", nil), nil
+		}
+	})}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/fetch",
+		strings.NewReader(`{"url":"https://resource.example/data","authMode":"oauth"}`),
+	).WithContext(ctx)
+	handleFetchRequest(httptest.NewRecorder(), req)
+
+	got := <-upstreamCtx
+	if got.Err() != nil {
+		t.Fatalf("upstream context cancelled too early: %v", got.Err())
+	}
+	cancel()
+	if got.Err() == nil {
+		t.Fatal("expected the upstream request context to follow the caller's context")
+	}
+}
+
 func TestParseAuthenticateChallenge(t *testing.T) {
 	tests := []struct {
 		header string
@@ -246,5 +311,104 @@ func TestParseAuthenticateChallenge(t *testing.T) {
 		if got := parseAuthenticateChallenge(test.header); got != test.want {
 			t.Errorf("parseAuthenticateChallenge(%q) = %#v, want %#v", test.header, got, test.want)
 		}
+	}
+}
+
+func TestHandleFetchRequestSendsEventStreamHeadersBeforeFirstEvent(t *testing.T) {
+	oldHTTPClient := model.HttpClient
+	t.Cleanup(func() { model.HttpClient = oldHTTPClient })
+
+	// The upstream answers with headers but never sends an event.
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream;charset=UTF-8")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer upstream.Close()
+	defer close(release)
+	model.HttpClient = upstream.Client()
+
+	egress := httptest.NewServer(http.HandlerFunc(handleFetchRequest))
+	defer egress.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	body := `{"url":"` + upstream.URL + `/slice","method":"POST","authMode":"auto","headers":{"Accept":"text/event-stream"}}`
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, egress.URL+"/fetch", strings.NewReader(body))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("headers did not arrive before the first event: %v", err)
+	}
+	resp.Body.Close()
+	if got := resp.Header.Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("unexpected content type %q", got)
+	}
+}
+
+type chunkedReader struct {
+	chunks []string
+	gaps   time.Duration
+}
+
+func (c *chunkedReader) Read(p []byte) (int, error) {
+	if len(c.chunks) == 0 {
+		return 0, io.EOF
+	}
+	time.Sleep(c.gaps)
+	n := copy(p, c.chunks[0])
+	c.chunks = c.chunks[1:]
+	return n, nil
+}
+
+type flushRecorder struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (f *flushRecorder) Write(p []byte) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.b.Write(p)
+}
+func (f *flushRecorder) Flush() {}
+
+func TestCopyResponseBodyKeepAliveOnlyBetweenEvents(t *testing.T) {
+	// The second event arrives in two chunks with an idle gap between them,
+	// and the stream is idle again after it.
+	body := &chunkedReader{
+		chunks: []string{"event: next\ndata: {\"a\":1}\n\n", "event: next\ndata: {\"b\"", ":2}\n\n"},
+		gaps:   60 * time.Millisecond,
+	}
+	out := &flushRecorder{}
+	req := httptest.NewRequest(http.MethodPost, "/fetch", nil)
+	copyResponseBody(out, out, body, req, true, 20*time.Millisecond)
+
+	scanner := bufio.NewScanner(strings.NewReader(out.b.String()))
+	inEvent := false
+	keepAlives := 0
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case line == ": keepalive":
+			if inEvent {
+				t.Fatalf("keepalive written inside an event:\n%s", out.b.String())
+			}
+			keepAlives++
+		case line == "":
+			inEvent = false
+		default:
+			inEvent = true
+		}
+	}
+	if keepAlives == 0 {
+		t.Fatalf("expected keepalive comments on an idle stream:\n%s", out.b.String())
+	}
+	if !strings.Contains(out.b.String(), "data: {\"b\":2}") {
+		t.Fatalf("split event was corrupted:\n%s", out.b.String())
 	}
 }

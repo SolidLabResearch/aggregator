@@ -79,7 +79,8 @@ service request (see [Deploy PACSOI](#deploy-pacsoi)):
   query parameter.
 - `k-anonymity`: the minimum number of distinct patients a distribution needs
   before it is served (default `0`). Below that threshold the distribution
-  endpoint returns `403 Forbidden` instead of the CSV.
+  endpoint returns `422 Unprocessable Content` instead of the CSV. The population
+  metrics are withheld the same way while fewer patients than this are active.
 
 ### Update contexts, slice definitions, and queries
 
@@ -222,7 +223,8 @@ distributions are served regardless of patient count.
 ## Retrieve the result
 
 Inspect the service description and follow its advertised
-`dcat:downloadURL`:
+`dcat:downloadURL` for the CSV distributions, or `dcat:accessURL` for the
+population metrics:
 
 ```http
 GET https://aggregator.local:5443/doc-aggregator/services/pacsoi
@@ -231,7 +233,9 @@ Accept: text/turtle
 
 The output enpoints will be at:
 - `https://aggregator.local:5443/doc-aggregator/services/pacsoi/w-dist` for the weight distribution; and
-- `https://aggregator.local:5443/doc-aggregator/services/pacsoi/b-dist` for the bariatric questionnaire score distribution.
+- `https://aggregator.local:5443/doc-aggregator/services/pacsoi/b-dist` for the bariatric questionnaire score distribution; and
+- `https://aggregator.local:5443/doc-aggregator/services/pacsoi/population` for the population metrics, a JSON
+  summary of how many patients are active and how many of their sources are connected, unauthorized, or failed.
 
 With the CLI, discover and fetch the distribution without constructing its URL:
 
@@ -239,14 +243,15 @@ With the CLI, discover and fetch the distribution without constructing its URL:
 agg list-outputs --svc pacsoi
 agg get-output weight-distribution/csv --svc pacsoi
 agg get-output bariatric-score-distribution/csv --svc pacsoi
+agg get-output population-metrics/json --svc pacsoi
 ```
 
 If the service was created with `k-anonymity` and too few patients contribute
-to a distribution, its endpoint returns `403 Forbidden` with a JSON body such
+to a distribution, its endpoint returns `422 Unprocessable Content` with a JSON body such
 as:
 
 ```json
-{"error":"Forbidden","message":"Distribution withheld: fewer than 5 patients contribute (k-anonymity)","kAnonymity":5}
+{"error":"Unprocessable Content","message":"Distribution withheld: fewer than 5 patients contribute","required":5}
 ```
 
 The distribution becomes available automatically once enough patient data has

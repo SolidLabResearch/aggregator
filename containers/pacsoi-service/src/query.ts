@@ -4,6 +4,8 @@ import * as Schemas from "./schemas.js";
 import { WeightDistribution } from "./weight-dist.js";
 import { Mutex } from "async-mutex";
 import { BariatricScoreDistribution } from "./bariatric-dist.js";
+import { sleep, sourceFetchScopes, umaProxyFetch } from "./fetch.js";
+import { type GroupStatus, PopulationStatus, SOURCE_GROUPS, type SourceGroup } from "./population.js";
 
 export interface QuestionnaireSliceSource {
   slice: string;
@@ -34,15 +36,45 @@ export function activePatientsURL(
 
 type DynamicQuerySource = Parameters<QuerySourceIterator["addSource"]>[0];
 
+interface GroupSource {
+  source: DynamicQuerySource;
+  /** The shared iterator feeding this source's query; absent for the patient slice. */
+  iterator?: QuerySourceIterator;
+}
+
+interface SourceGroupState {
+  sources: GroupSource[];
+  active: boolean;
+  /** Source URLs that answered successfully since the group was last added. */
+  succeeded: Set<string>;
+}
+
 interface PatientSourceBundle {
+  patientID: string;
   podID: string;
   podURL: string;
   ownership: PatientSourceOwnership;
-  patientSource: DynamicQuerySource;
+  groups: Record<SourceGroup, SourceGroupState>;
   stopPatientQuery?: () => void;
-  barProcedureSource: DynamicQuerySource;
-  weightSource: DynamicQuerySource;
-  questionnaireSources: DynamicQuerySource[];
+}
+
+function sourceURL(source: DynamicQuerySource): string {
+  return typeof source === "string" ? source : (source as { value: string }).value;
+}
+
+/**
+ * Decides what to suspend when one source group of a patient fails. The
+ * patient slice carries the identities, so its failure suspends the whole
+ * patient. Losing both data groups leaves nothing to serve, so that also
+ * suspends the whole patient.
+ */
+export function escalate(
+  failed: SourceGroup,
+  suspended: ReadonlySet<SourceGroup>,
+): SourceGroup {
+  if (failed === "patient") return "patient";
+  const other: SourceGroup = failed === "weight" ? "bariatric" : "weight";
+  return suspended.has(other) ? "patient" : failed;
 }
 
 /** Tracks the projection identities discovered through one patient's pod. */
@@ -67,6 +99,10 @@ export class PatientSourceOwnership {
 
   deactivate(): string[] {
     this.active = false;
+    return [...this.patientIDs];
+  }
+
+  ids(): string[] {
     return [...this.patientIDs];
   }
 }
@@ -134,6 +170,14 @@ export function resolvePodURL(podID: string, podBaseURL: string): string {
  * sources. Each successful response is reconciled with the previous one.
  * Failed or malformed responses leave the last known source set intact.
  *
+ * Each patient's sources form three groups: the patient slice, the weight
+ * group (procedure and weight slices), and the bariatric group (questionnaire
+ * slices). A group whose source is unauthorized, keeps failing, or loses its
+ * subscription is suspended: its sources are removed and its distribution data
+ * for that patient is cleared. See `escalate` for when the whole patient is
+ * suspended instead. Every poll is a reset point: suspended groups and patients
+ * that are still active are added again from scratch.
+ *
  * Slice names passed here must not start with a slash (normalised by index.ts),
  * except patientSlice, which is accepted in either form for compatibility.
  */
@@ -152,117 +196,232 @@ export async function querySources(
   bMutex: Mutex,
   bDist: BariatricScoreDistribution,
   pollIntervalMs: number,
+  sourceAddIntervalMs = 0,
+  population = new PopulationStatus(),
 ) {
   console.log(`[querySources] Polling ${endpoint} every ${pollIntervalMs}ms`);
   const activeSources = new Map<string, PatientSourceBundle>();
+  /** Source URL -> active patients using it; patients may share a pod. */
+  const sourceOwners = new Map<string, Set<string>>();
+  /** Serializes poll reconciliation with source-event handling. */
+  const sourcesMutex = new Mutex();
   const normalizedPatientSlice = patientSlice.startsWith("/")
     ? patientSlice.slice(1)
     : patientSlice;
 
+  const group = (sources: GroupSource[]): SourceGroupState => ({
+    sources,
+    active: false,
+    succeeded: new Set(),
+  });
+
   const createSources = (patient: ActivePatient): PatientSourceBundle => {
     const base = resolvePodURL(patient.pod_id, podBaseURL);
+    const slice = (name: string, schema: string, context: unknown): DynamicQuerySource => ({
+      value: base + "/slices/" + name + "/query",
+      type: "graphql",
+      context: { schema, context },
+    } as DynamicQuerySource);
     return {
+      patientID: patient.id,
       podID: patient.pod_id,
       podURL: base,
       ownership: new PatientSourceOwnership(base, patient.id),
-      patientSource: {
-        value: base + "/slices/" + normalizedPatientSlice + "/query",
-        type: "graphql",
-        context: {
-          schema: Schemas.PATIENT_SLICE_SCHEMA,
-          context: Schemas.PATIENT_SLICE_CONTEXT
-        }
+      groups: {
+        patient: group([
+          { source: slice(normalizedPatientSlice, Schemas.PATIENT_SLICE_SCHEMA, Schemas.PATIENT_SLICE_CONTEXT) },
+        ]),
+        weight: group([
+          {
+            source: slice(barProcedureSlice, Schemas.BAR_PROCEDURE_SLICE_SCHEMA, Schemas.BAR_PROCEDURE_SLICE_CONTEXT),
+            iterator: barProcedureSourceIterator,
+          },
+          {
+            source: slice(weightSlice, Schemas.WEIGHT_SLICE_SCHEMA, Schemas.WEIGHT_SLICE_CONTEXT),
+            iterator: weightSourceIterator,
+          },
+        ]),
+        bariatric: group(questionnaireSlices.map(({ slice: name, schema }) => ({
+          source: slice(name, schema, Schemas.QUESTIONNAIRE_SLICE_CONTEXT),
+          iterator: questionnaireSourceIterator,
+        }))),
       },
-      barProcedureSource: {
-        value: base + "/slices/" + barProcedureSlice + "/query",
-        type: "graphql",
-        context: {
-          schema: Schemas.BAR_PROCEDURE_SLICE_SCHEMA,
-          context: Schemas.BAR_PROCEDURE_SLICE_CONTEXT
-        }
-      },
-      weightSource: {
-        value: base + "/slices/" + weightSlice + "/query",
-        type: "graphql",
-        context: {
-          schema: Schemas.WEIGHT_SLICE_SCHEMA,
-          context: Schemas.WEIGHT_SLICE_CONTEXT
-        }
-      },
-      questionnaireSources: questionnaireSlices.map(({ slice, schema }) => ({
-        value: base + "/slices/" + slice + "/query",
-        type: "graphql",
-        context: {
-          schema,
-          context: Schemas.QUESTIONNAIRE_SLICE_CONTEXT,
-        }
-      })),
     };
   };
 
-  const addSources = async (sources: PatientSourceBundle) => {
-    sources.stopPatientQuery = await queryPatients(
-      sources.patientSource,
-      wMutex,
-      wDist,
-      bMutex,
-      bDist,
-      patientID => sources.ownership.track(patientID),
-    );
-    barProcedureSourceIterator.addSource(sources.barProcedureSource);
-    weightSourceIterator.addSource(sources.weightSource);
-    for (const source of sources.questionnaireSources) {
-      questionnaireSourceIterator.addSource(source);
+  const openGroup = async (bundle: PatientSourceBundle, name: SourceGroup) => {
+    const state = bundle.groups[name];
+    state.active = true;
+    state.succeeded.clear();
+    population.set(bundle.patientID, name, "connecting");
+    // Open the fetch scopes before the engines issue their first request.
+    for (const { source } of state.sources) {
+      const url = sourceURL(source);
+      const owners = sourceOwners.get(url) ?? new Set<string>();
+      owners.add(bundle.patientID);
+      sourceOwners.set(url, owners);
+      sourceFetchScopes.open(url);
+    }
+    if (name === "patient") {
+      bundle.stopPatientQuery = await queryPatients(
+        state.sources[0].source,
+        wMutex,
+        wDist,
+        bMutex,
+        bDist,
+        patientID => bundle.ownership.track(patientID),
+      );
+    } else {
+      for (const { source, iterator } of state.sources) iterator!.addSource(source);
     }
   };
 
-  const removeSources = (sources: PatientSourceBundle) => {
-    sources.stopPatientQuery?.();
-    barProcedureSourceIterator.removeSource(sources.barProcedureSource);
-    weightSourceIterator.removeSource(sources.weightSource);
-    for (const source of sources.questionnaireSources) {
-      questionnaireSourceIterator.removeSource(source);
+  const closeGroup = (bundle: PatientSourceBundle, name: SourceGroup) => {
+    const state = bundle.groups[name];
+    if (!state.active) return;
+    state.active = false;
+    if (name === "patient") {
+      bundle.stopPatientQuery?.();
+      bundle.stopPatientQuery = undefined;
+    } else {
+      for (const { source, iterator } of state.sources) iterator!.removeSource(source);
     }
+    // Ends pending retries and open event streams quietly. Closing after the
+    // removals means any late response is ignored by the engines.
+    for (const { source } of state.sources) {
+      const url = sourceURL(source);
+      const owners = sourceOwners.get(url);
+      owners?.delete(bundle.patientID);
+      if (owners?.size === 0) sourceOwners.delete(url);
+      sourceFetchScopes.close(url);
+    }
+  };
+
+  const removeBundle = async (bundle: PatientSourceBundle) => {
+    const ownedPatientIDs = bundle.ownership.deactivate();
+    for (const name of SOURCE_GROUPS) closeGroup(bundle, name);
+    activeSources.delete(bundle.patientID);
+    for (const ownedPatientID of ownedPatientIDs) {
+      await wMutex.runExclusive(() => wDist.removePatient(ownedPatientID));
+      await bMutex.runExclusive(() => bDist.removePatient(ownedPatientID));
+    }
+  };
+
+  const suspend = async (
+    bundle: PatientSourceBundle,
+    failed: SourceGroup,
+    status: GroupStatus,
+    reason: string | undefined,
+  ) => {
+    const suspended = new Set(SOURCE_GROUPS.filter(name => !bundle.groups[name].active));
+    const target = escalate(failed, suspended);
+    population.set(bundle.patientID, failed, status);
+    console.warn(
+      `[querySources] Suspending ${target === "patient" ? "patient" : `${failed} sources`} of ` +
+        `${bundle.patientID} until the next poll: ${failed} ${status}${reason ? ` (${reason})` : ""}`,
+    );
+
+    if (target === "patient") {
+      // A denial applies to the whole patient, so the groups cancelled with it
+      // are reported as unauthorized too. Other causes leave them "stopped":
+      // they were shut down without an answer of their own.
+      const cascaded: GroupStatus = status === "unauthorized" ? "unauthorized" : "stopped";
+      for (const name of SOURCE_GROUPS) {
+        if (name !== failed && bundle.groups[name].active) population.set(bundle.patientID, name, cascaded);
+      }
+      await removeBundle(bundle);
+      return;
+    }
+
+    closeGroup(bundle, failed);
+    for (const patientID of bundle.ownership.ids()) {
+      if (failed === "weight") await wMutex.runExclusive(() => wDist.clearPatientData(patientID));
+      else await bMutex.runExclusive(() => bDist.clearPatientData(patientID));
+    }
+  };
+
+  sourceFetchScopes.onEvent = (url, event, reason) => {
+    void sourcesMutex.runExclusive(async () => {
+      for (const patientID of [...(sourceOwners.get(url) ?? [])]) {
+        const bundle = activeSources.get(patientID);
+        if (!bundle) continue;
+        const name = SOURCE_GROUPS.find(candidate =>
+          bundle.groups[candidate].active &&
+          bundle.groups[candidate].sources.some(({ source }) => sourceURL(source) === url));
+        if (!name) continue;
+        const state = bundle.groups[name];
+
+        if (event === "success") {
+          state.succeeded.add(url);
+          if (state.succeeded.size === state.sources.length) population.set(patientID, name, "ok");
+          continue;
+        }
+        await suspend(bundle, name, event, reason);
+      }
+    }).catch(error => {
+      console.error(`[querySources] Failed to handle ${event} for ${url}: ${(error as Error).message}`);
+    });
   };
 
   for (;;) {
+    let patients: ActivePatient[] | undefined;
     try {
       const response = await umaProxyFetch(endpoint, {
         headers: { Accept: "application/json" },
       }, "oauth");
-      const patients = parseActivePatients(await response.json());
-      const nextPatients = new Map(patients.map((patient) => [patient.id, patient]));
-
-      for (const [patientID, sources] of activeSources) {
-        const next = nextPatients.get(patientID);
-        if (!next || next.pod_id !== sources.podID) {
-          console.log(`[querySources] Removing inactive or moved patient ${patientID} (${sources.podID})`);
-          const ownedPatientIDs = sources.ownership.deactivate();
-          removeSources(sources);
-          activeSources.delete(patientID);
-          for (const ownedPatientID of ownedPatientIDs) {
-            await wMutex.runExclusive(() => wDist.removePatient(ownedPatientID));
-            await bMutex.runExclusive(() => bDist.removePatient(ownedPatientID));
-          }
-        }
-      }
-
-      for (const patient of patients) {
-        if (!activeSources.has(patient.id)) {
-          console.log(`[querySources] Adding active patient ${patient.id} (${patient.pod_id})`);
-          await wMutex.runExclusive(() => wDist.addPatientIdentifier(patient.id));
-          await bMutex.runExclusive(() => bDist.addPatientIdentifier(patient.id));
-          const sources = createSources(patient);
-          await addSources(sources);
-          activeSources.set(patient.id, sources);
-        }
-      }
-
-      console.log(`[querySources] Active-patient poll complete: ${activeSources.size} patient(s)`);
+      patients = parseActivePatients(await response.json());
     } catch (error) {
+      population.pollFailed((error as Error).message);
       console.warn(
         `[querySources] Active-patient poll failed; retaining previous sources: ${(error as Error).message}`,
       );
+    }
+
+    if (patients) {
+      const polled = patients;
+      await sourcesMutex.runExclusive(async () => {
+        population.pollSucceeded(polled.map(patient => patient.id));
+        const nextPatients = new Map(polled.map((patient) => [patient.id, patient]));
+
+        for (const [patientID, bundle] of activeSources) {
+          const next = nextPatients.get(patientID);
+          if (!next || next.pod_id !== bundle.podID) {
+            console.log(`[querySources] Removing inactive or moved patient ${patientID} (${bundle.podID})`);
+            await removeBundle(bundle);
+          }
+        }
+
+        // Each source opens requests at once; spacing additions out avoids a
+        // burst of requests on startup and after an outage.
+        let added = 0;
+        const stagger = async () => {
+          if (added++ > 0 && sourceAddIntervalMs > 0) await sleep(sourceAddIntervalMs);
+        };
+
+        for (const patient of polled) {
+          let bundle = activeSources.get(patient.id);
+          if (!bundle) {
+            await stagger();
+            console.log(`[querySources] Adding active patient ${patient.id} (${patient.pod_id})`);
+            await wMutex.runExclusive(() => wDist.addPatientIdentifier(patient.id));
+            await bMutex.runExclusive(() => bDist.addPatientIdentifier(patient.id));
+            bundle = createSources(patient);
+            activeSources.set(patient.id, bundle);
+            for (const name of SOURCE_GROUPS) await openGroup(bundle, name);
+            continue;
+          }
+          for (const name of SOURCE_GROUPS) {
+            if (bundle.groups[name].active) continue;
+            await stagger();
+            console.log(`[querySources] Re-adding ${name} sources of patient ${patient.id}`);
+            await openGroup(bundle, name);
+          }
+        }
+
+        console.log(`[querySources] Active-patient poll complete: ${activeSources.size} patient(s)`);
+      }).catch(error => {
+        console.error(`[querySources] Active-patient reconciliation failed: ${(error as Error).message}`);
+      });
     }
 
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
@@ -349,6 +508,9 @@ export async function queryWeights(sourceIterater: QuerySourceIterator, dist: We
   });
 
   bindingsStream.on('data', async (b) => {
+    // Weight slices are append-only. Non-additions are incremunica retracting
+    // a removed source; its data is cleared by the source poller instead.
+    if (!isAddition(b)) return;
     if (b.has('observation') && b.has('value') && b.has('timestamp') && b.has('patient')) {
       const observationID = b.get('observation').value;
       const value = parseFloat(b.get('value').value);
@@ -391,6 +553,8 @@ export async function queryBariatricResponses(
   });
 
   bindingsStream.on('data', async (b) => {
+    // Questionnaire slices are append-only; see queryWeights.
+    if (!isAddition(b)) return;
     if (b.has('res') && b.has('patient') && b.has('questionnaire') && b.has('value') && b.has('question')) {
       const res = b.get('res').value;
       const patientID = b.get('patient').value;
@@ -437,6 +601,8 @@ export async function queryProcedures(sourceIterater: QuerySourceIterator, dist:
   });
 
   bindingsStream.on('data', async (b) => {
+    // Procedure slices are append-only; see queryWeights.
+    if (!isAddition(b)) return;
     if (b.has('procedure') && b.has('timestamp') && b.has('patient')) {
       const procedureID = b.get('procedure').value;
       const timestamp = new Date(b.get('timestamp').value);
@@ -447,199 +613,4 @@ export async function queryProcedures(sourceIterater: QuerySourceIterator, dist:
       await mutex.runExclusive(() => dist.addPatientProcedure(patientID, procedureID, timestamp));
     }
   });
-}
-
-let nextFetchID = 1;
-
-export interface FetchTargetDescription {
-  target: string;
-  pod?: string;
-  slice?: string;
-}
-
-/** Extracts stable, useful labels without logging URL query parameters. */
-export function describeFetchTarget(target: string): FetchTargetDescription {
-  try {
-    const url = new URL(target);
-    const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
-    const slicesIndex = parts.indexOf("slices");
-    return {
-      target: url.origin + url.pathname,
-      pod: slicesIndex > 0 ? parts[slicesIndex - 1] : undefined,
-      slice: slicesIndex >= 0 ? parts[slicesIndex + 1] : undefined,
-    };
-  } catch {
-    return { target };
-  }
-}
-
-/** Logs unchanged failures on attempts 1, 2, 4, 8, ... instead of every retry. */
-export function shouldLogFetchFailure(attempt: number, changed: boolean): boolean {
-  return changed || attempt === 1 || (attempt & (attempt - 1)) === 0;
-}
-
-class FetchResponseError extends Error {
-  constructor(
-    public readonly status: number,
-    public readonly reason: string,
-  ) {
-    super(`Response not ok: ${status}${reason ? ` ${reason}` : ""}`);
-  }
-}
-
-function fetchLog(
-  level: "debug" | "info" | "warn",
-  requestID: string,
-  event: string,
-  fields: Record<string, unknown> = {},
-): void {
-  if (level === "debug" && (process.env.LOG_LEVEL ?? "info").toLowerCase() !== "debug") return;
-  const details = Object.entries(fields)
-    .filter(([, value]) => value !== undefined && value !== "")
-    .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
-    .join(" ");
-  const line = `[FETCH ${requestID}] ${event}${details ? ` ${details}` : ""}`;
-  if (level === "warn") console.warn(line);
-  else if (level === "debug") console.debug(line);
-  else console.info(line);
-}
-
-function fetchFailureReason(body: string, statusText: string): string {
-  const trimmed = body.trim();
-  if (trimmed) {
-    try {
-      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-      const reason = parsed.message ?? parsed.description ?? parsed.error;
-      if (typeof reason === "string" && reason.trim()) return reason.trim();
-    } catch {
-      // Keep the compact plain-text response below.
-    }
-    return trimmed.replace(/\s+/g, " ").slice(0, 200);
-  }
-  return statusText;
-}
-
-/**
- * Fetch adapter used by every query engine. A stable request ID covers all
- * retry attempts and is forwarded to egress-UMA for cross-service correlation.
- */
-async function umaProxyFetch(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-  authMode: "auto" | "oauth" = "auto",
-): Promise<Response> {
-  let target = input.toString();
-  const originalUrl = target;
-  const requestID = `f-${nextFetchID++}`;
-  const targetDescription = describeFetchTarget(originalUrl);
-  const BASE_DELAY_MS = 1000;
-  const MAX_DELAY_MS = 300000;
-  const BACKOFF_FACTOR = 2;
-  const startedAt = Date.now();
-  let lastFailure = "";
-  let suppressedFailures = 0;
-
-  const acceptHeader = init?.headers ? new Headers(init.headers).get("Accept") : undefined;
-  const isStream = acceptHeader === "text/event-stream";
-  const method = init?.method || "GET";
-
-  fetchLog("info", requestID, "start", {
-    method,
-    auth: authMode,
-    stream: isStream,
-    pod: targetDescription.pod,
-    slice: targetDescription.slice,
-    target: targetDescription.pod ? undefined : targetDescription.target,
-  });
-
-  for (let attempt = 0; ; attempt++) {
-    const delay = Math.min(BASE_DELAY_MS * BACKOFF_FACTOR ** attempt, MAX_DELAY_MS);
-    const attemptNumber = attempt + 1;
-
-    try {
-      let response: Response;
-      const egressUmaUrl = process.env.EGRESS_UMA_URL?.replace(/\/+$/, "");
-      if (!egressUmaUrl) {
-        fetchLog("debug", requestID, "dispatch", { attempt: attemptNumber, via: "direct" });
-        response = await fetch(input, init);
-      } else {
-        fetchLog("debug", requestID, "dispatch", { attempt: attemptNumber, via: "egress-uma" });
-        target = egressUmaUrl + "/fetch";
-
-        const bodyHeaders: Record<string, string> = {};
-        if (init?.headers) {
-          if (init.headers instanceof Headers) {
-            init.headers.forEach((value, key) => (bodyHeaders[key] = value));
-          } else if (Array.isArray(init.headers)) {
-            init.headers.forEach(([key, value]) => (bodyHeaders[key] = value));
-          } else {
-            Object.assign(bodyHeaders, init.headers);
-          }
-        }
-        if (isStream) {
-          bodyHeaders["Accept"] = "text/event-stream";
-          bodyHeaders["Cache-Control"] = "no-cache";
-          bodyHeaders["Connection"] = "keep-alive";
-        }
-
-        response = await fetch(target, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Request-ID": requestID,
-          },
-          body: JSON.stringify({
-            url: originalUrl,
-            method,
-            headers: bodyHeaders,
-            body: init?.body ? init.body.toString() : "",
-            authMode,
-          }),
-        });
-
-        Object.defineProperty(response, "url", {
-          value: originalUrl,
-          writable: false,
-          enumerable: true,
-          configurable: false,
-        });
-      }
-
-      if (!response.ok) {
-        const responseBody = await response.text();
-        throw new FetchResponseError(
-          response.status,
-          fetchFailureReason(responseBody, response.statusText),
-        );
-      }
-
-      fetchLog("info", requestID, isStream ? "connected" : "complete", {
-        status: response.status,
-        attempt: attemptNumber,
-        duration_ms: Date.now() - startedAt,
-        recovered: attempt > 0 || undefined,
-        suppressed_failures: suppressedFailures || undefined,
-      });
-      return response;
-    } catch (error) {
-      const status = error instanceof FetchResponseError ? error.status : undefined;
-      const reason = error instanceof FetchResponseError ? error.reason : (error as Error).message;
-      const signature = `${status ?? "network"}:${reason}`;
-      const changed = signature !== lastFailure;
-      if (shouldLogFetchFailure(attemptNumber, changed)) {
-        fetchLog("warn", requestID, status === 401 || status === 403 ? "denied" : "retry", {
-          attempt: attemptNumber,
-          status,
-          reason,
-          retry_in_ms: delay,
-          suppressed: suppressedFailures || undefined,
-        });
-        suppressedFailures = 0;
-      } else {
-        suppressedFailures++;
-      }
-      lastFailure = signature;
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  }
 }

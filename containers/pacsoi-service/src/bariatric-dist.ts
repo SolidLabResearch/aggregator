@@ -164,6 +164,21 @@ export class BariatricScoreDistribution {
     if (this.issuedIdentifiers.get(identityKey) === recordID) this.issuedIdentifiers.delete(identityKey);
   }
 
+  /**
+   * Drops a patient's questionnaire responses and scores, including pending
+   * ones, but keeps the patient's identity. Used when the questionnaire
+   * sources are suspended; re-added sources replay the data from scratch.
+   */
+  clearPatientData(patientID: string): void {
+    const recordID = this.identifiers.get(patientID);
+    const patient = recordID ? this.patients.get(recordID) : undefined;
+    if (!patient) return;
+    this.removeScoreContributions(patient);
+    patient.responses.clear();
+    patient.scores.clear();
+    for (const identifier of patient.identifiers) this.pendingResponses.delete(identifier);
+  }
+
   removePatient(patientID: string): void {
     const recordID = this.identifiers.get(patientID);
     const patient = recordID ? this.patients.get(recordID) : undefined;

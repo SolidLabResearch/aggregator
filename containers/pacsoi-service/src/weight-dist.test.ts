@@ -65,3 +65,40 @@ test("patient count only includes patients contributing a weight", () => {
   dist.removePatient("patient-1");
   assert.equal(dist.patientCount(), 1);
 });
+
+test("re-sent observations and procedures are counted once", () => {
+  const dist = new WeightDistribution();
+  dist.addPatientIdentifier("patient-1");
+  dist.addPatientProcedure("patient-1", "procedure-1", new Date("2026-10-04T00:00:00Z"));
+  dist.addPatientProcedure("patient-1", "procedure-1", new Date("2026-10-04T00:00:00Z"));
+  dist.addWeightObservation("patient-1", "weight-1", 90, new Date("2026-10-07T08:00:00Z"));
+  dist.addWeightObservation("patient-1", "weight-1", 90, new Date("2026-10-07T08:00:00Z"));
+  assert.equal(dist.getStats()[0]?.count, 1);
+
+  // Buffered duplicates for a not yet known identifier are dropped too.
+  dist.addWeightObservation("pseudo-2", "weight-2", 80, new Date("2026-10-08T08:00:00Z"));
+  dist.addWeightObservation("pseudo-2", "weight-2", 80, new Date("2026-10-08T08:00:00Z"));
+  dist.addPatientIdentifier("patient-1", "pseudo-2", "issuer");
+  assert.equal(dist.getStats()[0]?.count, 2);
+});
+
+test("clearPatientData drops weight data but keeps the identity", () => {
+  const dist = new WeightDistribution();
+  dist.addPatientIdentifier("patient-1", "pseudo-1", "issuer");
+  dist.addPatientProcedure("pseudo-1", "procedure-1", new Date("2026-10-04T00:00:00Z"));
+  dist.addWeightObservation("pseudo-1", "weight-1", 90, new Date("2026-10-07T08:00:00Z"));
+  dist.addPatientIdentifier("patient-2");
+  dist.addPatientProcedure("patient-2", "procedure-2", new Date("2026-10-04T00:00:00Z"));
+  dist.addWeightObservation("patient-2", "weight-2", 100, new Date("2026-10-07T08:00:00Z"));
+  assert.equal(dist.getStats()[0]?.count, 2);
+
+  dist.clearPatientData("patient-1");
+  assert.equal(dist.getStats()[0]?.count, 1);
+  assert.equal(dist.patientCount(), 1);
+
+  // The re-added sources replay the data; the pseudo identifier still resolves.
+  dist.addPatientProcedure("pseudo-1", "procedure-1", new Date("2026-10-04T00:00:00Z"));
+  dist.addWeightObservation("pseudo-1", "weight-1", 90, new Date("2026-10-07T08:00:00Z"));
+  assert.equal(dist.getStats()[0]?.count, 2);
+  assert.equal(dist.patientCount(), 2);
+});

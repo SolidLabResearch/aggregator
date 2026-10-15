@@ -96,3 +96,9 @@ deploymentFunctions:
               container: pacsoi
               port: http
               internalPath: /b-dist
+          population-metrics:
+            json:
+              resource: workload
+              container: pacsoi
+              port: http
+              internalPath: /population

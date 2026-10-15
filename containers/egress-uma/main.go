@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"egress-uma/model"
 
@@ -142,7 +144,10 @@ func handleFetchRequest(w http.ResponseWriter, r *http.Request) {
 		logrus.WithField("target_body_size", len(payload.TargetBody)).Debug("Prepared outbound body")
 	}
 
-	outReq, err := http.NewRequest(payload.TargetMethod, payload.TargetURL, outboundBody)
+	// Tie the upstream request to the caller's connection: when the caller
+	// disconnects (for example a cancelled event stream), the pod request and
+	// any UMA token exchange are cancelled too.
+	outReq, err := http.NewRequestWithContext(r.Context(), payload.TargetMethod, payload.TargetURL, outboundBody)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to build outbound request")
 		http.Error(w, "Failed to build target request: "+err.Error(), http.StatusBadRequest)
@@ -180,7 +185,8 @@ func handleFetchRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Ensure SSE headers are present if upstream sent text/event-stream
-	if resp.Header.Get("Content-Type") == "text/event-stream" {
+	isEventStream := strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")
+	if isEventStream {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
@@ -195,22 +201,74 @@ func handleFetchRequest(w http.ResponseWriter, r *http.Request) {
 		logrus.Error("ResponseWriter does not implement Flusher")
 		return
 	}
+	// Send the headers now. Otherwise they only leave with the first body
+	// bytes, and a quiet event stream leaves the caller waiting for headers.
+	flusher.Flush()
+
+	copyResponseBody(w, flusher, resp.Body, r, isEventStream, SSEKeepAliveInterval)
+}
+
+// SSEKeepAliveInterval is how often an idle event stream gets a comment line,
+// so idle timeouts on the way to the caller do not close it.
+var SSEKeepAliveInterval = 30 * time.Second
+
+// copyResponseBody streams the upstream body to the caller, flushing every
+// chunk. For event streams it also writes a ": keepalive" comment when the
+// stream has been idle for keepAlive. Comments are only written between
+// events, so they never split an event that arrives in several chunks.
+func copyResponseBody(w io.Writer, flusher http.Flusher, body io.Reader, r *http.Request, isEventStream bool, keepAlive time.Duration) {
+	var mu sync.Mutex
+	atBoundary := true // nothing written yet, or the last write ended an event
+	lastWrite := time.Now()
+
+	if isEventStream && keepAlive > 0 {
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			ticker := time.NewTicker(keepAlive / 2)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case <-ticker.C:
+					mu.Lock()
+					if atBoundary && time.Since(lastWrite) >= keepAlive {
+						if _, err := io.WriteString(w, ": keepalive\n\n"); err == nil {
+							flusher.Flush()
+						}
+						lastWrite = time.Now()
+					}
+					mu.Unlock()
+				}
+			}
+		}()
+	}
 
 	buf := make([]byte, 1024)
 	for {
-		n, err := resp.Body.Read(buf)
+		n, err := body.Read(buf)
 		if n > 0 {
-			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+			mu.Lock()
+			_, writeErr := w.Write(buf[:n])
+			if writeErr == nil {
+				flusher.Flush()
+				atBoundary = bytes.HasSuffix(buf[:n], []byte("\n\n")) || bytes.HasSuffix(buf[:n], []byte("\r\n\r\n"))
+				lastWrite = time.Now()
+			}
+			mu.Unlock()
+			if writeErr != nil {
 				logrus.WithError(writeErr).Error("Failed writing to downstream")
 				return
 			}
-			flusher.Flush()
 		}
 		if err != nil {
-			if err != io.EOF {
+			if r.Context().Err() != nil {
+				logrus.Info("Downstream closed the connection; upstream request cancelled")
+			} else if err != io.EOF {
 				logrus.WithError(err).Error("Error reading upstream")
 			}
-			break
+			return
 		}
 	}
 }
